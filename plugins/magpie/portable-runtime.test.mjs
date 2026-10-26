@@ -1,0 +1,30 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {preparePortableRuntime} from './portable-runtime.mjs';
+
+test('便携启动复制独立服务并迁移旧资料，重复启动保留新资料且不改发行资源',async()=>{
+ const root=await fs.mkdtemp(path.join(process.env.FISH_TEST_TMP||os.tmpdir(),'fish-magpie-portable-'));
+ const source=path.join(root,'package','magpie.exe'),credentials=path.join(root,'plugin','credentials');
+ await fs.mkdir(path.dirname(source),{recursive:true});await fs.writeFile(source,'binary-v1');
+ const old=path.join(credentials,'magpie');await fs.mkdir(old,{recursive:true});
+ await fs.writeFile(path.join(old,'providers.json'),'synthetic-original');
+ const ready=await preparePortableRuntime(source,credentials);
+ assert.notEqual(ready.executable,source);
+ assert.equal(await fs.readFile(ready.executable,'utf8'),'binary-v1');
+ assert.equal(await fs.readFile(path.join(path.dirname(ready.executable),'.portable'),'utf8'),'');
+ assert.equal(ready.data,path.join(path.dirname(ready.executable),'data'));
+ assert.equal(await fs.readFile(path.join(ready.data,'providers.json'),'utf8'),'synthetic-original');
+ assert.equal(await fs.readFile(path.join(old,'providers.json'),'utf8'),'synthetic-original');
+ await fs.writeFile(path.join(ready.data,'providers.json'),'synthetic-edited');
+ await fs.writeFile(ready.executable,'self-update');
+ await preparePortableRuntime(source,credentials);
+ assert.equal(await fs.readFile(ready.executable,'utf8'),'self-update');
+ assert.equal(await fs.readFile(path.join(ready.data,'providers.json'),'utf8'),'synthetic-edited');
+ await fs.writeFile(source,'binary-v2');await preparePortableRuntime(source,credentials);
+ assert.equal(await fs.readFile(ready.executable,'utf8'),'binary-v2');
+ assert.equal(await fs.readFile(path.join(ready.data,'providers.json'),'utf8'),'synthetic-edited');
+ assert.deepEqual(await fs.readdir(path.dirname(source)),['magpie.exe']);
+});
