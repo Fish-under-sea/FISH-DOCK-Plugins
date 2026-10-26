@@ -51,8 +51,8 @@ Webhook 测试、系统代理切换、Windhawk 系统安装与应用均为实际
 4. 在干净数据根完成安装、首次配置、升级、停用、卸载、跨根恢复及回滚验收。
 5. 上传对应 GitHub Release 资源，验证最终 HTTPS 下载地址、平台、大小与摘要。
 6. 资源实际可下载后再更新商店索引；索引失败时宿主保留已安装插件的管理能力。
-7. 桌面安装包在 Dock 仓单独制作与发布；npm 只分发目录和校验下载 CLI，使用 `npm pack --dry-run` 检查后运行 `npm publish --access public`。
+7. 桌面安装包在 Dock 仓单独制作与发布；npm 为四个插件分别生成单包，进入各输出目录使用 `npm pack --dry-run` 检查后运行 `npm publish --access public`。
 
-正式打包使用 `tools/build-release.mjs`，与开发暂存参数一致，输出 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。将实际目录复制为 `catalog/stable.json`；发布流程须先上传并验证资源，再推送启用该目录的提交。CLI 下载校验字节数和 SHA-256，目标文件存在时停止覆盖。
+正式打包使用 `tools/build-release.mjs` 生成四个 `.fish-plugin`，再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-1.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。
 
 对外开发入口见 [开发者指南](../developers/README.md)，使用与数据目录见 [项目 README](../../README.md)。
