@@ -13,7 +13,7 @@ export function archive(root){
  const tail=Buffer.alloc(22),catalog=Buffer.concat(directory);tail.writeUInt32LE(0x06054b50);tail.writeUInt16LE(rows.length,8);tail.writeUInt16LE(rows.length,10);tail.writeUInt32LE(catalog.length,12);tail.writeUInt32LE(offset,16);return Buffer.concat([...parts,catalog,tail]);
 }
 export function build(options){
- const version='1.0.0',tag=`v${version}`,out=path.resolve(options.out);const staged=path.join(out,'staged');stage({...options,out:staged});const dist=path.join(out,'dist');fs.mkdirSync(dist);
+ const version='1.0.0',tag=`v${version}`,out=path.resolve(options.out);const staged=path.join(out,'staged');stage({...options,out:staged,include:definitions.map(definition=>definition.key)});const dist=path.join(out,'dist');fs.mkdirSync(dist);
  const entries=[];
  for(const definition of definitions){const root=path.join(staged,definition.key),manifest=JSON.parse(fs.readFileSync(path.join(root,'plugin.json'),'utf8'));
   fs.copyFileSync(path.join(repository,'LICENSE'),path.join(root,'LICENSE'));

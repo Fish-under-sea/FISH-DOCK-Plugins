@@ -17,7 +17,7 @@ Windhawk 属于 Dock 宿主。其固定下载、安装、提权和源码编译�
 
 ## 开发暂存
 
-`tools/stage-development.mjs` 只生成新的开发目录：四个资源根、`plugin.json`、逐文件摘要、版本 README 及 `development.json`。它不制作 ZIP、不包含账号、不写线上索引。
+`tools/stage-development.mjs` 只生成新的开发目录：四个发行资源根，外加 `relay-probe` 开发探针根，以及 `plugin.json`、逐文件摘要、版本 README 及 `development.json`。开发探针只用于本地加载和合成回归，不进入 `build-release` 的 ZIP、`stable.json` 或 npm 单包。它不制作 ZIP、不包含账号、不写线上索引。
 
 ```powershell
 node tools/stage-development.mjs --out C:/work/preview-plugins --sdk ../FISH-Dock/sdk --ofm ../FISH-Dock/dsh-our-free-model --magpie C:/work/runtimes/magpie.exe --mihomo C:/work/runtimes/mihomo.exe
@@ -36,6 +36,7 @@ node tools/stage-development.mjs --out C:/work/preview-plugins --sdk ../FISH-Doc
 ## 回归与验收
 
 - 四插件业务回归：通知筛选、签名、配置事务、Clash 控制、系统代理租约恢复、网关端口与就绪检测。
+- 开发探针回归：`plugins/relay-probe/*.test.mjs` 全部使用合成响应，不访问网络；合成夹具覆盖原生、篡改签名被接受、无 thinking、OpenAI 形状和认证失败。
 - 真实进程：Magpie、OFM 的启动、停止、重新启动及异常退出；以独立测试数据运行。
 - 宿主：清单与摘要准入、文件限额、命名空间、页面来源、协议边界、启停、卸载保留、更新失败回滚。
 - 桌面：真实设置页、首次配置、业务错误后继续操作、标签排序、Clash 单／双栏、Windhawk 的缺失与恢复状态。
@@ -53,6 +54,6 @@ Webhook 测试、系统代理切换、Windhawk 系统安装与应用均为实际
 6. 资源实际可下载后再更新商店索引；索引失败时宿主保留已安装插件的管理能力。
 7. 桌面安装包在 Dock 仓单独制作与发布；npm 为四个插件分别生成单包，进入各输出目录使用 `npm pack --dry-run` 检查后运行 `npm publish --access public`。
 
-正式打包使用 `tools/build-release.mjs` 生成四个 `.fish-plugin`，再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-1.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。
+正式打包使用 `tools/build-release.mjs` 生成四个 `.fish-plugin`，再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-1.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。`relay-probe` 是开发探针，不在这四个发行物中。
 
 对外开发入口见 [开发者指南](../developers/README.md)，使用与数据目录见 [项目 README](../../README.md)。
