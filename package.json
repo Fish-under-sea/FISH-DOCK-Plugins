@@ -1,0 +1,14 @@
+{
+  "name": "@fish-under-sea/fish-dock-plugins",
+  "version": "1.0.0",
+  "description": "FISH Dock 官方插件目录与校验下载工具",
+  "type": "module",
+  "bin": {"fish-dock-plugins": "tools/cli.mjs"},
+  "files": ["tools/cli.mjs", "catalog/stable.json", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "licenses"],
+  "engines": {"node": ">=24.0.0"},
+  "license": "MIT",
+  "repository": {"type": "git", "url": "git+https://github.com/Fish-under-sea/FISH-DOCK-Plugins.git"},
+  "homepage": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins",
+  "bugs": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues",
+  "publishConfig": {"access": "public"}
+}

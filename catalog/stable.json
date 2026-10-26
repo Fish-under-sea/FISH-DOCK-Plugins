@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "plugins": [
+    {
+      "id": "fish.feishu",
+      "name": "飞书通知",
+      "description": "飞书通知独立插件",
+      "author": "FISH",
+      "maintainer": "Fish-under-sea",
+      "version": "1.0.0",
+      "hostApi": 1,
+      "platform": "windows-x86_64",
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.0/feishu.fish-plugin",
+      "sha256": "eae8840218fabded63fc43c9535730ae8b935bafc089662afbdeba36ac676384",
+      "bytes": 20830,
+      "dependencies": [
+        "FISH Dock >=1.1.0",
+        "Node.js 24（宿主提供）"
+      ]
+    },
+    {
+      "id": "fish.clash",
+      "name": "Clash 代理",
+      "description": "Clash 代理独立插件",
+      "author": "FISH",
+      "maintainer": "Fish-under-sea",
+      "version": "1.0.0",
+      "hostApi": 1,
+      "platform": "windows-x86_64",
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.0/clash.fish-plugin",
+      "sha256": "04106e27079bdb0494087c58d2b5efe63c78151ec17fb2d90ddbe5b2232df4a3",
+      "bytes": 12196852,
+      "dependencies": [
+        "FISH Dock >=1.1.0",
+        "Node.js 24（宿主提供）"
+      ]
+    },
+    {
+      "id": "fish.magpie",
+      "name": "Magpie 网关",
+      "description": "Magpie 网关独立插件",
+      "author": "FISH",
+      "maintainer": "Fish-under-sea",
+      "version": "1.0.0",
+      "hostApi": 1,
+      "platform": "windows-x86_64",
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.0/magpie.fish-plugin",
+      "sha256": "04dfb9030805567c56fad02d4b05a5cd0fa5b3d8019a6e24230e41cf166379e8",
+      "bytes": 20611664,
+      "dependencies": [
+        "FISH Dock >=1.1.0",
+        "Node.js 24（宿主提供）"
+      ]
+    },
+    {
+      "id": "fish.ofm",
+      "name": "OFM 本地模型",
+      "description": "OFM 本地模型独立插件",
+      "author": "FISH",
+      "maintainer": "Fish-under-sea",
+      "version": "1.0.0",
+      "hostApi": 1,
+      "platform": "windows-x86_64",
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.0/ofm.fish-plugin",
+      "sha256": "4e49e8fd21b8a996413556c66f79d38372d615846ebbbf5397c4b61f860a4834",
+      "bytes": 1877878,
+      "dependencies": [
+        "FISH Dock >=1.1.0",
+        "Node.js 24（宿主提供）"
+      ]
+    }
+  ]
+}
