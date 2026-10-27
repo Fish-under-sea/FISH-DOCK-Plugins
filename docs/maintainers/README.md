@@ -1,6 +1,6 @@
 # 插件维护者指南
 
-本版统一发布四插件 1.0.2，配套 FISH Dock 1.1.0+。Magpie 随包原生服务固定为官方 0.1.1709。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+本版 Magpie 适配插件为 1.0.3，飞书、Clash、OFM 保持 1.0.2，配套 FISH Dock 1.1.0+。Magpie 随包原生服务固定为官方 0.1.1709。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
 
 ## 固定来源与资源
 
@@ -31,7 +31,7 @@ node tools/stage-development.mjs --out C:/work/preview-plugins --sdk ../FISH-Doc
 
 数据根在运行时解析。复制导出包到其他盘符或账号后，以目标根和插件身份重新定位。`credentials`、`roster`、`keys`、`config` 为核心业务分类；`exports`、`backups`、`tmp` 分别保存导出、恢复点与临时资源。版本切换会更新说明 README，避免将临时目录当作持久配置。
 
-Magpie 使用插件命名空间内 `credentials/magpie-runtime/` 的服务副本和原生 `.portable` 模式，自有资料位于其中的 `data/`。首次启动完整复制旧 `credentials/magpie/` 的资料，保留原目录，后续启动不覆盖新资料。发行资源始终保持原样。真实 `HOME`、`USERPROFILE`、`APPDATA`、XDG 与 `DSH_HOME` 等 Agent 路径变量按白名单传入，用于发现本机实际安装；不要再将用户目录整体改成插件 profile。测试只验证识别，不自动接入或切换 Agent 模型。
+Magpie 1.0.3 使用插件命名空间内 `credentials/magpie-runtime/magpie-<SHA-256>.exe` 的独立副本和原生 `.portable` 模式，自有资料仍位于同目录的 `data/`。每次准备校验实际副本，临时文件校验后用同目录 NTFS 硬链接独占发布；目标已存在时必须校验摘要一致。旧固定 `magpie.exe`、`source.sha256` 和旧版本文件保留，不覆盖外部 MCP 正在使用的程序。只清理本次创建的临时文件，不自动清理历史失败残留或占用中的版本。首次启动在目标资料缺失时完整复制旧 `credentials/magpie/` 的资料，保留原目录，后续启动不覆盖新资料。程序回选只表示资源选择，不等价于原生数据 schema 降级。发行资源始终保持原样。真实 `HOME`、`USERPROFILE`、`APPDATA`、XDG 与 `DSH_HOME` 等 Agent 路径变量按白名单传入，用于发现本机实际安装；不要再将用户目录整体改成插件 profile。测试只验证识别，不自动接入或切换 Agent 模型。
 
 Magpie 原生服务版本由 Dock 插件管理。每次启动前，适配层仅固定 `noAutoUpdate`、`noAutoDownload`、`noUpdatePill` 为 `true`，`autoRestart` 为 `false`，首次调整时在同一资料目录保存 `settings.before-dock-update.json`。其他设置保持原值，损坏 JSON 会保留并中止启动。管理代理移除原生管理页中的更新按钮与更新开关，并就地回答 `/api/update`、`/api/whatsnew` 及其子路径，阻止它们触发原生检查、下载或安装；保存普通设置时再次固定更新字段。Magpie 内部业务插件的更新仍走自己的 API。管理脚本适配只支持经过原生和浏览器回归的版本，结构不匹配时明确报告。
 
