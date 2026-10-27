@@ -4,6 +4,7 @@ const messages = Object.freeze({
  EXECUTABLE_MISSING: '服务文件不存在，请重新安装插件或选择有效的服务文件',
  EXECUTABLE_INVALID: '服务路径不是普通文件，请重新选择',
  DATA_UNWRITABLE: '插件数据目录不可写，请检查数据根目录及访问权限',
+ SETTINGS_INVALID: 'Magpie 设置文件已损坏（原文件已保留），请检查插件资料下 credentials/magpie-runtime/data/settings.json，修复配置后重新启动',
  SPAWN_FAILED: '无法启动服务，请检查运行时依赖、文件权限和系统兼容性',
  EARLY_EXIT: '服务在就绪前退出，请检查依赖和独立测试日志后重试',
  READY_TIMEOUT: '等待服务就绪超时，请检查依赖或端口后重试',

@@ -100,7 +100,8 @@ try{
      await outer.locator('#about').getByText('版本由 FISH Dock 插件管理，请在 Dock 插件页更新').waitFor({state:'attached'});
      assert.equal(await outer.locator('.update-auto-row, .update-every-row, .update-download-row, .update-restart-row, .update-pill-row').count(),0);
      assert.equal(await outer.locator('#about > .row').first().locator('button').count(),0);
-     assert.equal(await outer.locator('#update').isVisible(),false);
+     assert.equal(await outer.locator('.whatsnew-row').count(),0);
+      assert.equal(await outer.locator('#update').isVisible(),false);
    }
    if(evidence)try{await tab.screenshot({path:path.join(evidence,baseline?'before.png':'after.png'),timeout:5000})}catch{console.log('SKIP screenshot: headless compositor timeout')}
    await bc.close();

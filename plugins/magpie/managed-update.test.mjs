@@ -7,6 +7,7 @@ import http from 'node:http';
 import {once} from 'node:events';
 import {preparePortableRuntime} from './portable-runtime.mjs';
 import {embedProxy,freePort} from './embed-proxy.mjs';
+import {createGateway} from '../../shared/gateway.mjs';
 
 test('Dock 托管更新在原生启动前禁用，保留其他设置且损坏文件不被覆盖',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'magpie-managed-'));
@@ -21,6 +22,8 @@ test('Dock 托管更新在原生启动前禁用，保留其他设置且损坏文
  await fs.writeFile(settings,'{"broken":');
  await assert.rejects(preparePortableRuntime(source,credentials));
  assert.equal(await fs.readFile(settings,'utf8'),'{"broken":');
+ const gateway=createGateway({context:{storage:{}},kind:'magpie',defaultExecutable:source,runtime:{start:()=>preparePortableRuntime(source,credentials)}});
+ await gateway.start();assert.match(gateway.view().error,/Magpie 设置文件.*原文件已保留/);assert.match(gateway.view().error,/settings\.json/);
 });
 
 test('托管代理截断内置更新调用，设置保存固定更新关闭，其他 API 保持透传',async()=>{
