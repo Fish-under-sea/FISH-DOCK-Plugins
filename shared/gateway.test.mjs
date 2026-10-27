@@ -2,6 +2,14 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createGateway} from './gateway.mjs';
 import {serviceError} from './errors.mjs';
+test('准备阶段可见且只有就绪后返回运行副本，停止后清空',async()=>{
+ let publish,phase;
+ const service=createGateway({context:{storage:{read:async()=>null}},kind:'magpie',defaultExecutable:'C:/source.exe',runtime:{start:async({onPhase})=>{phase=onPhase;onPhase('verify-binary');await new Promise(resolve=>{publish=resolve});return {url:'http://127.0.0.1:3425/',runtime:{executable:'C:/magpie-hash.exe',sha256:'a'.repeat(64)},stop:async()=>{}}}}});
+ await service.load();const pending=service.start();
+ assert.equal(service.view().phase,'verify-binary');assert.equal(service.view().runtime,null);
+ publish();await pending;assert.equal(service.view().runtime.sha256,'a'.repeat(64));
+ await service.stop();phase('prepare-data');assert.equal(service.view().phase,null);assert.equal(service.view().runtime,null);
+});
 function fixture(){const files=new Map();let starts=0,stops=0,fail=false,live=true;const context={storage:{read:async(c,n)=>files.get(`${c}/${n}`),write:async(c,n,v)=>files.set(`${c}/${n}`,v)}};const runtime={start:async config=>{starts++;if(fail)throw Error('underlying token=should-never-display');live=true;return {url:'http://127.0.0.1:24567/?k=synthetic',alive:()=>live,stop:async()=>{stops++;live=false}}}};const service=createGateway({context,runtime,kind:'magpie'});return {files,service,stats:()=>({starts,stops}),fail:()=>{fail=true},crash:()=>{live=false}}}
 test('网关保存配置不启动服务，启动幂等，停止只关闭自身实例',async()=>{const f=fixture();await f.service.load();assert.equal(f.service.view().state,'unconfigured');await f.service.save({executable:'C:\\runtime\\magpie.exe',port:24567});assert.equal(f.stats().starts,0);await f.service.start();await f.service.start();assert.equal(f.stats().starts,1);assert.equal(f.service.view().state,'running');assert.match(f.service.view().url,/127\.0\.0\.1/);await f.service.stop();await f.service.stop();assert.deepEqual(f.stats(),{starts:1,stops:1});assert.equal(f.service.view().url,null)});
 test('运行中修改启动参数要先停止，失败状态脱敏且可再次配置',async()=>{const f=fixture();await f.service.load();await f.service.save({executable:'C:\\runtime\\magpie.exe',port:24567});await f.service.start();await assert.rejects(f.service.save({port:24568}),/停止/);f.crash();assert.equal(f.service.view().state,'error');assert.equal(f.service.view().url,null);await f.service.stop();f.fail();await f.service.start();assert.equal(f.service.view().state,'error');assert.doesNotMatch(JSON.stringify(f.service.view()),/token=|should-never/);await f.service.save({port:24569});assert.equal(f.service.view().state,'stopped')});

@@ -3,7 +3,7 @@ import {publicServiceError, serviceError} from './errors.mjs';
 
 export function createGateway({context,runtime,kind,defaultExecutable=''}) {
  let config={executable:defaultExecutable,port:kind==='magpie'?3425:38080};
- let state='unconfigured',error=null,instance=null,starting=null,stopping=null,stopRequested=false,controller;
+ let state='unconfigured',phase=null,error=null,instance=null,starting=null,stopping=null,stopRequested=false,controller;
  function validate(value) {
   if(!value||typeof value.executable!=='string'||(value.executable&&!path.isAbsolute(value.executable)&&!path.win32.isAbsolute(value.executable)))throw Error('服务路径必须为绝对路径');
   if(!Number.isInteger(value.port)||value.port<1024||value.port>65535)throw Error('端口须为 1024–65535 的整数');
@@ -11,7 +11,7 @@ export function createGateway({context,runtime,kind,defaultExecutable=''}) {
  }
  function view() {
   if(state==='running'&&instance?.alive&&!instance.alive()){state='error';error='服务进程已退出，请检查服务配置后重新启动';}
-  return {...config,state,error,url:state==='running'?instance.url:null};
+  return {...config,state,phase:state==='starting'?phase:null,error,url:state==='running'?instance.url:null,runtime:state==='running'?(instance.runtime??null):null};
  }
  async function load() {
   const bytes=await context.storage.read('config','gateway.json');
@@ -41,12 +41,15 @@ export function createGateway({context,runtime,kind,defaultExecutable=''}) {
   if(starting)return starting;
   if(stopping||view().state==='running')return Promise.resolve(view());
   if(!config.executable){state='error';error='请先配置服务路径';return Promise.resolve(view());}
-  stopRequested=false;state='starting';error=null;
+  stopRequested=false;state='starting';phase=null;error=null;
   controller=new AbortController();
+  const currentController=controller;
   starting=(async()=>{
    try {
     if(instance){await instance.stop();instance=null;}
-    instance=await runtime.start({...config,signal:controller.signal});
+    instance=await runtime.start({...config,signal:currentController.signal,onPhase:value=>{
+     if(controller===currentController&&state==='starting'&&!stopRequested&&['prepare-data','prepare-settings','verify-binary','start-process'].includes(value))phase=value;
+    }});
     const url=new URL(instance.url);
     if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||url.username||url.password||Number(url.port)!==config.port)throw serviceError('INVALID_READY_URL');
     if(!stopRequested)state='running';

@@ -1,11 +1,12 @@
 const $ = id => document.getElementById(id);
 let busy = false, timer, opened = '', last = null, dirty = false;
 const states = { unconfigured: '等待配置', stopped: '已停止', starting: '正在启动', stopping: '正在停止', running: '运行中', error: '服务异常' };
+const phases = { 'prepare-data': '正在准备资料', 'prepare-settings': '正在准备设置', 'verify-binary': '正在校验运行文件', 'start-process': '正在等待服务就绪' };
 function render(row) {
  last = row;
  const running = row.state === 'running';
  document.body.dataset.running = String(running);
- $('state').textContent = states[row.state] || row.state;
+ $('state').textContent = (row.state === 'starting' && phases[row.phase]) || states[row.state] || row.state;
  $('connection').textContent = running ? `127.0.0.1:${row.port}` : '';
  if (!dirty) { $('executable').value = row.executable; $('port').value = row.port; }
  $('error').textContent = row.error || '';

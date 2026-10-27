@@ -7,7 +7,7 @@ import {magpieEnvironment} from './environment.mjs';
 import {preparePortableRuntime} from './portable-runtime.mjs';
 import {serviceError} from '../../shared/errors.mjs';
 export function createRuntime(context){
- return {async start({executable,port,signal}){
+ return {async start({executable,port,signal,onPhase=()=>{}}){
   signal?.throwIfAborted();
   if(!path.isAbsolute(context.dataDirectory))throw Error('缺少插件数据目录');
   const root=context.dataDirectory,credentials=path.join(root,'credentials'),cache=path.join(root,'tmp');
@@ -24,7 +24,8 @@ export function createRuntime(context){
   const upstreamUrl=`http://127.0.0.1:${upstreamPort}/?k=${encodeURIComponent(key)}`;
   let gatewayPort;do{gatewayPort=await freePort()}while(gatewayPort===port||gatewayPort===upstreamPort);
   // web --addr 仅设置管理页；模型网关需独立地址。
-  const portable=await preparePortableRuntime(executable,credentials);
+  const portable=await preparePortableRuntime(executable,credentials,{signal,onPhase});
+  onPhase('start-process');
   const child=await startChild({executable:portable.executable,args:['web','--addr',`127.0.0.1:${upstreamPort}`,'--no-open'],cwd:root,signal,
    env:{...magpieEnvironment({cache,key}),MAGPIE_ADDR:`127.0.0.1:${gatewayPort}`},
    ready:output=>output.includes(`magpie web on http://127.0.0.1:${upstreamPort}/`),
@@ -32,6 +33,6 @@ export function createRuntime(context){
   });
   let proxy;
   try{signal?.throwIfAborted();proxy=await embedProxy({port,upstreamPort});signal?.throwIfAborted()}catch(error){try{await proxy?.stop()}finally{await child.stop()}throw error}
-  return {alive:child.alive,url,async stop(){try{await proxy.stop()}finally{await child.stop()}}};
+  return {alive:child.alive,url,runtime:{executable:portable.executable,sha256:portable.sha256},async stop(){try{await proxy.stop()}finally{await child.stop()}}};
  }};
 }

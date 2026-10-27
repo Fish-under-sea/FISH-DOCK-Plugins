@@ -20,11 +20,13 @@ test('便携启动复制独立服务并迁移旧资料，重复启动保留新�
  assert.equal(await fs.readFile(path.join(old,'providers.json'),'utf8'),'synthetic-original');
  await fs.writeFile(path.join(ready.data,'providers.json'),'synthetic-edited');
  await fs.writeFile(ready.executable,'self-update');
- await preparePortableRuntime(source,credentials);
+ await assert.rejects(preparePortableRuntime(source,credentials),{code:'RUNTIME_INTEGRITY'});
  assert.equal(await fs.readFile(ready.executable,'utf8'),'self-update');
  assert.equal(await fs.readFile(path.join(ready.data,'providers.json'),'utf8'),'synthetic-edited');
- await fs.writeFile(source,'binary-v2');await preparePortableRuntime(source,credentials);
- assert.equal(await fs.readFile(ready.executable,'utf8'),'binary-v2');
+ await fs.writeFile(source,'binary-v2');const next=await preparePortableRuntime(source,credentials);
+ assert.notEqual(next.executable,ready.executable);
+ assert.equal(await fs.readFile(next.executable,'utf8'),'binary-v2');
+ assert.equal(await fs.readFile(ready.executable,'utf8'),'self-update');
  assert.equal(await fs.readFile(path.join(ready.data,'providers.json'),'utf8'),'synthetic-edited');
  assert.deepEqual(await fs.readdir(path.dirname(source)),['magpie.exe']);
 });
