@@ -1,8 +1,8 @@
 import {spawn} from 'node:child_process';
-import {once} from 'node:events';
-import {lstat,realpath} from 'node:fs/promises';
-import {isAbsolute,join,dirname} from 'node:path';
+import {join} from 'node:path';
 import {createServer} from 'node:net';
+import {mkdir} from 'node:fs/promises';
+import {createSubscriptionRuntime,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
 export function createProxyLease({storage,adapter}){
  let active=false;
  const same=(a,b)=>['ProxyEnable','ProxyServer','ProxyOverride'].every(k=>a[k]===b[k]);
@@ -15,26 +15,35 @@ export function createProxyLease({storage,adapter}){
  }
  return {enable,restore,active:()=>active};
 }
-export function kernelConfig({mixedPort,controllerPort,secret,subscription}){
+export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],dataDirectory}){
  const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,profile:{'store-selected':true}};
- if(subscription){value['proxy-providers']={subscription:{type:'http',url:subscription,path:'./providers/subscription.yaml',interval:86400,'health-check':{enable:true,url:'https://www.gstatic.com/generate_204',interval:600}}};value['proxy-groups']=[{name:'PROXY',type:'select',use:['subscription']}];value.rules=['GEOIP,CN,DIRECT','MATCH,PROXY']}else value.rules=['MATCH,DIRECT'];
+ const enabled=subscriptions.filter(s=>s.enabled!==false);
+ if(enabled.length){value['proxy-providers']=Object.fromEntries(enabled.map(s=>[s.id,fileProvider(s.id,subscriptionPath(dataDirectory,s.id))]));value['proxy-groups']=[{name:'PROXY',type:'select',use:enabled.map(s=>s.id)}];value.rules=['MATCH,PROXY']}else value.rules=['MATCH,DIRECT'];
  return value;
 }
 async function free(port){const server=createServer();await new Promise((resolve,reject)=>{server.once('error',()=>reject(Error('端口已占用，请在配置中修改')));server.listen(port,'127.0.0.1',resolve)});await new Promise(resolve=>server.close(resolve))}
-async function executable(path){if(!isAbsolute(path)||(await lstat(path)).isSymbolicLink()||!(await lstat(path)).isFile())throw Error('内核路径应为可执行文件绝对路径');if((await realpath(path)).toLowerCase()!==path.toLowerCase())throw Error('内核路径包含链接或不规范片段')}
 export function createRuntime(context){
  const adapter={async read(){return powershell('read')},async write(values){await powershell('write',values)}};
  const proxy=createProxyLease({storage:context.storage,adapter});
  async function start(c){
-  await executable(c.kernel);await free(c.mixedPort);await free(c.controllerPort);
-  await context.storage.write('tmp','mihomo-runtime.json',JSON.stringify(kernelConfig(c)));
-  const data=join(context.dataDirectory,'config');const child=spawn(c.kernel,['-d',data,'-f',join(context.dataDirectory,'tmp','mihomo-runtime.json')],{cwd:context.dataDirectory,windowsHide:true,stdio:['ignore','ignore','ignore'],env:{...process.env,TMP:join(context.dataDirectory,'tmp'),TEMP:join(context.dataDirectory,'tmp')}});
+  c.signal?.throwIfAborted();
+  await checkExecutable(c.kernel);await free(c.mixedPort);await free(c.controllerPort);
+  for(const category of ['tmp','config','credentials'])await mkdir(join(context.dataDirectory,category),{recursive:true});
+  await context.storage.write('tmp','mihomo-runtime.json',JSON.stringify(kernelConfig({...c,dataDirectory:context.dataDirectory})));
+  const data=join(context.dataDirectory,'config');const child=spawn(c.kernel,['-d',data,'-f',join(context.dataDirectory,'tmp','mihomo-runtime.json')],{cwd:context.dataDirectory,windowsHide:true,stdio:['ignore','ignore','ignore'],env:{...process.env,SAFE_PATHS:join(context.dataDirectory,'credentials'),TMP:join(context.dataDirectory,'tmp'),TEMP:join(context.dataDirectory,'tmp')}});
   let failure=null;child.on('error',()=>{failure=Error('mihomo 内核启动失败')});
+  const exited=new Promise(resolve=>{child.once('exit',resolve);child.once('error',resolve)});
   const alive=()=>!failure&&child.exitCode===null&&child.signalCode===null;
-  async function stop(){if(alive()){child.kill('SIGTERM');await Promise.race([once(child,'exit').catch(()=>{}),new Promise(resolve=>{const timer=setTimeout(()=>{child.kill('SIGKILL');resolve()},3000);timer.unref()})])}await context.storage.write('tmp','mihomo-runtime.json','')}
+  let stopping;
+  function stop(){return stopping??=(async()=>{
+   if(alive()){child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),1500);
+    try{await exited}finally{clearTimeout(timer)}}
+   await context.storage.write('tmp','mihomo-runtime.json','');
+  })()}
   try{
    const deadline=Date.now()+8000;let ready=false;
    while(Date.now()<deadline&&alive()){
+    c.signal?.throwIfAborted();
     try{const response=await fetch(`http://127.0.0.1:${c.controllerPort}/version`,{headers:{Authorization:`Bearer ${c.secret}`},signal:AbortSignal.timeout(500),redirect:'error'});if(response.ok&&typeof(await response.json()).version==='string'){ready=true;break}}catch{}
     await new Promise(resolve=>setTimeout(resolve,100));
    }
@@ -42,7 +51,7 @@ export function createRuntime(context){
    child.once('exit',()=>{void proxy.restore().catch(()=>{})});return {alive,stop};
   }catch(error){await stop();throw error}
  }
- return {start,proxy};
+ return {start,proxy,...createSubscriptionRuntime(context)};
 }
 // 使用固定脚本和 JSON stdin，配置值不会拼入 PowerShell 源码。
 function powershell(action,values){

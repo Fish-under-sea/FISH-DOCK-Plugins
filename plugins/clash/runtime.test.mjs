@@ -14,6 +14,12 @@ test('异常后新实例可恢复持久化代理快照，持久化失败不更�
  await createProxyLease({storage,adapter}).enable(7895);await createProxyLease({storage,adapter}).restore();assert.equal(live.ProxyEnable,0);
  const broken={read:async()=>null,write:async()=>{throw Error('disk-full')}};await assert.rejects(createProxyLease({storage:broken,adapter}).enable(7895));assert.equal(writes,2);
 });
-test('mihomo 控制器限定回环并隔离订阅字段，不受订阅 URL 中 YAML 字符影响',()=>{
- const c=kernelConfig({mixedPort:7895,controllerPort:9099,secret:'synthetic',subscription:'https://example.test/a?token=a%0Ab'});assert.equal(c['external-controller'],'127.0.0.1:9099');assert.equal(c['allow-lan'],false);assert.equal(c['proxy-providers'].subscription.url,'https://example.test/a?token=a%0Ab');assert.equal(c.secret,'synthetic');assert.equal(c['proxy-providers'].subscription.path,'./providers/subscription.yaml');
+test('mihomo uses independent local file providers with stable source prefixes and no subscription URL',()=>{
+ const a='sub-00000000-0000-0000-0000-000000000001',b='sub-00000000-0000-0000-0000-000000000002';
+ const c=kernelConfig({mixedPort:7895,controllerPort:9099,secret:'synthetic',dataDirectory:'D:/synthetic',subscriptions:[{id:a,enabled:true},{id:b,enabled:true}]});
+ assert.equal(c['external-controller'],'127.0.0.1:9099');assert.equal(c['allow-lan'],false);
+ assert.deepEqual(c['proxy-groups'][0].use,[a,b]);
+ assert.notEqual(c['proxy-providers'][a].path,c['proxy-providers'][b].path);
+ assert.equal(c['proxy-providers'][a].override['additional-prefix'],`[${a}] `);
+ assert.equal(c['proxy-providers'][a].type,'file');assert.equal(c['proxy-providers'][a].url,undefined);
 });
