@@ -1,12 +1,12 @@
 # 插件维护者指南
 
-本版以四插件 1.0.0 为基础，Magpie 独立升级至 1.0.1，配套 FISH Dock 1.1.0+。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+本版统一发布四插件 1.0.2，配套 FISH Dock 1.1.0+。Magpie 随包原生服务固定为官方 0.1.1709。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
 
 ## 固定来源与资源
 
 | 资源 | 当前开发验证来源 | 处理方式 |
 | --- | --- | --- |
-| Magpie | `yetone/magpie`，commit `ef3b9f85a46769713d55d21c6c3259fe70b69acd` 对应 Windows 资源 | 独立进程；逐文件摘要记录于插件清单 |
+| Magpie | `yetone/magpie`，0.1.1709 / commit `47175a68fffe7a01c596f016c0d0da00545b10a4` 对应官方 Windows x64 资源 | 独立进程；逐文件摘要记录于插件清单 |
 | mihomo | v1.19.15，`mihomo-windows-amd64-compatible-v1.19.15.zip` | 校验下载后暂存可执行文件，首次按需启动 |
 | OFM | 本机明确指定的 `dsh-our-free-model` 源码目录 | 按所需运行文件暂存，保留自身管理页及渠道逻辑 |
 | Node SDK | 同版 Dock 仓的 `sdk/node/plugin.mjs` | 复制到各插件，与宿主 API 1 联调 |
@@ -33,6 +33,10 @@ node tools/stage-development.mjs --out C:/work/preview-plugins --sdk ../FISH-Doc
 
 Magpie 使用插件命名空间内 `credentials/magpie-runtime/` 的服务副本和原生 `.portable` 模式，自有资料位于其中的 `data/`。首次启动完整复制旧 `credentials/magpie/` 的资料，保留原目录，后续启动不覆盖新资料。发行资源始终保持原样。真实 `HOME`、`USERPROFILE`、`APPDATA`、XDG 与 `DSH_HOME` 等 Agent 路径变量按白名单传入，用于发现本机实际安装；不要再将用户目录整体改成插件 profile。测试只验证识别，不自动接入或切换 Agent 模型。
 
+Magpie 原生服务版本由 Dock 插件管理。每次启动前，适配层仅固定 `noAutoUpdate`、`noAutoDownload`、`noUpdatePill` 为 `true`，`autoRestart` 为 `false`，首次调整时在同一资料目录保存 `settings.before-dock-update.json`。其他设置保持原值，损坏 JSON 会保留并中止启动。管理代理移除原生管理页中的更新按钮与更新开关，并就地回答 `/api/update`、`/api/whatsnew` 及其子路径，阻止它们触发原生检查、下载或安装；保存普通设置时再次固定更新字段。Magpie 内部业务插件的更新仍走自己的 API。管理脚本适配只支持经过原生和浏览器回归的版本，结构不匹配时明确报告。
+
+0.1.1709 包含上游提交 `13f658a37da5aab8a4f6a198904e25f74243b5c1`：协议转换后的流在上游已经开始回复、随后静默时，独立向客户端保活，静默上限为 30 分钟。本仓原生回归使用 `/tenant/api/v1` 合成中转，Responses 客户端经 Chat 上游转换，在收到两次独立保活后结束回复，并断言只有一次上游请求；旧随包二进制在同一检查中超时。该证据覆盖这个静默流缺陷，不代表任意真实中转站的断流、限流或协议错误都已修复。
+
 宿主更新流程先备份业务分类，再切换资源并激活。激活失败会恢复旧版资源和原始分类；恢复异常时保留备份并提示重试。停用和卸载保留资料。破坏性清理需单独确认，不能作为升级或卸载的隐含步骤。
 
 ## 回归与验收
@@ -56,6 +60,8 @@ Webhook 测试、系统代理切换、Windhawk 系统安装与应用均为实际
 7. 桌面安装包在 Dock 仓单独制作与发布；npm 为四个插件分别生成单包，进入各输出目录使用 `npm pack --dry-run` 检查后运行 `npm publish --access public`。
 
 正式打包使用 `tools/build-release.mjs` 生成四个 `.fish-plugin`，再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-1.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。
+
+两个构建工具均要求新的输出目录，不再清空已有目录；正式构建必须提供所选插件需要的运行时。构建后执行 `node tools/verify-release.mjs --dist <绝对 dist 目录> --npm <绝对 npm 输出目录>`，核对归档资源、页面依赖、清单摘要和 npm 字节一致性。此检查不访问远端下载地址，也不替代安装与实机验收。仅准备本地实验材料可使用 `tools/prepare-local-handoff.ps1`，该脚本不会上传资源或发布 npm。
 
 独立补丁使用 `--version 1.0.1 --only magpie`，两个构建工具都需传入。单插件构建输出的 `stable.json` 仅含本次插件；正式商店目录须只替换相应条目，保留其他插件已发布的版本、下载地址和摘要。
 
