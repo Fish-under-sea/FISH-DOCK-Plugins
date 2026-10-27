@@ -4,6 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {buildNpmPackages} from './build-npm-packages.mjs';
+test('已有输出被拒绝，不递归删除源码或旧构建',async()=>{
+ const out=fs.mkdtempSync(path.join(os.tmpdir(),'fish-npm-preserve-'));
+ fs.writeFileSync(path.join(out,'keep.txt'),'keep');
+ await assert.rejects(buildNpmPackages({dist:out,out}));
+ assert.equal(fs.readFileSync(path.join(out,'keep.txt'),'utf8'),'keep');
+});
 
 test('按指定版本仅生成 Magpie npm 补丁包',async()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fish-npm-magpie-')),dist=path.join(root,'dist'),source=path.join(root,'source'),out=path.join(root,'out');

@@ -61,8 +61,10 @@ export async function buildNpmPackages({dist, out, sourceRoot = repoRoot, versio
   if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('版本格式无效');
   const selected=only?PLUGINS.filter(p=>p.id===only):PLUGINS;
   if(!selected.length)throw Error('未知插件');
-  await fs.rm(out, {recursive: true, force: true});
-  await fs.mkdir(out, {recursive: true});
+  if(!path.isAbsolute(out))throw Error('请使用新的绝对输出目录');
+  // Never erase a previous build (or an accidentally supplied data/source root).
+  await fs.mkdir(path.dirname(out), {recursive: true});
+  await fs.mkdir(out);
   for (const base of selected) {
     const archiveName = `${base.id}.fish-plugin`;
     const archivePath = path.join(dist, archiveName);

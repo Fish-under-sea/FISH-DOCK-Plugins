@@ -12,12 +12,14 @@ export const definitions=[
  {key:'ofm',name:'OFM 本地模型',directory:'.fishplugin-ourfreemodel',capabilities:['storage','network','services']},
 ];
 // 仅产生供开发加载的目录，不制作 ZIP、不更新线上目录、不携带用户数据。
-export function stage({out,sdk,ofm,magpie,mihomo}){
+export function stage({out,sdk,ofm,magpie,mihomo,only}){
  if(!path.isAbsolute(out)||fs.existsSync(out))throw Error('请使用新的绝对输出目录');
  if(!sdk||!path.isAbsolute(sdk))throw Error('请明确指定 Dock SDK 目录');
  const copy=(source,target)=>{if(!fs.lstatSync(source).isFile())throw Error('源资源不是普通文件');fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(source,target)};
  const resources=[];
- for(const definition of definitions){
+ const selected=only?definitions.filter(row=>row.key===only):definitions;
+ if(!selected.length)throw Error('未知插件');
+ for(const definition of selected){
   const {key,name,directory,capabilities}=definition,root=path.join(out,key);
   fs.mkdirSync(root,{recursive:true});
   for(const item of fs.readdirSync(path.join(repository,'plugins',key),{withFileTypes:true})){

@@ -14,6 +14,13 @@ test('单独发布 Magpie 补丁，清单和目录版本一致',()=>{
  const manifest=JSON.parse(fs.readFileSync(path.join(root,'out/staged/magpie/plugin.json')));
  assert.equal(manifest.version,'1.0.1');assert.ok(manifest.files['plugins/magpie/environment.mjs']);
  assert.deepEqual(fs.readdirSync(result.dist).sort(),['SHA256SUMS.txt','magpie.fish-plugin','stable.json']);
+ assert.deepEqual(fs.readdirSync(path.join(root,'out/staged')).sort(),['development.json','magpie']);
+});
+test('发行构建缺少必需运行时会在创建输出前失败',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fish-missing-runtime-'));
+ const out=path.join(root,'out');
+ assert.throws(()=>build({out,sdk:root,only:'clash'}),/mihomo/);
+ assert.equal(fs.existsSync(out),false);
 });
 test('发行 ZIP 使用标准 deflate、UTF-8 文件名、CRC 和固定时间',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fish-release-'));
