@@ -12,7 +12,7 @@
 </picture>
 
 <p>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.0.0"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/stat-version-zh-dark.png"><img src="assets/readme/stat-version-zh-light.png" alt="VERSION：插件版本 1.0.0" width="23%"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.0.2"><img src="https://img.shields.io/badge/VERSION-1.0.2-8fd6a0?style=for-the-badge&amp;labelColor=5a544a" alt="VERSION：插件版本 1.0.2" width="23%"></a>
   <a href="#plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/stat-desktop-zh-dark.png"><img src="assets/readme/stat-desktop-zh-light.png" alt="PLUGINS：四个独立插件" width="23%"></picture></a>
   <a href="#packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/stat-mail-zh-dark.png"><img src="assets/readme/stat-mail-zh-light.png" alt="PACKAGES：四个 npm 单包" width="23%"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-Dock"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/stat-channels-zh-dark.png"><img src="assets/readme/stat-channels-zh-light.png" alt="HOST API：1" width="23%"></picture></a>
@@ -35,7 +35,7 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-本次更新：[四插件 1.0.2](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.0.2)，整合飞书、Clash、Magpie 和 OFM 的 Issue 修复。Magpie 随包原生服务升级至官方 0.1.1709，包含协议转换流静默时的客户端保活修复；原生更新检查、下载和按钮由适配层关闭，请在 Dock 插件页统一更新。顶部像素版本卡保留四插件首发基础版。
+本次更新：[四插件 1.0.2](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.0.2)，整合飞书、Clash、Magpie 和 OFM 的 Issue 修复。Magpie 随包原生服务升级至官方 0.1.1709，包含协议转换流静默时的客户端保活修复；原生更新检查、下载和按钮由适配层关闭，请在 Dock 插件页统一更新。请在 Dock 插件页更新至 1.0.2。
 
 <h2 id="plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-features-dark.png"><img src="assets/readme/section-features-light.png" alt="PLUGINS · 四个插件" width="100%"></picture></h2>
 
