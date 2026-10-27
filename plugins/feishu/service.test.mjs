@@ -9,9 +9,19 @@ function fixture(response={code:0}) {
   return {service,disk,calls,writes,advance:ms=>{now+=ms}};
 }
 const config={webhook:'https://open.feishu.cn/open-apis/bot/v2/hook/synthetic-token',secret:'synthetic-signature',enabled:true,waiting:true,done:false,error:true};
+test('损坏配置仍可查看并恢复，失败不会覆盖原始凭据',async()=>{
+ const f=fixture();f.disk.set('protected/credentials/robot.json','broken-secret');
+ f.disk.set('config/notifications.json','broken-settings');
+ const view=await f.service.view();assert.equal(view.configured,false);assert.match(view.configError,/配置/);assert.equal(view.error,true);
+ assert.doesNotMatch(JSON.stringify(view),/broken-secret/);
+ assert.equal(f.disk.get('protected/credentials/robot.json'),'broken-secret');
+ await f.service.save(config);assert.equal((await f.service.view()).configured,true);
+ await f.service.save({...config,clear:true,enabled:false});assert.equal((await f.service.view()).enabled,false);
+ assert.equal(f.calls.length,0);
+});
 test('凭据写加密分类，配置写配置分类，视图隐藏密钥，空输入保留已有密钥',async()=>{
  const f=fixture();await f.service.save(config);const view=await f.service.view();
- assert.equal(view.configured,true);assert.equal(view.done,false);assert.equal(view.signing,true);
+ assert.equal(view.configured,true);assert.equal(view.done,false);assert.equal(view.signing,true);assert.equal(view.error,true);assert.equal(view.configError,null);
  assert.ok(!JSON.stringify(view).includes('synthetic-'));assert.equal(f.disk.has('protected/credentials/robot.json'),true);assert.equal(f.disk.has('config/notifications.json'),true);
  await f.service.save({enabled:false,waiting:true,done:true,error:true,webhook:'',secret:''});assert.equal((await f.service.view()).configured,true);
 });

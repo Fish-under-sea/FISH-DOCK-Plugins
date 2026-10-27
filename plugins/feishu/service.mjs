@@ -15,19 +15,31 @@ export function createNotifier({context,fetch:request=globalThis.fetch,clock=Dat
  async function credentials(){const raw=await context.secrets.read('credentials','robot.json');if(!raw)return null;const row=JSON.parse(raw);webhook(row.webhook);if(typeof row.secret!=='string'||row.secret.length>512)throw Error('签名配置损坏');return row}
  async function config(){const raw=await context.storage.read('config','notifications.json');return raw?preferences(JSON.parse(raw)):{...DEFAULTS}}
  async function layout(value){if(!['single','double'].includes(value))throw Error('页面布局无效');await context.storage.write('config','layout.json',JSON.stringify({layout:value}));return {layout:value}}
-  async function view(){const [row,settings,ui]=await Promise.all([credentials(),config(),context.storage.read('config','layout.json')]);let mode='single';try{if(JSON.parse(ui)?.layout==='double')mode='double'}catch{}return {...settings,layout:mode,configured:!!row,signing:!!row?.secret,webhookTail:row?'…'+row.webhook.slice(-4):'',last}}
+ async function view(){
+   let row=null,settings={...DEFAULTS},configError=null;
+   try{row=await credentials()}catch{configError='机器人凭据无法读取，请重新输入完整地址和密钥，或清除机器人配置'}
+   try{settings=await config()}catch{configError='通知配置无法读取，原资料已保留；请重新保存通知设置'}
+   const ui=await context.storage.read('config','layout.json');let mode='single';
+   try{if(JSON.parse(ui)?.layout==='double')mode='double'}catch{}
+   return {...settings,layout:mode,configured:!!row,signing:!!row?.secret,webhookTail:row?'…'+row.webhook.slice(-4):'',last,configError};
+ }
  async function save(value){
    const settings=preferences(value);
    if(value.webhook!==undefined&&typeof value.webhook!=='string')throw Error('Webhook 格式无效');
    if(value.secret!==undefined&&(typeof value.secret!=='string'||value.secret.length>512||/[\x00-\x1f]/.test(value.secret)))throw Error('签名密钥格式无效');
-   const old=await credentials();
+   const oldRaw=await context.secrets.read('credentials','robot.json');
+   let old;
+   try{old=await credentials()}catch{
+     if(!value.clear&&!value.webhook?.trim())throw Error('请重新输入完整 Webhook 和签名，或清除机器人配置');
+     old=null;
+   }
    const next=value.clear?null:{webhook:value.webhook?.trim()||old?.webhook||'',secret:value.clearSecret?'':value.secret||old?.secret||''};
    if(next)webhook(next.webhook);
    // 即使清除也通过宿主加密写入空对象标记，避免产生明文临时凭据。
    await context.secrets.write('credentials','robot.json',next?JSON.stringify(next):'');
    try{await context.storage.write('config','notifications.json',JSON.stringify(settings));}
    catch{
-     try{await context.secrets.write('credentials','robot.json',old?JSON.stringify(old):'');}
+     try{await context.secrets.write('credentials','robot.json',oldRaw||'');}
      catch{throw Error('配置保存失败，凭据恢复未完成，请重新保存配置');}
      throw Error('配置保存失败，原凭据已恢复');
    }
