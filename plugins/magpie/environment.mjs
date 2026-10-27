@@ -18,6 +18,8 @@ const locationVariables = [
  'NVM_DIR','NVM_HOME','NVM_SYMLINK','FNM_DIR','MISE_DATA_DIR','ASDF_DIR',
  'VOLTA_HOME','PNPM_HOME','BUN_INSTALL','SCOOP','npm_config_prefix',
  'MAGPIE_ZED_BIN','MAGPIE_ZED_CONFIG_DIR','MAGPIE_ZED_PROCESS_NAMES',
+ // 原生插件运行时的显式位置；不是任意 MAGPIE_* 或凭据透传。
+ 'MAGPIE_BUN',
 ];
 
 export function magpieEnvironment({cache,key}, source=process.env) {

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import {createReadStream} from 'node:fs';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
+import {prepareManagedUpdates} from './managed-update.mjs';
 
 async function exists(file){try{await fs.stat(file);return true}catch(error){if(error.code==='ENOENT')return false;throw error}}
 async function digest(file){const hash=createHash('sha256');for await(const chunk of createReadStream(file))hash.update(chunk);return hash.digest('hex')}
@@ -27,6 +28,7 @@ export async function preparePortableRuntime(source,credentials) {
   // 完整复制后再启用；旧资料原样留在原目录，不覆盖已运行过的新资料。
   await fs.rename(staging,data);
  }
+ await prepareManagedUpdates(data);
  await fs.writeFile(path.join(directory,'.portable'),'');
  return {executable,data};
 }

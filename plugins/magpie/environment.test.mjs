@@ -19,3 +19,10 @@ test('没有 XDG 覆盖时保持未设置，让 Agent 按真实 home 解析默�
  assert.equal(env.XDG_CONFIG_HOME,undefined);assert.equal(env.XDG_CACHE_HOME,undefined);
  assert.equal(env.USERPROFILE,path.resolve('real-user'));
 });
+
+test('保留显式 Bun 依赖路径（含中文空格），不复制其他 Magpie 控制及秘密变量',()=>{
+ const bun=path.resolve('测试 runtime/bun.exe');
+ const env=magpieEnvironment({cache:'tmp',key:'test'},{magpie_bun:bun,MAGPIE_PUBLIC_URL:'https://untrusted.test',MAGPIE_WEB_KEY:'not-this-key',MAGPIE_GITHUB_TOKEN:'secret'});
+ assert.equal(env.MAGPIE_BUN,bun);
+ assert.equal(env.MAGPIE_PUBLIC_URL,undefined);assert.equal(env.MAGPIE_GITHUB_TOKEN,undefined);assert.equal(env.MAGPIE_WEB_KEY,'test');
+});

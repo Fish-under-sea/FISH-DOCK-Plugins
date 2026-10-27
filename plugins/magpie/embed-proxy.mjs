@@ -1,14 +1,49 @@
 import http from 'node:http';
-// 只适配本插件的回环服务；保留上游鉴权、流式响应及 WebSocket。
+import {managedUpdates,managedUpdateScript} from './managed-update.mjs';
+// 只扩展 token 页面已知的祖先策略，其余沙箱限制原样保留。
+export function pluginPagePolicy(requestPath,policy){
+ if(!/^\/_magpie\/plugin\/[a-f0-9]{32}\//.test(requestPath)||typeof policy!=='string')return policy;
+ return policy.replace(/(^|;)(\s*frame-ancestors\s+)'self'(\s*)(?=;|$)/gi,
+  "$1$2'self' http://tauri.localhost$3");
+}
+// 仅适配插件持有的回环服务，模型流不缓存、不重试。
 export async function embedProxy({port,upstreamPort}){
  const sockets=new Set();
  const cookie=value=>value.replace(/;\s*(?:SameSite=[^;]*|Secure|Partitioned)(?=;|$)/gi,'')+'; SameSite=None; Secure; Partitioned';
- const server=http.createServer((req,res)=>{
-  const upstream=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.url,method:req.method,headers:req.headers},reply=>{
+ const server=http.createServer(async(req,res)=>{
+  let pathname;try{pathname=new URL(req.url,'http://127.0.0.1').pathname}catch{res.writeHead(400);res.end();return}
+  if(/^\/api\/(?:update|whatsnew)(?:\/|$)/.test(pathname)){
+   req.resume();res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});
+   res.end(JSON.stringify({managed:true,state:'managed',releases:[],message:'版本由 FISH Dock 插件管理'}));return;
+  }
+  const headers={...req.headers};let body;
+  if(pathname==='/api/settings'&&req.method==='POST'){
+   try{
+    const chunks=[];let size=0;
+    for await(const chunk of req){size+=chunk.length;if(size>1024*1024){res.writeHead(413);res.end();return}chunks.push(chunk)}
+    const settings=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if(!settings||typeof settings!=='object'||Array.isArray(settings))throw Error('settings');
+    body=Buffer.from(JSON.stringify({...settings,...managedUpdates}));headers['content-length']=String(body.length);delete headers['transfer-encoding'];
+   }catch{res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:'设置格式无效'}));return}
+  }
+  const script=pathname==='/app.js';
+  if(script){headers['accept-encoding']='identity';delete headers['if-none-match'];delete headers['if-modified-since']}
+  const upstream=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.url,method:req.method,headers},reply=>{
    const headers={...reply.headers};if(headers['set-cookie'])headers['set-cookie']=headers['set-cookie'].map(cookie);
-   res.writeHead(reply.statusCode,headers);reply.pipe(res);reply.on('error',()=>res.destroy());
+   if(headers['content-security-policy'])headers['content-security-policy']=pluginPagePolicy(req.url,headers['content-security-policy']);
+   if(script&&reply.statusCode===200){
+    const chunks=[];let size=0;
+    reply.on('data',chunk=>{size+=chunk.length;if(size>8*1024*1024)reply.destroy(Error('管理脚本过大'));else chunks.push(chunk)});
+    reply.on('end',()=>{try{
+     const output=Buffer.from(managedUpdateScript(Buffer.concat(chunks).toString('utf8')));
+     delete headers['transfer-encoding'];delete headers.etag;delete headers['content-encoding'];headers['content-length']=String(output.length);headers['cache-control']='no-store';
+     res.writeHead(200,headers);res.end(output);
+    }catch{res.writeHead(502);res.end('Magpie 管理页版本与 Dock 适配层不匹配')}});
+   }else{res.writeHead(reply.statusCode,headers);reply.pipe(res)}
+   reply.on('error',()=>res.destroy());
   });
-  upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end('本机服务连接中断')});req.on('aborted',()=>upstream.destroy());res.on('close',()=>upstream.destroy());req.pipe(upstream);
+  upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end('本机服务连接中断')});req.on('aborted',()=>upstream.destroy());res.on('close',()=>upstream.destroy());
+  if(body)upstream.end(body);else req.pipe(upstream);
  });
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket))});
  server.on('upgrade',(req,socket,head)=>{
