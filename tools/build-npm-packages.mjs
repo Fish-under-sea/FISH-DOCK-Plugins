@@ -19,7 +19,7 @@ const arg = (args, name, fallback) => {
   return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
 };
 
-const packageReadme = plugin => `# @fish-under-sea/fish-dock-plugin-${plugin.id}
+const packageReadme = (plugin, VERSION) => `# @fish-under-sea/fish-dock-plugin-${plugin.id}
 
 FISH Dock 官方「${plugin.name}」插件，版本 ${VERSION}。适用于 FISH Dock 1.1.0+、Windows x64 和宿主 API 1。
 
@@ -57,10 +57,13 @@ await fs.writeFile(target,bytes,{flag:'wx'});
 console.log(\`已安装：\${target}\\nSHA-256：\${digest}\`);
 `;
 
-export async function buildNpmPackages({dist, out, sourceRoot = repoRoot}) {
+export async function buildNpmPackages({dist, out, sourceRoot = repoRoot, version = VERSION, only}) {
+  if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('版本格式无效');
+  const selected=only?PLUGINS.filter(p=>p.id===only):PLUGINS;
+  if(!selected.length)throw Error('未知插件');
   await fs.rm(out, {recursive: true, force: true});
   await fs.mkdir(out, {recursive: true});
-  for (const base of PLUGINS) {
+  for (const base of selected) {
     const archiveName = `${base.id}.fish-plugin`;
     const archivePath = path.join(dist, archiveName);
     const archive = await fs.readFile(archivePath);
@@ -74,7 +77,7 @@ export async function buildNpmPackages({dist, out, sourceRoot = repoRoot}) {
     for (const license of plugin.licenses) await fs.copyFile(path.join(sourceRoot, 'licenses', license), path.join(packageRoot, 'licenses', license));
     await fs.writeFile(path.join(packageRoot, 'package.json'), `${JSON.stringify({
       name: `@fish-under-sea/fish-dock-plugin-${base.id}`,
-      version: VERSION,
+      version,
       description: `FISH Dock 官方${base.name}插件（按需单包）`,
       type: 'module',
       bin: {[`fish-dock-plugin-${base.id}`]: 'bin/install.mjs'},
@@ -82,18 +85,18 @@ export async function buildNpmPackages({dist, out, sourceRoot = repoRoot}) {
       engines: {node: '>=24.0.0'},
       license: 'MIT',
       repository: {type: 'git', url: 'git+https://github.com/Fish-under-sea/FISH-DOCK-Plugins.git'},
-      homepage: `https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v${VERSION}`,
+      homepage: `https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v${version}`,
       publishConfig: {access: 'public'},
     }, null, 2)}\n`);
-    await fs.writeFile(path.join(packageRoot, 'README.md'), packageReadme(plugin));
+    await fs.writeFile(path.join(packageRoot, 'README.md'), packageReadme(plugin, version));
     await fs.writeFile(path.join(packageRoot, 'bin', 'install.mjs'), installerScript(plugin));
   }
-  return {out, packages: PLUGINS.map(plugin => ({id: plugin.id, directory: path.join(out, plugin.id)}))};
+  return {out, packages: selected.map(plugin => ({id: plugin.id, directory: path.join(out, plugin.id)}))};
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.join(thisDir, 'build-npm-packages.mjs')) {
   const args = process.argv.slice(2);
   const dist = path.resolve(arg(args, '--dist', path.join(repoRoot, '..', '..', '.tools', 'plugin-release-1.0.0', 'dist')));
   const out = path.resolve(arg(args, '--out', path.join(repoRoot, '..', '..', '.tools', 'npm-plugin-packages-1.0.0')));
-  console.log(JSON.stringify(await buildNpmPackages({dist, out})));
+  console.log(JSON.stringify(await buildNpmPackages({dist, out, version: arg(args, '--version', VERSION), only: arg(args, '--only')})));
 }

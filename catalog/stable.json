@@ -41,12 +41,12 @@
       "description": "Magpie 网关独立插件",
       "author": "FISH",
       "maintainer": "Fish-under-sea",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.0/magpie.fish-plugin",
-      "sha256": "04dfb9030805567c56fad02d4b05a5cd0fa5b3d8019a6e24230e41cf166379e8",
-      "bytes": 20611664,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.1/magpie.fish-plugin",
+      "sha256": "ad6405c069c1a52d273a6624ceb3ce44604c0452903d04c50fb6ec27b4fca3c2",
+      "bytes": 20614063,
       "dependencies": [
         "FISH Dock >=1.1.0",
         "Node.js 24（宿主提供）"

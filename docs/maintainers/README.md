@@ -1,6 +1,6 @@
 # 插件维护者指南
 
-本版为 1.0.0，配套 FISH Dock 1.1.0+。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+本版以四插件 1.0.0 为基础，Magpie 独立升级至 1.0.1，配套 FISH Dock 1.1.0+。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
 
 ## 固定来源与资源
 
@@ -31,6 +31,8 @@ node tools/stage-development.mjs --out C:/work/preview-plugins --sdk ../FISH-Doc
 
 数据根在运行时解析。复制导出包到其他盘符或账号后，以目标根和插件身份重新定位。`credentials`、`roster`、`keys`、`config` 为核心业务分类；`exports`、`backups`、`tmp` 分别保存导出、恢复点与临时资源。版本切换会更新说明 README，避免将临时目录当作持久配置。
 
+Magpie 使用插件命名空间内 `credentials/magpie-runtime/` 的服务副本和原生 `.portable` 模式，自有资料位于其中的 `data/`。首次启动完整复制旧 `credentials/magpie/` 的资料，保留原目录，后续启动不覆盖新资料。发行资源始终保持原样。真实 `HOME`、`USERPROFILE`、`APPDATA`、XDG 与 `DSH_HOME` 等 Agent 路径变量按白名单传入，用于发现本机实际安装；不要再将用户目录整体改成插件 profile。测试只验证识别，不自动接入或切换 Agent 模型。
+
 宿主更新流程先备份业务分类，再切换资源并激活。激活失败会恢复旧版资源和原始分类；恢复异常时保留备份并提示重试。停用和卸载保留资料。破坏性清理需单独确认，不能作为升级或卸载的隐含步骤。
 
 ## 回归与验收
@@ -55,5 +57,7 @@ Webhook 测试、系统代理切换、Windhawk 系统安装与应用均为实际
 7. 桌面安装包在 Dock 仓单独制作与发布；npm 为四个插件分别生成单包，进入各输出目录使用 `npm pack --dry-run` 检查后运行 `npm publish --access public`。
 
 正式打包使用 `tools/build-release.mjs` 生成四个 `.fish-plugin`，再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-1.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。`relay-probe` 是开发探针，不在这四个发行物中。
+
+独立补丁使用 `--version 1.0.1 --only magpie`，两个构建工具都需传入。单插件构建输出的 `stable.json` 仅含本次插件；正式商店目录须只替换相应条目，保留其他插件已发布的版本、下载地址和摘要。
 
 对外开发入口见 [开发者指南](../developers/README.md)，使用与数据目录见 [项目 README](../../README.md)。

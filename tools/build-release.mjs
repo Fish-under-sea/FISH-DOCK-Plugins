@@ -13,9 +13,11 @@ export function archive(root){
  const tail=Buffer.alloc(22),catalog=Buffer.concat(directory);tail.writeUInt32LE(0x06054b50);tail.writeUInt16LE(rows.length,8);tail.writeUInt16LE(rows.length,10);tail.writeUInt32LE(catalog.length,12);tail.writeUInt32LE(offset,16);return Buffer.concat([...parts,catalog,tail]);
 }
 export function build(options){
- const version='1.0.0',tag=`v${version}`,out=path.resolve(options.out);const staged=path.join(out,'staged');stage({...options,out:staged,include:definitions.map(definition=>definition.key)});const dist=path.join(out,'dist');fs.mkdirSync(dist);
+ const version=options.version||'1.0.0';if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('版本格式无效');
+ const selected=options.only?definitions.filter(d=>d.key===options.only):definitions;if(!selected.length)throw Error('未知插件');
+ const tag=`v${version}`,out=path.resolve(options.out);const staged=path.join(out,'staged');stage({...options,out:staged,include:selected.map(definition=>definition.key)});const dist=path.join(out,'dist');fs.mkdirSync(dist);
  const entries=[];
- for(const definition of definitions){const root=path.join(staged,definition.key),manifest=JSON.parse(fs.readFileSync(path.join(root,'plugin.json'),'utf8'));
+ for(const definition of selected){const root=path.join(staged,definition.key),manifest=JSON.parse(fs.readFileSync(path.join(root,'plugin.json'),'utf8'));manifest.version=version;
   fs.copyFileSync(path.join(repository,'LICENSE'),path.join(root,'LICENSE'));
   fs.copyFileSync(path.join(repository,'THIRD_PARTY_NOTICES.md'),path.join(root,'THIRD_PARTY_NOTICES.md'));
   const license=definition.key==='magpie'?'Magpie.txt':definition.key==='clash'?'mihomo.txt':null;
@@ -28,4 +30,4 @@ export function build(options){
  }
  const catalog={schema:1,plugins:entries};fs.writeFileSync(path.join(dist,'stable.json'),JSON.stringify(catalog,null,2)+'\n');fs.writeFileSync(path.join(dist,'SHA256SUMS.txt'),entries.map(e=>`${e.sha256}  ${e.id.slice(5)}.fish-plugin`).join('\n')+'\n');return {dist,plugins:entries};
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){const options={};for(let i=2;i<process.argv.length;i+=2){if(!['--out','--sdk','--ofm','--magpie','--mihomo'].includes(process.argv[i])||!process.argv[i+1])throw Error('需要 --out --sdk --ofm --magpie --mihomo');options[process.argv[i].slice(2)]=path.resolve(process.argv[i+1]);}console.log(JSON.stringify(build(options),null,2));}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){const options={};for(let i=2;i<process.argv.length;i+=2){if(!['--out','--sdk','--ofm','--magpie','--mihomo','--version','--only'].includes(process.argv[i])||!process.argv[i+1])throw Error('需要 --out --sdk，可选 --ofm --magpie --mihomo --version --only');options[process.argv[i].slice(2)]=['--version','--only'].includes(process.argv[i])?process.argv[i+1]:path.resolve(process.argv[i+1]);}console.log(JSON.stringify(build(options),null,2));}

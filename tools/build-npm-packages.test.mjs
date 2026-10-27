@@ -5,6 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import {buildNpmPackages} from './build-npm-packages.mjs';
 
+test('按指定版本仅生成 Magpie npm 补丁包',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fish-npm-magpie-')),dist=path.join(root,'dist'),source=path.join(root,'source'),out=path.join(root,'out');
+ fs.mkdirSync(dist);fs.mkdirSync(path.join(source,'licenses'),{recursive:true});
+ fs.writeFileSync(path.join(dist,'magpie.fish-plugin'),'synthetic');
+ for(const name of ['LICENSE','THIRD_PARTY_NOTICES.md','licenses/Magpie.txt'])fs.writeFileSync(path.join(source,name),'synthetic');
+ const result=await buildNpmPackages({dist,out,sourceRoot:source,version:'1.0.1',only:'magpie'});
+ assert.deepEqual(result.packages.map(p=>p.id),['magpie']);
+ const manifest=JSON.parse(fs.readFileSync(path.join(out,'magpie/package.json')));
+ assert.equal(manifest.version,'1.0.1');assert.match(manifest.homepage,/v1\.0\.1$/);
+ assert.match(fs.readFileSync(path.join(out,'magpie/README.md'),'utf8'),/magpie@1\.0\.1/);
+ assert.deepEqual(fs.readdirSync(out),['magpie']);
+});
+
 test('按插件生成独立 npm 包，不带其他插件资源', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fish-npm-packages-'));
   const dist = path.join(root, 'dist');

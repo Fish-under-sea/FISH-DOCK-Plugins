@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {inflateRawSync,crc32} from 'node:zlib';
-import {archive} from './build-release.mjs';
+import {archive,build} from './build-release.mjs';
 import {definitions, stage} from './stage-development.mjs';
 test('发行清单不包含开发探针',()=>{
  assert.equal(definitions.some(definition=>definition.key==='relay-probe'),false);
@@ -23,6 +23,18 @@ test('stage 只输出选中的插件，并写入正确的 manifest 文件哈希'
  const releaseOut=path.join(base,'release');stage({out:releaseOut,sdk,include:definitions.map(definition=>definition.key)});
  assert.equal(fs.existsSync(path.join(releaseOut,'relay-probe')),false);
  const release=JSON.parse(fs.readFileSync(path.join(releaseOut,'development.json'),'utf8'));assert.deepEqual(release.plugins.map(plugin=>plugin.id),definitions.map(definition=>`fish.${definition.key}`));
+});
+test('单独发布 Magpie 补丁，清单和目录版本一致',()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fish-magpie-release-')),sdk=path.join(root,'sdk');
+ for(const name of ['node/plugin.mjs','browser/bridge.js']){const file=path.join(sdk,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'synthetic-sdk');}
+ const magpie=path.join(root,'magpie.exe');fs.writeFileSync(magpie,'synthetic-binary');
+ const result=build({out:path.join(root,'out'),sdk,magpie,version:'1.0.1',only:'magpie'});
+ assert.deepEqual(result.plugins.map(p=>p.id),['fish.magpie']);
+ assert.equal(result.plugins[0].version,'1.0.1');
+ assert.match(result.plugins[0].url,/\/v1\.0\.1\/magpie\.fish-plugin$/);
+ const manifest=JSON.parse(fs.readFileSync(path.join(root,'out/staged/magpie/plugin.json')));
+ assert.equal(manifest.version,'1.0.1');assert.ok(manifest.files['plugins/magpie/environment.mjs']);
+ assert.deepEqual(fs.readdirSync(result.dist).sort(),['SHA256SUMS.txt','magpie.fish-plugin','stable.json']);
 });
 test('发行 ZIP 使用标准 deflate、UTF-8 文件名、CRC 和固定时间',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fish-release-'));
