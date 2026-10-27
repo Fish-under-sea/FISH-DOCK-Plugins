@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FISH Dock 插件配置仓 README 排版源稿</title>
+<style>
+@font-face{font-family:Jersey;src:url('Jersey20-Regular.ttf') format('truetype');font-display:block}
+:root{color-scheme:light;--frame:#ddd4bf;--paper:#f6f3e9;--line:#5a544a;--bright:#f6f1e3;--low:#bdb39c;--shadow:#9c927b;--ink:#25241e;--muted:#6f695c;--vent:#a89e87;--green:#8fd6a0;--lamp:#4ed381;--yellow:#ffd84a;--orange:#f08a5d;--dots:rgba(0,0,0,.05)}
+:root[data-theme=dark]{color-scheme:dark;--frame:#393930;--paper:#252722;--line:#a69e87;--bright:#686957;--low:#171a17;--shadow:#111510;--ink:#f0ecdf;--muted:#bbb69e;--vent:#777b66;--green:#7bc78c;--lamp:#72e394;--yellow:#e1c44b;--orange:#e39062;--dots:rgba(255,255,255,.06)}
+*{box-sizing:border-box;letter-spacing:0}
+body{margin:0;width:1440px;background:transparent;color:var(--ink);font-family:'Microsoft YaHei UI','Microsoft YaHei',sans-serif}
+.pixel{font-family:Jersey,monospace;font-weight:400}
+.frame{border:3px solid var(--line);background:var(--frame);box-shadow:inset 3px 3px var(--bright),inset -3px -3px var(--low),0 7px var(--shadow)}
+.vent{height:30px;flex:1;background:repeating-linear-gradient(90deg,var(--vent) 0 3px,transparent 3px 10px)}
+.lamp{display:block;width:23px;height:23px;border:2px solid var(--line);background:var(--lamp);flex:none}
+.hero{position:relative;width:1440px;height:560px;padding-bottom:9px;overflow:clip}
+.window{height:550px}
+.titlebar{height:70px;display:flex;align-items:center;gap:24px;padding:0 24px;border-bottom:3px solid var(--line)}
+.lights{display:flex;border:2px solid var(--line);height:35px;flex:none}
+.lights i{width:20px;background:var(--green)}
+.lights i+i{border-left:2px solid var(--line);background:var(--yellow)}
+.lights i+i+i{background:var(--orange)}
+.system-name{font-size:26px;color:var(--muted);white-space:nowrap}
+.panes{display:grid;grid-template-columns:906px 1fr;gap:28px;padding:28px 26px 26px;height:474px}
+.pane{min-width:0;border:3px solid var(--line);background:radial-gradient(var(--dots) .8px,transparent .8px) 0 0/7px 7px,var(--paper);box-shadow:inset 3px 3px var(--low)}
+.copy{padding:22px 36px}
+.kicker{margin:0 0 2px;display:flex;align-items:center;gap:15px;font-size:23px;font-weight:700;color:var(--muted)}
+.kicker i{width:17px;height:17px;background:var(--orange)}
+h1{margin:0;font-size:124px;line-height:1.12;height:140px;white-space:nowrap}
+.product{display:block;font-size:41px;line-height:1.2}
+.rule{display:flex;width:580px;height:9px;margin:14px 0 18px}
+.rule i{width:68%;background:var(--green)}
+.rule i+i{width:18%;background:var(--yellow)}
+.rule i+i+i{width:14%;background:var(--orange)}
+.tagline{margin:0;font-size:28px;line-height:1.4;font-weight:700;white-space:nowrap}
+.translation{margin:3px 0 14px;font-size:23px;color:var(--muted)}
+.chips{display:flex;gap:14px;font-size:25px;line-height:30px}
+.chips span{padding:1px 12px;background:var(--line);color:var(--paper);border:2px solid var(--line)}
+.chips span+span{background:var(--paper);color:var(--line)}
+.portrait{display:flex;align-items:center;justify-content:center;overflow:clip}
+.portrait img{width:360px;height:360px;object-fit:contain}
+.mascot{position:absolute;z-index:1;top:70px;left:819px;width:188px;height:239px;object-fit:contain;object-position:top}
+.metrics{display:flex;width:1440px;gap:12px;padding:0 4px 9px;margin-top:24px}
+.metric{width:349px;height:174px;padding:11px 12px 14px;flex:none}
+.metric-head{height:33px;display:flex;justify-content:space-between;align-items:center;font-size:27px;color:var(--muted)}
+.metric .lamp{width:18px;height:18px}
+.metric-value{height:104px;border:3px solid var(--line);background:var(--paper);box-shadow:inset 3px 3px var(--low);display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:0;padding:4px 13px}
+.number{font-size:56px;line-height:1.1;white-space:nowrap}
+.metric-label{font-size:17px;line-height:22px;white-space:nowrap;font-weight:700;color:var(--muted)}
+.keys{display:flex;align-items:flex-start;gap:18px;margin:35px 0 10px;padding:5px 4px 10px}
+.key{font-size:28px;line-height:1.3;min-height:65px;padding:10px 20px;color:var(--ink);white-space:nowrap;font-weight:700;flex:none}
+.key.green{background:var(--green)}
+</style>
+</head>
+<body>
+<section id="hero" class="hero">
+<div class="window frame">
+<div class="titlebar"><span class="lights"><i></i><i></i><i></i></span><span class="system-name pixel">FISH // PLUGINS &amp; CONFIGURATION</span><i class="vent"></i><i class="lamp"></i></div>
+<div class="panes">
+<div class="pane copy"><p class="kicker"><i></i><span id="kicker">插件配置仓 · 按需安装</span></p>
+<h1 class="pixel">FISH PLUGINS</h1><span class="product pixel">PLUGINS + CONFIGURATION</span>
+<div class="rule"><i></i><i></i><i></i></div>
+<p id="tagline" class="tagline">官方插件、配置说明与版本下载</p>
+<p id="translation" class="translation pixel">Official plugins. Config guides. Release packages.</p>
+<div class="chips pixel"><span>WINDOWS X64</span><span>HOST API 1</span><span>NPM PACKAGES</span></div>
+</div>
+<div class="pane portrait"><img id="portrait" src="DSH-model-broker.png" width="360" height="360" alt="插件配置仓吉祥物"></div>
+</div>
+</div>
+<img class="mascot" src="mascot.png" width="188" height="239" alt="用户指定的求佛透明挂件">
+</section>
+<section class="metrics">
+<div id="stat-version" class="metric frame"><div class="metric-head pixel">VERSION<i class="lamp"></i></div><div class="metric-value"><span class="number pixel">1.0.3</span><span class="metric-label" data-zh="MAGPIE 1.0.3 / 其余 1.0.2" data-en="MAGPIE 1.0.3 / OTHERS 1.0.2"></span></div></div>
+<div id="stat-desktop" class="metric frame"><div class="metric-head pixel">PLUGINS<i class="lamp"></i></div><div class="metric-value"><span class="number pixel">4 PLUGINS</span><span class="metric-label" data-zh="四个独立插件" data-en="INDEPENDENT PLUGINS"></span></div></div>
+<div id="stat-mail" class="metric frame"><div class="metric-head pixel">PACKAGES<i class="lamp"></i></div><div class="metric-value"><span class="number pixel" data-zh="4 PACKS" data-en="4 PACKS"></span><span class="metric-label" data-zh="四个 npm 单包" data-en="NPM SINGLE PACKAGES"></span></div></div>
+<div id="stat-channels" class="metric frame"><div class="metric-head pixel">HOST API<i class="lamp"></i></div><div class="metric-value"><span class="number pixel">API 1</span><span class="metric-label" data-zh="FISH Dock 1.1.0+" data-en="FISH DOCK 1.1.0+"></span></div></div>
+</section>
+<div class="keys">
+<span id="key-zh" class="key frame green">中文</span><span id="key-en" class="key frame">English</span><span id="key-start" class="key frame" data-zh="入门指南" data-en="Get started"></span>
+<span id="key-download" class="key frame green" data-zh="下载 / RELEASES" data-en="DOWNLOADS"></span><span id="key-release" class="key frame" data-zh="更新记录" data-en="CHANGELOG"></span><span id="key-issues" class="key frame" data-zh="反馈 / ISSUES" data-en="ISSUES"></span>
+</div>
+<script>
+const params=new URLSearchParams(location.search);
+document.documentElement.dataset.theme=params.get('theme')==='dark'?'dark':'light';
+document.documentElement.lang='zh-CN';
+for(const el of document.querySelectorAll('[data-zh]'))el.textContent=el.dataset.zh;
+</script>
+</body>
+</html>

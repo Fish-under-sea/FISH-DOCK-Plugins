@@ -6,46 +6,20 @@
   <a href="#get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-start-zh-dark.png"><img src="assets/readme/key-start-zh-light.png" alt="入门指南" height="40"></picture></a>
 </p>
 
-<table width="100%">
-  <tr>
-    <td width="72%" valign="middle" align="left">
-      <p><samp>FISH // PLUGINS &amp; CONFIGURATION</samp></p>
-      <h1>FISH Dock 插件配置仓</h1>
-      <h3>官方插件、配置说明与版本下载</h3>
-      <p>飞书通知 · Clash 代理 · Magpie 网关 · OFM 本地模型</p>
-      <p><sub>Official plugins, configuration guides and releases.</sub></p>
-      <p><kbd>WINDOWS X64</kbd> <kbd>HOST API 1</kbd> <kbd>4 PLUGINS</kbd></p>
-    </td>
-    <td width="28%" valign="middle" align="center">
-      <img src="assets/readme/DSH-FISH.png" alt="FISH 插件配置仓吉祥物" width="256" height="256">
-    </td>
-  </tr>
-</table>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-hero-zh-dark.png">
+  <img src="assets/readme/config-hero-zh-light.png" alt="FISH 插件配置仓：官方插件、配置说明与版本下载" width="1448" height="575">
+</picture>
 
-<table width="100%">
-  <tr>
-    <td width="25%" align="center" valign="top">
-      <p><samp>VERSION</samp></p>
-      <h3><a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.0.3">1.0.3</a></h3>
-      <p><sub>Magpie 1.0.3 · 其余 1.0.2</sub></p>
-    </td>
-    <td width="25%" align="center" valign="top">
-      <p><samp>PLUGINS</samp></p>
-      <h3><a href="#plugins">4 PLUGINS</a></h3>
-      <p><sub>四个独立插件</sub></p>
-    </td>
-    <td width="25%" align="center" valign="top">
-      <p><samp>PACKAGES</samp></p>
-      <h3><a href="#packages">4 PACKS</a></h3>
-      <p><sub>四个 npm 单包</sub></p>
-    </td>
-    <td width="25%" align="center" valign="top">
-      <p><samp>HOST API</samp></p>
-      <h3><a href="https://github.com/Fish-under-sea/FISH-Dock">API 1</a></h3>
-      <p><sub>FISH Dock 1.1.0+</sub></p>
-    </td>
-  </tr>
-</table>
+<p>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.0.3"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：Magpie 1.0.3，其余插件 1.0.2" width="23%"></picture></a>
+  <a href="#plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-desktop-zh-dark.png"><img src="assets/readme/config-stat-desktop-zh-light.png" alt="PLUGINS：四个独立插件" width="23%"></picture></a>
+  <a href="#packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-mail-zh-dark.png"><img src="assets/readme/config-stat-mail-zh-light.png" alt="PACKAGES：四个 npm 单包" width="23%"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-Dock"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-channels-zh-dark.png"><img src="assets/readme/config-stat-channels-zh-light.png" alt="HOST API：1，兼容 FISH Dock 1.1.0+" width="23%"></picture></a>
+</p>
+
+<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="插件适配代码许可 MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="随包 mihomo 许可 GPL-3.0"> <img src="https://img.shields.io/badge/Magpie-1.0.3-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="Magpie 插件 1.0.3"> <img src="https://img.shields.io/badge/Other%20Plugins-1.0.2-ffd84a?style=flat-square&amp;labelColor=5a544a" alt="其他插件 1.0.2"></p>
+<p><strong>FISH Plugins &amp; Configuration · 插件配置仓</strong><br>官方插件、配置说明与发行入口；按需安装，独立运行。</p>
 
 <p>
   <a href="#get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-download-zh-dark.png"><img src="assets/readme/key-download-zh-light.png" alt="下载 / Releases" height="40"></picture></a>
