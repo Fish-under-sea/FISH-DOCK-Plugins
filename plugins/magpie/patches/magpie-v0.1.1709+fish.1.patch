@@ -67,6 +67,71 @@ index 3b67be5..1c5dd01 100644
      }
      throw new Error(t("No such call: {what}", { what: String(m.method) }));
    }
+diff --git a/internal/gui/assets/plugins.css b/internal/gui/assets/plugins.css
+index 11a925d..7197697 100644
+--- a/internal/gui/assets/plugins.css
++++ b/internal/gui/assets/plugins.css
+@@ -300,3 +300,13 @@ button.pm-chip:disabled { cursor: default; opacity: .6; }
+   .pm-card.ghost .sk, .pm-ghlook, .pm-ghlook .dots i, .pm-arrive .pm-card { animation: none; }
+   .pm-ghlook .dots i { opacity: .5; }
+ }
++/* 插件页图标是一张 <img> 的 SVG，图里用 currentColor 画线；<img> 不继承主题
++   色，于是它永远按 SVG 自己的黑画，深色模式下就成了一块看不见的黑。这里把
++   它钉到正文色上：浅色模式黑、深色模式白。内联 svg.nav-ic（内置页、无图插件）
++   本来就走 currentColor，不受这条影响。 */
++img.nav-ic { filter: brightness(0); }
++@media (prefers-color-scheme: dark) {
++  :root:not([data-theme="light"]) img.nav-ic { filter: brightness(0) invert(1); }
++}
++:root[data-theme="dark"] img.nav-ic { filter: brightness(0) invert(1); }
++
+diff --git a/internal/gui/checkin_state_read_test.go b/internal/gui/checkin_state_read_test.go
+new file mode 100644
+index 0000000..2624f1a
+--- /dev/null
++++ b/internal/gui/checkin_state_read_test.go
+@@ -0,0 +1,41 @@
++package gui
++
++import (
++	"encoding/json"
++	"path/filepath"
++	"slices"
++	"testing"
++
++	"github.com/yetone/magpie/internal/plugin"
++)
++
++// checkin:state 是插件页「自动签到」的读：它必须在 PageReads 里，且 pageRead
++// 能给出页面要的几栏，而不是被当成未知的读拒掉。
++func TestCheckinStateIsADeclaredRead(t *testing.T) {
++	if !slices.Contains(plugin.PageReads, "checkin:state") {
++		t.Fatal("plugin.PageReads has no checkin:state")
++	}
++	h := t.TempDir()
++	t.Setenv("HOME", h)
++	t.Setenv("USERPROFILE", h)
++	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
++	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
++	t.Setenv("XDG_DATA_HOME", filepath.Join(h, ".local", "share"))
++	v, err := pageRead("checkin:state", nil)
++	if err != nil {
++		t.Fatalf("pageRead(checkin:state): %v", err)
++	}
++	b, err := json.Marshal(v)
++	if err != nil {
++		t.Fatalf("marshal: %v", err)
++	}
++	var m map[string]any
++	if err := json.Unmarshal(b, &m); err != nil {
++		t.Fatalf("checkin:state is not a JSON object: %s", b)
++	}
++	for _, k := range []string{"providers", "accounts", "today"} {
++		if _, ok := m[k]; !ok {
++			t.Errorf("checkin:state has no %q: %s", k, b)
++		}
++	}
++}
 diff --git a/internal/gui/pagebridge.js b/internal/gui/pagebridge.js
 index 1316c3b..0f7571c 100644
 --- a/internal/gui/pagebridge.js
@@ -263,7 +328,7 @@ index 0000000..696aab3
 +	return nil, false
 +}
 diff --git a/internal/gui/pluginpage.go b/internal/gui/pluginpage.go
-index ed93103..5179816 100644
+index ed93103..0549923 100644
 --- a/internal/gui/pluginpage.go
 +++ b/internal/gui/pluginpage.go
 @@ -76,6 +76,9 @@ type pluginPage struct {
@@ -276,16 +341,20 @@ index ed93103..5179816 100644
  	// Actions are its items in magpie's menus (plugin.ActionSpec); each
  	// opens this page
  	Actions []pluginAction `json:"actions,omitempty"`
-@@ -102,6 +105,9 @@ type pluginPanel struct {
+@@ -102,8 +105,11 @@ type pluginPanel struct {
  	Titles map[string]string `json:"titles,omitempty"`
  	URL    string            `json:"url"`   // the panel, under pluginPagePrefix
  	Reads  []string          `json:"reads"` // what it may read, of plugin.PageReads
+-	token  string
+-	dir    string
 +	// Calls are the window actions it may ask for, as the plugin's
 +	// package.json declares them
-+	Calls  []string          `json:"calls"`
- 	token  string
- 	dir    string
++	Calls []string `json:"calls"`
++	token string
++	dir   string
  }
+ 
+ // pageKeyChars are what a window page's key can't have
 @@ -139,10 +145,14 @@ func windowParts() (pages []pluginPage, panels []pluginPanel) {
  		if reads == nil {
  			reads = []string{}
@@ -321,12 +390,21 @@ index ed93103..5179816 100644
  	mux.HandleFunc("GET /api/plugin-pages", func(rw http.ResponseWriter, r *http.Request) {
  		out := pluginPages()
  		if out == nil {
+@@ -480,6 +493,8 @@ func pageRead(read string, params map[string]any) (any, error) {
+ 			out.Models = append(out.Models, model{Model: m, Calls: g.Calls, Input: g.Input, Output: g.Output, Cost: g.Cost})
+ 		}
+ 		return out, nil
++	case "checkin:state":
++		return checkinState(), nil
+ 	}
+ 	return nil, fmt.Errorf("no read %q", read)
+ }
 diff --git a/internal/gui/pluginpagecall.go b/internal/gui/pluginpagecall.go
 new file mode 100644
-index 0000000..e64b315
+index 0000000..b2116ba
 --- /dev/null
 +++ b/internal/gui/pluginpagecall.go
-@@ -0,0 +1,395 @@
+@@ -0,0 +1,380 @@
 +package gui
 +
 +import (
@@ -565,24 +643,9 @@ index 0000000..e64b315
 +	return checkinState(), nil
 +}
 +
-+// checkinState 报当前签到开关与可选的厂商，供插件页画勾选。
-+// creditEstimate 是今日额度回补的估计（有证据的厂商才出现）。
-+func checkinState() map[string]any {
-+	s := settings.Load()
-+	checkins := map[string]bool{}
-+	for id, on := range s.PluginCheckins {
-+		checkins[id] = on
-+	}
-+	rows := make([]map[string]string, 0, 16)
-+	for _, p := range provider.All() {
-+		rows = append(rows, map[string]string{"id": p.ID, "name": p.Name})
-+	}
-+	out := map[string]any{"checkins": checkins, "providers": rows}
-+	if estimate := provider.CreditEstimates(time.Now()); len(estimate) > 0 {
-+		out["creditEstimate"] = estimate
-+	}
-+	return out
-+}
++// checkinState 是插件页「自动签到」一次读到的全部内容：厂商、账号、今天每个
++// 账号的结果、实得积分与额度估计。定义在 provider 包，页面只拿聚合值。
++func checkinState() provider.CheckinViewState { return provider.CheckinViewStateNow() }
 +
 +// checkinSetProvider 是 /api/settings/plugin-checkin 的同一件事。
 +func checkinSetProvider(params map[string]any) (any, error) {
@@ -833,7 +896,7 @@ index 0000000..763503a
 +	return out
 +}
 diff --git a/internal/plugin/page.go b/internal/plugin/page.go
-index 786e086..f01de64 100644
+index 786e086..3236766 100644
 --- a/internal/plugin/page.go
 +++ b/internal/plugin/page.go
 @@ -13,8 +13,8 @@ import (
@@ -857,10 +920,17 @@ index 786e086..f01de64 100644
  }
  
  // PageSpec is a plugin's own page in magpie's window.
-@@ -76,6 +79,41 @@ const maxActions = 8
- // magpie.permissions. None of them carries a secret.
- var PageReads = []string{"usage:summary", "providers:list"}
+@@ -73,8 +76,45 @@ var actionID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+ const maxActions = 8
  
+ // PageReads are the reads a plugin's page can be granted, each in
+-// magpie.permissions. None of them carries a secret.
+-var PageReads = []string{"usage:summary", "providers:list"}
++// magpie.permissions. None of them carries a secret: checkin:state is the
++// aggregated check-in picture (vendors, accounts, today's outcome, credits),
++// never a key or a sign-in.
++var PageReads = []string{"usage:summary", "providers:list", "checkin:state"}
++
 +// PageCalls are the window actions a page may ask for, each declared in
 +// magpie.calls: the naming reads as namespace:verb, so a page's request
 +// says both what it acts on and what it does. A call is not a read: it
@@ -895,11 +965,10 @@ index 786e086..f01de64 100644
 +	}
 +	return out
 +}
-+
+ 
  // PanelSlots are the places in magpie's own pages a plugin's panel can
  // go: under the Agents page's list, at the end of the Usage page, on
- // Settings' Plugins tab, and in a provider's editor (which tells the
-@@ -148,6 +186,7 @@ func Window(target string) (w *WindowSpec, only bool) {
+@@ -148,6 +188,7 @@ func Window(target string) (w *WindowSpec, only bool) {
  			Panels      []part   `json:"panels"`
  			Actions     []part   `json:"actions"`
  			Permissions []string `json:"permissions"`
@@ -907,7 +976,7 @@ index 786e086..f01de64 100644
  		} `json:"magpie"`
  	}
  	if json.Unmarshal(b, &pkg) != nil {
-@@ -200,6 +239,11 @@ func Window(target string) (w *WindowSpec, only bool) {
+@@ -200,6 +241,11 @@ func Window(target string) (w *WindowSpec, only bool) {
  			w.Reads = append(w.Reads, r)
  		}
  	}
@@ -919,6 +988,223 @@ index 786e086..f01de64 100644
  	return w, pkg.Main == "" && len(pkg.Exports) == 0
  }
  
+diff --git a/internal/provider/checkin_view.go b/internal/provider/checkin_view.go
+new file mode 100644
+index 0000000..5ddcd46
+--- /dev/null
++++ b/internal/provider/checkin_view.go
+@@ -0,0 +1,166 @@
++package provider
++
++import (
++	"strings"
++	"time"
++
++	"github.com/yetone/magpie/internal/settings"
++)
++
++// CheckinProviderState 是签到页上的一家厂商：开关与显示名。插件页只读这类
++// 聚合信息，拿不到任何密钥。
++type CheckinProviderState struct {
++	ID   string `json:"id"`
++	Name string `json:"name"`
++	On   bool   `json:"on"`
++}
++
++// CheckinAccountState 是一个账号：oday 的签到结果按它的 Key 查。By 是它所属
++// 厂商的 id（与 Key 里 "厂商|登录" 的前缀一致），页面据此分组。
++type CheckinAccountState struct {
++	Key  string `json:"key"`
++	User string `json:"user"`
++	On   bool   `json:"on"`
++	By   string `json:"by"`
++}
++
++// CheckinViewState 是插件页「自动签到」一次读到的全部内容：厂商、账号、今天
++// 每个账号的结果（Today 按账号 Key）、实得积分（Credits），以及厂商额度面板
++// 反推的估计（CreditEstimate，按账号 Key）。没有秘密。
++type CheckinViewState struct {
++	Providers      []CheckinProviderState      `json:"providers"`
++	Accounts       []CheckinAccountState       `json:"accounts"`
++	Today          map[string]WorkBuddyCheckin `json:"today"`
++	Credits        map[string]float64          `json:"credits,omitempty"`
++	CreditEstimate map[string]float64          `json:"creditEstimate,omitempty"`
++}
++
++// checkinVendorNames 是内置签到厂商的显示名（插件厂商的名字来自 PluginCheckins）。
++// 键是账号 Key "厂商|登录" 里的厂商前缀。
++var checkinVendorNames = map[string]string{
++	wbCN.id:             wbCN.name, // workbuddy
++	TraeCNID:            "Trae CN", // trae-cn
++	MiniMaxCodeID:       "MiniMax Code",
++	MiniMaxCodeGlobalID: "MiniMax Code (Global)",
++	"qoder":             "Qoder",
++	QoderCNID:           "Qoder CN",
++}
++
++// CheckinViewStateNow 是 CheckinViewState 的当前读法。
++func CheckinViewStateNow() CheckinViewState { return CheckinViewStateAt(time.Now()) }
++
++// CheckinViewStateAt 汇出签到页要的东西：账号与开关来自 CheckinAccounts，
++// 今天的签到结果来自各厂商已经落盘的签到文件，估计来自额度面板的日间回落。
++// 只读，不发起任何签到。
++func CheckinViewStateAt(now time.Time) CheckinViewState {
++	s := settings.Load()
++	// 插件厂商的名字与开关
++	names := map[string]string{}
++	on := map[string]bool{}
++	for _, pc := range PluginCheckins() {
++		names[pc.ID] = pc.Name
++		on[pc.ID] = PluginCheckinOn(s, pc.ID)
++	}
++	// 内置厂商（若还有账号）：名字固定，开关在设置里
++	builtinOn := map[string]bool{
++		wbCN.id:             s.WorkBuddyCheckin,
++		TraeCNID:            s.TraeCheckin,
++		MiniMaxCodeID:       s.MiniMaxCheckin,
++		MiniMaxCodeGlobalID: s.MiniMaxCheckin,
++		"qoder":             s.QoderCheckin,
++		QoderCNID:           s.QoderCheckin,
++	}
++	for id, name := range checkinVendorNames {
++		if _, ok := names[id]; !ok {
++			names[id] = name
++		}
++		if _, ok := on[id]; !ok {
++			on[id] = builtinOn[id]
++		}
++	}
++
++	accounts := CheckinAccounts()
++	today := checkinTodayEntries(now)
++
++	out := CheckinViewState{
++		Providers: []CheckinProviderState{},
++		Accounts:  []CheckinAccountState{},
++		Today:     map[string]WorkBuddyCheckin{},
++		Credits:   map[string]float64{},
++	}
++	seenVendor := map[string]bool{}
++	counts := map[string]int{}
++	for _, a := range accounts {
++		vendor := checkinVendorOf(a.Key)
++		if vendor == "" {
++			continue
++		}
++		counts[vendor]++
++	}
++	for _, a := range accounts {
++		vendor := checkinVendorOf(a.Key)
++		if vendor == "" {
++			continue
++		}
++		out.Accounts = append(out.Accounts, CheckinAccountState{Key: a.Key, User: a.User, On: a.On, By: vendor})
++		if !seenVendor[vendor] {
++			seenVendor[vendor] = true
++			name := names[vendor]
++			if name == "" {
++				name = vendor
++			}
++			out.Providers = append(out.Providers, CheckinProviderState{ID: vendor, Name: name, On: on[vendor]})
++		}
++		if r, ok := today[a.Key]; ok {
++			out.Today[a.Key] = r
++			if r.Credit > 0 {
++				out.Credits[a.Key] = r.Credit
++			}
++		}
++	}
++	if estimate := CreditEstimates(now); len(estimate) > 0 {
++		by := creditEstimateByAccount(estimate, out.Accounts, counts)
++		if len(by) > 0 {
++			out.CreditEstimate = by
++		}
++	}
++	return out
++}
++
++// checkinVendorOf 是账号 Key "厂商|登录" 的厂商；没有分隔符时算不清，返回空。
++func checkinVendorOf(key string) string {
++	if i := strings.Index(key, "|"); i > 0 {
++		return key[:i]
++	}
++	return ""
++}
++
++// checkinTodayEntries 是今天（北京日）每个账号的签到结果：五份签到文件里
++// 属于今天的那一条，按账号 Key 归并。
++func checkinTodayEntries(now time.Time) map[string]WorkBuddyCheckin {
++	day := CheckinDay(now)
++	out := map[string]WorkBuddyCheckin{}
++	for _, path := range []string{wbCheckinPath(), traeCheckinPath(), miniMaxCheckinPath(), qoderCheckinPath(), pluginCheckinPath()} {
++		for key, r := range shownCheckins(path) {
++			if r.Day == day {
++				out[key] = r
++			}
++		}
++	}
++	return out
++}
++
++// creditEstimateByAccount 是厂商级估计摊到账号上：只有该厂商恰好一个账号时
++// 才能确定是它到账的，否则不摊（乱传会把别家账号的额度算到它头上）。
++func creditEstimateByAccount(perVendor map[string]float64, accounts []CheckinAccountState, counts map[string]int) map[string]float64 {
++	out := map[string]float64{}
++	for _, a := range accounts {
++		if counts[a.By] != 1 {
++			continue
++		}
++		if v, ok := perVendor[a.By]; ok && v > 0 {
++			out[a.Key] = v
++		}
++	}
++	return out
++}
+diff --git a/internal/provider/checkin_view_test.go b/internal/provider/checkin_view_test.go
+new file mode 100644
+index 0000000..3a4972c
+--- /dev/null
++++ b/internal/provider/checkin_view_test.go
+@@ -0,0 +1,39 @@
++package provider
++
++import "testing"
++
++func TestCheckinVendorOf(t *testing.T) {
++	for key, want := range map[string]string{
++		"workbuddy|u1": "workbuddy",
++		"plugin-x|ann": "plugin-x",
++		"qoder-cn|a@b": "qoder-cn",
++		"nopipe":       "",
++		"|leading":     "",
++	} {
++		if got := checkinVendorOf(key); got != want {
++			t.Errorf("checkinVendorOf(%q) = %q, want %q", key, got, want)
++		}
++	}
++}
++
++// 厂商级估计只在它恰好一个账号时摊到那个账号上；两个账号的厂商不摊，以免把
++// 别家账号的额度算到它头上。
++func TestCreditEstimateByAccount(t *testing.T) {
++	perVendor := map[string]float64{"workbuddy": 50, "qoder": 30}
++	accounts := []CheckinAccountState{
++		{Key: "workbuddy|a", By: "workbuddy"},
++		{Key: "qoder|a", By: "qoder"},
++		{Key: "qoder|b", By: "qoder"},
++	}
++	counts := map[string]int{"workbuddy": 1, "qoder": 2}
++	got := creditEstimateByAccount(perVendor, accounts, counts)
++	if got["workbuddy|a"] != 50 {
++		t.Errorf("single-account vendor estimate = %v, want 50", got["workbuddy|a"])
++	}
++	if _, ok := got["qoder|a"]; ok {
++		t.Errorf("two-account vendor must not attribute the estimate, got %v", got)
++	}
++	if _, ok := got["qoder|b"]; ok {
++		t.Errorf("two-account vendor must not attribute the estimate, got %v", got)
++	}
++}
 diff --git a/internal/provider/credits_estimate.go b/internal/provider/credits_estimate.go
 new file mode 100644
 index 0000000..5d695ab

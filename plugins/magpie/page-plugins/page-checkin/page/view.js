@@ -53,14 +53,16 @@
     return {entry, credit, estimate};
   }
 
-  // accountsOf groups a vendor's accounts: by the by the host reports
-  // ("plugin:<id>"), or by the account key's own prefix for older hosts.
+  // accountsOf groups a vendor's accounts: by the account key's own prefix
+  // ("<vendor id>|"), else by the by the host reports ("plugin:<id>" or the
+  // vendor id itself) for an older host.
   function accountsOf(state, vendor) {
     const all = (state && state.accounts) || [];
     return all.filter((a) => {
+      const key = String(a.key || "");
+      if (key.startsWith(`${vendor.id}|`)) return true;
       const by = String(a.by || "");
-      if (by) return by === `plugin:${vendor.id}`;
-      return String(a.key || "").startsWith(`${vendor.id}|`);
+      return by === vendor.id || by === `plugin:${vendor.id}`;
     });
   }
 

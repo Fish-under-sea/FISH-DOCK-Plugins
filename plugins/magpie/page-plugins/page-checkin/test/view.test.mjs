@@ -126,3 +126,19 @@ test('未告知与反推各有中英文案', () => {
   assert.equal(V.text('zh').unknownCount.replace('{n}', 2), '2 项未告知');
   assert.equal(V.text('zh').estimateHint, '按额度面板反推');
 });
+
+// 宿主可能给 by 厂商 id 本身（新格式）、plugin:<id> 或干脆没有 by：都按 key
+// 的 "<厂商>|" 前缀归组，不能因为 by 的写法漏掉账号。
+test('账号按 key 前缀归组，不受 by 写法影响', () => {
+  const s = {
+    providers: [{id: 'workbuddy', name: 'WorkBuddy', on: true}],
+    accounts: [
+      {key: 'workbuddy|a', user: 'A', by: 'workbuddy', on: true},
+      {key: 'workbuddy|b', user: 'B', by: 'plugin:workbuddy', on: true},
+      {key: 'workbuddy|c', user: 'C', by: '', on: true},
+    ],
+    today: {}, credits: {},
+  };
+  const g = V.vendorGroups(s, 'zh')[0];
+  assert.deepEqual(g.accounts.map((a) => a.key), ['workbuddy|a', 'workbuddy|b', 'workbuddy|c']);
+});

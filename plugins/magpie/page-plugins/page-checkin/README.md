@@ -4,7 +4,7 @@ magpie 窗口里的一个页面：按厂商分组显示每个已登录账号今�
 
 - 包名：`@magpie-community/page-checkin`
 - 页面标题：`自动签到`（`en`：Check-in）
-- 版本：0.1.0（配合 magpie 1.1 的 `checkin:state` 读取）
+- 版本：0.2.1（配合 magpie 1.2.1 的 `checkin:state` 读取）
 
 ## 宿主需要提供什么
 
@@ -23,7 +23,7 @@ magpie 窗口里的一个页面：按厂商分组显示每个已登录账号今�
 - magpie 的插件页 → 添加插件 → 填 `@magpie-community/page-checkin`；
 - 或随 FISH Dock 的 Magpie 插件内置：目录放在 Dock 的 `plugins/magpie/page-plugins/page-checkin`，打包时 `stage-development.mjs` 递归复制进产物，Dock 启动 Magpie 时用 `MAGPIE_SEED_EXTRA` 指向它，首启装进插件清单（装的是目录副本，不依赖 npm）。没带这份目录的普通 magpie 则退回 `DefaultSpecs` 里的 `@magpie-community/page-checkin@latest`。
 
-写动作（`checkin:set-provider` 等）声明在 `package.json` 的 `magpie.actions` 字符串项里 —— 这是 magpie 识别「页面可写动作」的字段，不是 `magpie.writes`。
+写动作（`checkin:set-provider` 等）声明在 `package.json` 的 `magpie.calls` 里 —— 这是 magpie 1.2 起的「页面可写动作」白名单字段（1.1 及更早用的是 `magpie.actions`）。
 
 ## 边界
 
