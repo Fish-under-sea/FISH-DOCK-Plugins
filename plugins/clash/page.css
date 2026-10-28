@@ -7,3 +7,15 @@ header>div:first-child{display:flex;align-items:center;gap:10px}.toolbar>label{d
 .tun-service{margin-top:8px;padding-top:8px;border-top:1px solid var(--dock-line)}
 .svc-log{margin:8px 0;max-height:120px;font-size:11px;color:var(--dock-muted)}
 .confirm-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;border:1px solid var(--dock-line);border-radius:12px;padding:8px 12px;margin:8px 0;font-size:12px}.confirm-bar p{margin:0;font-size:12px}
+/* 订阅状态与反馈：成功用绿色、失败用红色，空状态给下一步指引。 */
+.good{color:#30d158}.bad{color:#ff453a}.small{font-size:11.5px}
+.empty-card{border:1px dashed var(--dock-line);border-radius:12px;padding:14px;margin:12px 0}.empty-card p{margin:0 0 6px}.empty-card p:last-child{margin:0}
+.sub-state{margin:6px 0;font-size:12.5px;font-weight:600}
+.tag{font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.tag.on{background:rgba(48,209,88,.16);color:#30d158}.tag.off{background:var(--dock-card);color:var(--dock-muted);border:1px solid var(--dock-line)}
+.subscription-title{align-items:center}
+#subscription-form h3{margin:0 0 8px;font-size:13px}
+
+.banner{margin:8px 8px 12px;padding:9px 12px;border-radius:12px;border:1px solid var(--dock-line);background:var(--dock-card);font-size:12.5px}
+.banner.bad{border-color:rgba(255,69,58,.55);background:rgba(255,69,58,.12);color:#ff8a80}
+.banner.good{border-color:rgba(48,209,88,.5);background:rgba(48,209,88,.10)}

@@ -19,6 +19,8 @@ function labelValue(value) {
 }
 export function createClash({context,runtime,request:injectedRequest,fetch:fetcher=globalThis.fetch,defaultKernel=''}) {
   let running=null,settings,loading,subscriptions=[],secret='',operation=null,closing=false,operationError='';
+  // 旧版单订阅凭据存在但无法自动迁移（密文/格式不符）时置真，用于页面明确提示「请重新添加」。
+  let legacyPending=false;
   let queue=Promise.resolve();
   const jobs=new Map(),alive=()=>!!running&&running.alive();
   const exclusive=fn=>{const result=queue.then(fn);queue=result.catch(()=>{});return result};
@@ -63,6 +65,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
             // Commit the stable identity before clearing legacy credentials; retries cannot duplicate it.
             await persist([{id,name:'原有订阅',enabled:true,status:hasCache?'ready':'pending',lastAttempt:null,lastSuccess:null,nodeCount:0,hasCache,error:''}]);
             await context.secrets.write('credentials','subscription.json','');
+            legacyPending=false;
+          } else {
+            // 无法解析：保留原值不动，但要让页面知道「旧订阅没迁过来，请重新添加地址」。
+            legacyPending=true;
           }
         }
       }
@@ -89,6 +95,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   }
   async function view({controller=true}={}) {
     const c=await config(),state={...c,configured:!!c.kernel,subscriptionConfigured:subscriptions.length>0,
+      legacyPending,
       subscriptions:subscriptions.map(s=>({...s,updating:jobs.has(s.id)})),
       running:alive(),operation:operation?.name??null,error:operationError,systemProxy:runtime.proxy.active?.()??false,groups:[],mode:'rule'};
     if(controller&&state.running)try{

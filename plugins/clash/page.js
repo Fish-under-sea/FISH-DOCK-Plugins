@@ -2,20 +2,51 @@
  const root=document.querySelector('#app');
  let view=null,busy=false,polling=false,error='',group='',section='nodes',detail=null,timer=null,revision=0;
  let draft={id:'',name:'',url:''},configDraft=null,settingsOpen=false,confirmDelete='',confirmTun='';
+ let notice='',noticeKind='info';
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const updating=()=>view?.subscriptions?.some(s=>s.updating);
  const locked=()=>busy||view?.running||!!view?.operation||updating();
  const button=(action,text,extra='',disabled=busy)=>`<button type="button" data-action="${action}" ${extra} ${disabled?'disabled':''}>${text}</button>`;
  const when=value=>value?esc(new Date(value).toLocaleString()):'—';
+ const say=(text,kind='info')=>{notice=String(text||'');noticeKind=kind};
+ // 后端错误文案是固定中文提示，不含地址或凭据；只接受这类已知提示，
+ // 其余异常（可能夹带 URL/token 的原始错误）一律折叠为通用说明。
+ const KNOWN=[/订阅地址无效/,/订阅必须使用不含用户名、密码或片段的 HTTPS 地址/,/请输入 1–80 字的订阅名称/,
+  /请输入 HTTPS 订阅地址/,/最多保存 32 个订阅/,/订阅不存在，请刷新/,/订阅 ID 无效/,/订阅启用状态无效/,
+  /订阅配置损坏，请从备份恢复/,/请先停止内核/,/请等待订阅更新完成/,/插件正在停用/,/请选择 mihomo 内核/,
+  /请先配置 mihomo 内核/,/请先选择 mihomo 内核/,/端口应为 1024–65535/,/混合代理和控制器端口应不同/,
+  /布局值无效/,/TUN 开关无效/,/当前环境不支持 TUN 服务模式/,/内核尚未启动/,/内核正在切换状态/,
+  /请先更新已启用订阅/,/内核控制器尚未就绪/,/系统代理状态无效/,/请先启动内核/,/详情类别无效/,
+  /mihomo 控制器请求失败/,/代理组或节点已变化/];
+ const reason=e=>{
+  const m=typeof e?.message==='string'?e.message.trim():'';
+  const hit=KNOWN.find(r=>r.test(m));
+  return hit?m:'请检查配置和运行状态后重试';
+ };
+ function methodLabel(method){
+  return {view:'读取状态',save:'保存设置',subscriptionSave:'保存订阅',subscriptionToggle:'切换启用',
+   subscriptionRemove:'删除订阅',reload:'更新订阅',start:'启动内核',stop:'停止内核',select:'切换节点',
+   mode:'切换模式',proxy:'系统代理',layout:'切换布局',details:'读取详情',tunService:'读取 TUN 状态',
+   installTunService:'安装 TUN 服务',uninstallTunService:'卸载 TUN 服务'}[method]??'操作';
+ }
  async function run(method,params={}) {
   if(busy)return false;
-  busy=true;revision++;error='';draw();
+  busy=true;revision++;error='';say('');draw();
   try {
    const result=await FishDock.call(`clash.${method}`,params);
    if(method==='details')detail=result;
-   else {view=result;if(method==='save')configDraft=null;if(method==='subscriptionSave')draft={id:'',name:'',url:''};}
+   else {
+    view=result;
+    if(method==='save'){configDraft=null;say('内核设置已保存','ok')}
+    if(method==='subscriptionSave'){draft={id:'',name:'',url:''};say('订阅已保存。下一步点「更新」下载并校验节点。','ok')}
+    if(method==='subscriptionToggle')say('启用状态已更新','ok');
+    if(method==='subscriptionRemove')say('订阅已删除，其余订阅不受影响','ok');
+    if(method==='reload')say('已开始更新，完成后显示节点数与结果','ok');
+    if(method==='installTunService')say('TUN 服务已安装','ok');
+    if(method==='uninstallTunService')say('TUN 服务已卸载','ok');
+   }
    return true;
-  }catch{error='操作失败，请检查配置和运行状态后重试';return false}
+  }catch(e){error=`${methodLabel(method)}失败：${reason(e)}`;return false}
   finally{busy=false;draw();schedule();}
  }
  function schedule() {
@@ -31,25 +62,28 @@
  }
  function subscriptionsView() {
   const rows=view.subscriptions||[];
-  return `<h2>订阅管理</h2><p>多个订阅可同时启用；新增后点击更新，验证成功后可启动。改名、增删或启用切换前请停止内核。</p>
+  const empty=rows.length===0?`<div class="empty-card"><p><strong>还没有订阅。</strong></p>
+   <p class="muted">填好下面的「名称」和「HTTPS 订阅地址」后点「保存订阅」，然后点该订阅卡上的「更新」下载并校验节点。校验通过前不会启动内核。</p></div>`:'';
+  return `<h2>订阅管理</h2><p class="muted">多个订阅可同时启用；新增后点「更新」校验，通过后才能启动内核。改名、增删或启用切换前需先停止内核。</p>
+   ${empty}
    ${button('reload','更新全部已启用订阅','',busy||!view.configured||!rows.some(s=>s.enabled)||!!view.operation)}
    <div class="subscriptions">${rows.map(s=>`<article class="subscription">
-    <div class="subscription-title"><strong>${esc(s.name)}</strong><span>${s.enabled?'已启用':'已停用'}</span></div>
-    <small class="muted">ID：${esc(s.id)}</small>
-    <p role="status">${s.updating?'更新中…':{pending:'等待更新',ready:'缓存可用',error:'更新失败'}[s.status]||'等待更新'} · ${s.nodeCount} 个节点 · ${s.hasCache?'保有可用缓存':'尚无缓存'}</p>
-    <p class="muted">最近尝试：${when(s.lastAttempt)}<br>最近成功：${when(s.lastSuccess)}</p>
+    <div class="subscription-title"><strong>${esc(s.name)}</strong><span class="tag ${s.enabled?'on':'off'}">${s.enabled?'已启用':'已停用'}</span></div>
+    <p class="sub-state ${s.status==='error'?'bad':s.status==='ready'?'good':'muted'}" role="status">${s.updating?'更新中…':{pending:'等待更新',ready:'缓存可用',error:'更新失败'}[s.status]||'等待更新'} · ${s.nodeCount} 个节点 · ${s.hasCache?'保有可用缓存':'尚无缓存'}</p>
+    <p class="muted small">最近尝试：${when(s.lastAttempt)} · 最近成功：${when(s.lastSuccess)}</p>
     ${s.error?`<p class="bad" role="alert">${esc(s.error)}</p>`:''}
+    ${!s.hasCache&&s.status==='pending'?`<p class="muted small">还没下载过节点：点下面的「更新」。</p>`:''}
     <div class="toolbar">${button('update','更新',`data-id="${esc(s.id)}"`,busy||s.updating||!view.configured||!!view.operation)}
     ${button('edit','编辑',`data-id="${esc(s.id)}"`,locked())}
     ${button('toggle',s.enabled?'停用':'启用',`data-id="${esc(s.id)}"`,locked())}
     ${button('delete','删除',`data-id="${esc(s.id)}"`,locked())}</div>
-    ${confirmDelete===s.id?`<div role="alert"><p>删除此订阅和本地节点缓存？其他订阅保持原状态。</p>${button('confirm-delete','确认删除',`data-id="${esc(s.id)}"`,locked())}${button('cancel-delete','取消')}</div>`:''}
-   </article>`).join('')||'<p>尚未添加订阅。</p>'}</div>
+    ${confirmDelete===s.id?`<div class="confirm-bar" role="alert"><p>删除此订阅和本地节点缓存？其他订阅保持原状态。</p>${button('confirm-delete','确认删除',`data-id="${esc(s.id)}"`,locked())}${button('cancel-delete','取消')}</div>`:''}
+   </article>`).join('')}</div>
    <form id="subscription-form"><h3>${draft.id?'编辑订阅':'添加订阅'}</h3>
-    <label>名称<input id="subscription-name" name="name" maxlength="80" required value="${esc(draft.name)}" ${locked()?'disabled':''}></label>
+    <label>名称<input id="subscription-name" name="name" maxlength="80" required value="${esc(draft.name)}" placeholder="例如：机场A" ${locked()?'disabled':''}></label>
     <label>HTTPS 订阅地址<input id="subscription-url" name="url" type="password" autocomplete="off" spellcheck="false" value="${esc(draft.url)}" placeholder="${draft.id?'留空保持原地址':'https://…'}" ${draft.id?'':'required'} ${locked()?'disabled':''}></label>
     <button ${locked()?'disabled':''}>${busy?'正在保存…':'保存订阅'}</button>${draft.id?button('cancel-edit','取消编辑'):''}
-    <p class="muted">地址加密保存且不回显。支持 mihomo 可读取的代理 YAML/JSON；网页、登录页与普通分享链接不等于订阅。</p>
+    <p class="muted small">地址加密保存且不回显。支持 mihomo 可读取的代理 YAML/JSON；网页、登录页与普通分享链接不等于订阅。</p>
    </form>`;
  }
  function tunServiceBlock() {
@@ -63,6 +97,15 @@
    <div class="toolbar">${button('tun-install',svc.installed?'重新安装服务':'安装 TUN 服务','',locked())}
    ${svc.installed?button('tun-uninstall','卸载服务','',locked()):''}
    ${button('tun-refresh','刷新状态')}</div></div>`;
+ }
+ function feedbackBlock() {
+  const parts=[];
+  if(busy)parts.push('<p class="banner" role="status">正在执行…</p>');
+  if(error||view.error)parts.push(`<p class="banner bad" role="alert">${esc(error||view.error)}</p>`);
+  else if(notice)parts.push(`<p class="banner ${noticeKind==='ok'?'good':''}" role="status">${esc(notice)}</p>`);
+  if(view.legacyPending&&!view.subscriptions.length)
+   parts.push('<p class="banner" role="status">检测到旧版单订阅凭据（已加密，无法自动迁移）。请在下方重新填写订阅名称与 HTTPS 地址并保存，旧文件不会被删除。</p>');
+  return parts.join('');
  }
  function draw() {
   const active=document.activeElement,focus=active?.id;
@@ -79,6 +122,7 @@
    ${button('proxy',view.systemProxy?'关闭系统代理':'开启系统代理',`aria-pressed="${view.systemProxy}"`,busy||(!view.running&&!view.systemProxy))}
    <label>运行模式<select id="mode" ${busy||!view.running?'disabled':''}>${['rule','global','direct'].map(m=>`<option value="${m}" ${m===view.mode?'selected':''}>${{rule:'规则',global:'全局',direct:'直连'}[m]}</option>`).join('')}</select></label></div>
    ${double?'<p class="muted narrow-note">窄窗口自动按单列排列，双栏偏好保持。</p>':''}
+   ${feedbackBlock()}
    <div class="workspace ${double?'double':''}">${double?`<aside><h2>管理</h2><nav>${nav}</nav><p>代理 ${esc(view.mixedPort)}<br>控制器 ${esc(view.controllerPort)}</p></aside>`:''}<section>${!double?`<div class="toolbar">${nav}</div>`:''}
    ${section==='nodes'?nodes:section==='providers'?subscriptionsView():`<h2>${section==='rules'?'规则':'连接'}</h2>${button('detail','刷新详情','',busy||!view.running)}<pre>${esc(detail?JSON.stringify(detail,null,2):'详情仅显示脱敏摘要。')}</pre>`}</section></div>
    <details id="settings" class="spaced" ${settingsOpen?'open':''}><summary>内核设置</summary><form id="config">
@@ -91,8 +135,7 @@
    ${cfg.tun?.enable&&!view.tunService?.installed?'<p class="bad" role="alert">TUN 已勾选但服务未安装，启动内核会被拒绝。请先安装 TUN 服务。</p>':''}
    ${tunServiceBlock()}
    </fieldset>
-   <button ${locked()?'disabled':''}>保存内核配置</button></form></details>
-   ${busy?'<p role="status">正在执行…</p>':''}${error||view.error?`<p class="bad" role="alert">${esc(error||view.error)}</p>`:''}`;
+   <button ${locked()?'disabled':''}>保存内核配置</button></form></details>`;
   bind();
   const form=root.querySelector('#config');
   form.oninput=()=>{const data=new FormData(form);configDraft={kernel:data.get('kernel'),mixedPort:data.get('mixedPort'),controllerPort:data.get('controllerPort'),tun:{enable:data.has('tunEnable'),stack:String(data.get('tunStack')||'mixed')}}};

@@ -70,3 +70,32 @@ test('background updating polls without blocking navigation; deletion needs inli
  f.click('delete');f.click('confirm-delete');await flush();
  assert.equal(f.calls.filter(c=>c.method==='clash.subscriptionRemove').length,1);
 });
+test('保存订阅失败时显示后端可操作提示，但仍不泄露地址或凭据',async()=>{
+ const f=fixture();await flush();f.click('section-providers');
+ f.element('subscription-name').value='9YUN';
+ f.element('subscription-url').value='https://example.test/?token=PRIVATE';
+ f.element('subscription-form').oninput();
+ f.fail();
+ f.element('subscription-form').onsubmit({preventDefault(){}});
+ await flush();
+ // 后端固定提示必须透出，用户才知道改哪里；但不得把地址/token 带进错误提示。
+ assert.ok(f.root.innerHTML.includes('保存订阅失败'));
+ const alerts=[...f.root.innerHTML.matchAll(/role="alert">([^<]*)</g)].map(m=>m[1]);
+ assert.equal(alerts.some(t=>t.includes('PRIVATE')),false);
+});
+test('空订阅列表给出下一步指引，保存成功后提示更新并显示订阅卡',async()=>{
+ const f=fixture();await flush();f.row.subscriptions=[];
+ f.click('view');await flush();
+ f.click('section-providers');
+ assert.ok(f.root.innerHTML.includes('还没有订阅'));
+ assert.ok(f.root.innerHTML.includes('下载并校验节点'));
+ f.row.subscriptions=[{id:'sub-00000000-0000-0000-0000-000000000002',name:'9YUN',enabled:true,status:'pending',nodeCount:0,hasCache:false,error:''}];
+ f.element('subscription-name').value='9YUN';
+ f.element('subscription-url').value='https://example.test/sub';
+ f.element('subscription-form').oninput();
+ f.element('subscription-form').onsubmit({preventDefault(){}});
+ await flush();
+ assert.ok(f.root.innerHTML.includes('订阅已保存'));
+ assert.ok(f.root.innerHTML.includes('9YUN'));
+ assert.ok(f.root.innerHTML.includes('还没下载过节点'));
+});

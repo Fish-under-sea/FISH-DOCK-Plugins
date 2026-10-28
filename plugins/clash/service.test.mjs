@@ -188,3 +188,10 @@ test('旧凭据为不可解析密文时跳过迁移，view 与新增订阅仍可
  assert.equal(saved.subscriptions.length,1);
  assert.equal(saved.subscriptions[0].name,'9YUN');
 });
+test('旧凭据跳过迁移时向页面回报 legacyPending，提示重新添加',async()=>{
+ const disk=new Map([['secret/credentials/subscription.json','\u0000binary-blob']]);
+ const f=fixture(disk);
+ assert.equal((await f.service.view({controller:false})).legacyPending,true);
+ await f.service.subscriptionSave({name:'A',url:'https://example.test/a'});
+ assert.equal((await f.service.view({controller:false})).legacyPending,true);
+});
