@@ -75,8 +75,8 @@
     return box;
   }
 
-  // 厂商标记：约定 page/logos/<provider id>.svg 放矢量标志，加载成功就用图；
-// 没有这份文件时退回按 id 取色的首字母块。素材与代码解耦，补图即生效。
+  // 厂商标记：约定 page/logos/<provider id>.{svg,png,webp} 放官方标志，按顺序
+  // 试，加载成功就用图；一份都没有时退回按 id 取色的首字母块。素材与代码解耦。
   const PALETTE = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#ef4444", "#6366f1"];
   function paletteColor(id) {
     let hash = 0;
@@ -91,17 +91,24 @@
       box.style.background = paletteColor(id);
     };
     box.setAttribute("aria-hidden", "true");
+    box.textContent = initial;
+    box.style.background = paletteColor(id);
     const img = document.createElement("img");
     img.alt = "";
     img.decoding = "async";
+    const exts = ["svg", "png", "webp"];
+    let next = 0;
+    const tryNext = () => {
+      if (next >= exts.length) { fallback(); return; }
+      img.src = `logos/${encodeURIComponent(String(id))}.${exts[next++]}`;
+    };
     img.addEventListener("load", () => {
       box.textContent = "";
       box.style.background = "none";
       box.append(img);
     });
-    img.addEventListener("error", fallback);
-    img.src = `logos/${encodeURIComponent(String(id))}.svg`;
-    fallback();
+    img.addEventListener("error", tryNext);
+    tryNext();
     return box;
   }
 
@@ -134,8 +141,7 @@
       head.append(logo(group.id, group.name));
       head.append(row("span", "vcaret", open ? "▾" : "▸"));
       head.append(row("div", "vname", group.name));
-      head.append(row("div", "vmeta", `${t.accounts.replace("{n}", group.total)} · ${group.done}/${group.total} · ${group.credit} ${t.credits}`
-        + (group.unknown ? ` · ${t.unknownCount.replace("{n}", group.unknown)}` : "")));
+      head.append(row("div", "vmeta", `${t.accounts.replace("{n}", group.total)} · ${group.done}/${group.total} · ${group.credit} ${t.credits}`));
       head.append(switchFor(group.on, async (on) => {
         await act("checkin:set-provider", {provider: group.id, on});
         await load();
@@ -157,10 +163,8 @@
           const guess = row("span", "credit est", `≈+${account.estimate}`);
           guess.title = t.estimateHint;
           tail.append(guess);
-        } else if (account.status.key === "claimed" || account.status.key === "done") {
-          // 签到了但厂商没回报数额：说“未告知”，不假装是 0。
-          tail.append(row("span", "credit unknown", t.unknown));
         }
+        // 既没有实得、也反推不出的，不再显示「未告知」：留白即可。
         tail.append(switchFor(account.on, async (on) => {
           await act("checkin:set-account", {key: account.key, on});
           await load();

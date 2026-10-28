@@ -87,12 +87,12 @@ test('英文与中文各一套文案，语言按前缀判定', () => {
   assert.match(V.text(undefined).run, /Check in now/);
 });
 
-// 厂商只回「今天已领取」，不给数额：这一格是「未告知」，不是 0。
-test('厂商不给数额时记未告知，仍按已签到计入完成数', () => {
+// 厂商只回「今天已领取」、又没有固定值：不计积分（也不显示未告知），仍按已签到计数。
+test('厂商不给数额且无固定值时不计积分，仍按已签到计入完成数', () => {
   const noAmount = {
-    providers: [{id: 'codearts', name: 'CodeArts', on: true}],
-    accounts: [{key: 'codearts|a', on: true, by: 'plugin:codearts'}],
-    today: {'codearts|a': {outcome: 'done', msg: '今天已领取'}},
+    providers: [{id: 'acme', name: 'Acme', on: true}],
+    accounts: [{key: 'acme|a', on: true, by: 'plugin:acme'}],
+    today: {'acme|a': {outcome: 'done', msg: '今天已领取'}},
     credits: {},
   };
   const group = V.vendorGroups(noAmount, 'zh')[0];
@@ -104,14 +104,31 @@ test('厂商不给数额时记未告知，仍按已签到计入完成数', () =>
   assert.equal(group.unknown, 1);
 });
 
+// 已知每天固定 +100 的厂商（CodeArts、商汤小浣熊）：账号不回报数额时用固定值，
+// 计入今日积分，不再出现未告知。
+test('固定每日额度的厂商按 +100 记', () => {
+  for (const id of ['codearts', 'raccoon']) {
+    const s = {
+      providers: [{id, name: id, on: true}],
+      accounts: [{key: `${id}|a`, on: true, by: `plugin:${id}`}],
+      today: {[`${id}|a`]: {outcome: 'done', msg: '今天已领取'}},
+      credits: {},
+    };
+    const g = V.vendorGroups(s, 'zh')[0];
+    assert.equal(g.accounts[0].credit, 100, id);
+    assert.equal(g.credit, 100, id);
+    assert.equal(g.unknown, 0, id);
+  }
+});
+
 // 宿主按额度面板反推出的数：单独给一格，不并进「实得」汇总。
 test('宿主给出反推值时用它，且不并入实得积分', () => {
   const guessed = {
-    providers: [{id: 'codearts', name: 'CodeArts', on: true}],
-    accounts: [{key: 'codearts|a', on: true, by: 'plugin:codearts'}],
-    today: {'codearts|a': {outcome: 'done'}},
+    providers: [{id: 'acme', name: 'Acme', on: true}],
+    accounts: [{key: 'acme|a', on: true, by: 'plugin:acme'}],
+    today: {'acme|a': {outcome: 'done'}},
     credits: {},
-    creditEstimate: {'codearts|a': 50},
+    creditEstimate: {'acme|a': 50},
   };
   const group = V.vendorGroups(guessed, 'zh')[0];
   assert.equal(group.accounts[0].credit, null);

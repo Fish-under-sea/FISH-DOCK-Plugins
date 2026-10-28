@@ -35,6 +35,10 @@
   };
   const OUTCOMES = ["claimed", "done", "ineligible", "inactive", "captcha"];
 
+  // 已知「每天固定给、且不回报数额」的厂商：每个账号签到后固定 +N。用户实测
+  // CodeArts 与商汤小浣熊每号每天 +100，页面直接用这个值，不再显示「未告知」。
+  const DEFAULT_DAILY = {codearts: 100, raccoon: 100};
+
   function text(lang) {
     return String(lang || "").toLowerCase().startsWith("zh") ? TEXT.zh : TEXT.en;
   }
@@ -89,7 +93,14 @@
     const groups = vendors.map((vendor) => {
       const accounts = accountsOf(state, vendor).map((account) => {
         const {entry, credit, estimate} = todayOf(state, account.key);
-        return {...account, entry, credit, estimate, status: status(account, vendor, state, lang)};
+        const line = status(account, vendor, state, lang);
+        // 厂商没回报数额、但已知每天固定给的：补上固定值，不显示「未告知」。
+        let shown = credit;
+        if (shown === null && (line.key === "claimed" || line.key === "done")) {
+          const daily = DEFAULT_DAILY[vendor.id];
+          if (typeof daily === "number") shown = daily;
+        }
+        return {...account, entry, credit: shown, estimate, status: line};
       });
       const done = accounts.filter((a) => a.status.key === "claimed" || a.status.key === "done").length;
       const credit = accounts.reduce((sum, a) => sum + (a.credit ?? 0), 0);
