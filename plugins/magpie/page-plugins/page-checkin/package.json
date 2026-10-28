@@ -1,6 +1,6 @@
 {
   "name": "@magpie-community/page-checkin",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A page in magpie's window for daily check-ins: each vendor's accounts, today's credits and streak, one switch per vendor or account, and a manual check-in.",
   "files": ["page", "README.md"],
   "keywords": ["magpie", "magpie-page", "checkin", "credits"],

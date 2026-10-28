@@ -4,7 +4,7 @@ magpie 窗口里的一个页面：按厂商分组显示每个已登录账号今�
 
 - 包名：`@magpie-community/page-checkin`
 - 页面标题：`自动签到`（`en`：Check-in）
-- 版本：0.2.2（配合 magpie 1.2.1 的 `checkin:state` 读取）
+- 版本：0.2.3（配合 magpie 1.2.1 的 `checkin:state` 读取）
 
 ## 宿主需要提供什么
 
