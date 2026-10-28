@@ -93,10 +93,10 @@ index 1316c3b..0f7571c 100644
      api.theme = theme;
 diff --git a/internal/gui/plugincall_test.go b/internal/gui/plugincall_test.go
 new file mode 100644
-index 0000000..4155eea
+index 0000000..6909a12
 --- /dev/null
 +++ b/internal/gui/plugincall_test.go
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,131 @@
 +package gui
 +
 +import (
@@ -104,8 +104,11 @@ index 0000000..4155eea
 +	"encoding/json"
 +	"net/http"
 +	"net/http/httptest"
++	"slices"
 +	"strings"
 +	"testing"
++
++	"github.com/yetone/magpie/internal/settings"
 +)
 +
 +// 插件页的 magpie.call 是它唯一的出口（CSP connect-src 'none'）。这里钉住
@@ -195,15 +198,34 @@ index 0000000..4155eea
 +	}
 +}
 +
-+// 签到开关是 provider 级的：账号级请求被明确拒，而不是假装成功。
-+func TestPluginCallRefusesAccountLevelCheckin(t *testing.T) {
-+	_, err := pluginCall(context.Background(), "", "checkin:set-account", map[string]any{"provider": "claude"})
++// 签到开关分两层：厂商级是 settings.PluginCheckins，账号级是 settings.CheckinOff。
++// 账号级这条以前被这里拒成 ACCOUNT_LEVEL_UNSUPPORTED，可设置页一直有它
++// （/api/settings/checkin-account），插件页那个开关因此点不动。
++func TestPluginCallSetsAccountLevelCheckin(t *testing.T) {
++	t.Setenv("MAGPIE_CONFIG", t.TempDir())
++	if _, err := pluginCall(context.Background(), "", "checkin:set-account", map[string]any{"key": "workbuddy|u1", "on": false}); err != nil {
++		t.Fatalf("关掉账号: %v", err)
++	}
++	if !slices.Contains(settings.Load().CheckinOff, "workbuddy|u1") {
++		t.Fatal("关掉的账号没有记进 CheckinOff")
++	}
++	if _, err := pluginCall(context.Background(), "", "checkin:set-account", map[string]any{"key": "workbuddy|u1", "on": true}); err != nil {
++		t.Fatalf("重新打开: %v", err)
++	}
++	if slices.Contains(settings.Load().CheckinOff, "workbuddy|u1") {
++		t.Fatal("重新打开后仍留在 CheckinOff 里")
++	}
++}
++
++func TestPluginCallRefusesAccountLevelCheckinWithoutKey(t *testing.T) {
++	t.Setenv("MAGPIE_CONFIG", t.TempDir())
++	_, err := pluginCall(context.Background(), "", "checkin:set-account", map[string]any{"on": true})
 +	if err == nil {
-+		t.Fatal("账号级签到被接受了")
++		t.Fatal("缺少账号 key 被接受了")
 +	}
 +	coded, ok := err.(interface{ Code() string })
-+	if !ok || coded.Code() != "ACCOUNT_LEVEL_UNSUPPORTED" {
-+		t.Fatalf("error = %v, want ACCOUNT_LEVEL_UNSUPPORTED", err)
++	if !ok || coded.Code() != "NO_ACCOUNT" {
++		t.Fatalf("error = %v, want NO_ACCOUNT", err)
 +	}
 +}
 diff --git a/internal/gui/plugincallswindow.go b/internal/gui/plugincallswindow.go
@@ -301,10 +323,10 @@ index ed93103..5179816 100644
  		if out == nil {
 diff --git a/internal/gui/pluginpagecall.go b/internal/gui/pluginpagecall.go
 new file mode 100644
-index 0000000..41963a3
+index 0000000..e64b315
 --- /dev/null
 +++ b/internal/gui/pluginpagecall.go
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,395 @@
 +package gui
 +
 +import (
@@ -312,6 +334,7 @@ index 0000000..41963a3
 +	"encoding/json"
 +	"errors"
 +	"net/http"
++	"slices"
 +	"strings"
 +	"time"
 +
@@ -509,11 +532,37 @@ index 0000000..41963a3
 +	case "checkin:run", "checkin:refresh":
 +		return checkinRun(ctx, params)
 +	case "checkin:set-account":
-+		// 签到开关是 provider 级的：magpie 没有按账号的签到开关，硬造一个
-+		// 只会让页面显示一个不存在的设置。
-+		return nil, relayErr("ACCOUNT_LEVEL_UNSUPPORTED", "签到开关按厂商设置，没有账号级开关")
++		return checkinSetAccount(params)
 +	}
 +	return nil, errNoCall(name)
++}
++
++// checkinSetAccount 是单个账号的签到开关，用的就是设置页那份 settings.CheckinOff：
++// 关掉只把这个账号排除在每日签到之外，厂商级开关不动。这里原先回一个
++// ACCOUNT_LEVEL_UNSUPPORTED，其实 magpie 一直有这个字段（/api/settings/
++// checkin-account 写的就是它），结果插件页上那个账号开关点下去只会报错。
++func checkinSetAccount(params map[string]any) (any, error) {
++	key, _ := params["key"].(string)
++	if key == "" {
++		return nil, relayErr("NO_ACCOUNT", "缺少账号 key")
++	}
++	on, ok := params["on"].(bool)
++	if !ok {
++		return nil, relayErr("BAD_PARAM", "on 必须是布尔值")
++	}
++	s := settings.Load()
++	off := slices.DeleteFunc(slices.Clone(s.CheckinOff), func(k string) bool { return k == key })
++	if !on {
++		off = append(off, key)
++	}
++	if len(off) == 0 {
++		off = nil
++	}
++	s.CheckinOff = off
++	if err := settings.Save(s); err != nil {
++		return nil, err
++	}
++	return checkinState(), nil
 +}
 +
 +// checkinState 报当前签到开关与可选的厂商，供插件页画勾选。

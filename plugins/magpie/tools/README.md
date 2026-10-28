@@ -25,8 +25,12 @@ git -C upstream apply --check patches\magpie-v0.1.1709+fish.1.patch
 git -C upstream apply patches\magpie-v0.1.1709+fish.1.patch
 
 # 3) 编（本机没有 make，手跑 release-windows 的两段式）
-powershell -File tools\build-magpie.ps1 -Source upstream -Out dist `
-  -VersionTag 'v0.1.1709+fish.1' -FileVersion '0.1.1709.1'
+#    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
+#    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
+pwsh -File tools\build-magpie.ps1 `
+  -VersionTag 'v0.1.1709+fish.1' -FileVersion '0.1.1709.1' -ProductName 'magpie fish' `
+  -WinresJson <上述 upstream 目录>\build\windows\fish-winres.json `
+  -Out dist\magpie-windows-amd64.exe
 ```
 
 产物是 `dist\magpie-windows-amd64.exe`。成品放到 `plugins/magpie/.tools/dist/`，构建插件包时用 `--magpie` 指过去：
