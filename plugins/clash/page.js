@@ -63,7 +63,7 @@
   const nodes=`<h2>代理节点</h2>${view.groups.length?`<label>代理组<select id="group" ${busy?'disabled':''}>${view.groups.map(g=>`<option ${g.name===group?'selected':''} value="${esc(g.name)}">${esc(g.name)}</option>`).join('')}</select></label>`:'<p>尚无代理节点。请在订阅页添加并更新订阅，然后启动内核。</p>'}
    <div class="nodes">${(current?.nodes||[]).map(n=>button('node',`<span>${esc(n.label??n.name)}${n.source?`<small class="source">${esc(n.source)} · ${esc(n.sourceId)}</small>`:''}</span><span>${n.delay===null?'未测速':`${esc(n.delay)} ms`}</span>`,`class="node" data-node="${esc(n.name)}" aria-current="${n.name===current.selected}"`)).join('')}</div>`;
   root.innerHTML=`<header><div><h1>Clash</h1><span class="muted">${view.running?'内核运行中':'内核已停止'}${view.version?' · '+esc(view.version):''}</span></div><div class="layouts" aria-label="页面布局">${button('single','单栏',`aria-pressed="${!double}"`)}${button('double','双栏',`aria-pressed="${double}"`)}</div></header>
-   <div class="toolbar">${button(view.running||view.operation==='starting'||updating()?'stop':'start',view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',busy||view.operation==='stopping')}${button('view','刷新')}
+   <div class="toolbar"><label class="autostart" title="随 Dock 启动就拉起内核"><input id="autostart" type="checkbox"> 自启动</label>${button(view.running||view.operation==='starting'||updating()?'stop':'start',view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',busy||view.operation==='stopping')}${button('view','刷新')}
    ${button('proxy',view.systemProxy?'关闭系统代理':'开启系统代理',`aria-pressed="${view.systemProxy}"`,busy||(!view.running&&!view.systemProxy))}
    <label>运行模式<select id="mode" ${busy||!view.running?'disabled':''}>${['rule','global','direct'].map(m=>`<option value="${m}" ${m===view.mode?'selected':''}>${{rule:'规则',global:'全局',direct:'直连'}[m]}</option>`).join('')}</select></label></div>
    ${double?'<p class="muted narrow-note">窄窗口自动按单列排列，双栏偏好保持。</p>':''}
@@ -89,7 +89,19 @@
   root.querySelector('#mode').onchange=e=>run('mode',{mode:e.target.value});
   if(focus){const next=root.querySelector(`#${focus}`);next?.focus();if(caret&&next?.setSelectionRange)next.setSelectionRange(...caret)}
  }
- function bind() {
+ async function readAutostart(box){
+ try{const row=await FishDock.call('host.autostart');box.checked=row.autostart===true;}
+ catch{const wrap=box.closest('.autostart');if(wrap)wrap.hidden=true;}
+}
+async function setAutostart(box){
+ const want=box.checked;box.disabled=true;
+ try{const row=await FishDock.call('host.autostart',{autostart:want});box.checked=row.autostart===true;}
+ catch{box.checked=!want;error='自启动设置未保存，请重试';draw();}
+ finally{const again=root.querySelector('#autostart');if(again)again.disabled=false;}
+}
+function bind() {
+ const auto=root.querySelector('#autostart');
+ if(auto){auto.onchange=()=>setAutostart(auto);void readAutostart(auto);}
   root.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{
    const a=b.dataset.action,id=b.dataset.id;
    if(a==='single'||a==='double')return run('layout',{layout:a});

@@ -35,7 +35,7 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-最新补丁：[Magpie 1.1.0](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.0)，随包内置签到页并预置 14 个页面插件，补齐页面写动作桥与签到读写契约；网关页新增「自启动」开关（需 FISH Dock 1.2.1+）。不同原生版本按摘要并存，实际副本每次校验，账号与渠道资料保留；原生更新仍由 Dock 插件管理。随包原生为官方 0.1.1709，飞书、Clash、OFM 保持 1.0.2。
+最新补丁：[Magpie 1.1.0](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.0)，随包内置签到页并预置 14 个页面插件，补齐页面写动作桥与签到读写契约；网关页新增「自启动」开关（需 FISH Dock 1.2.1+）。不同原生版本按摘要并存，实际副本每次校验，账号与渠道资料保留；原生更新仍由 Dock 插件管理。随包原生为官方 0.1.1709；Clash 同批升至 1.0.3（内核页也支持自启动开关），飞书与 OFM 保持 1.0.2。
 
 <h2 id="plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-features-dark.png"><img src="assets/readme/section-features-light.png" alt="PLUGINS · 四个插件" width="100%"></picture></h2>
 
@@ -57,9 +57,9 @@
 
 <p align="center"><img src="assets/readme/magpie.png" width="760" alt="Magpie 网关插件界面"></p>
 
-### OFM 本地模型（灰度）
+### OFM 本地模型（自 2026-10-25 起暂停维护）
 
-本地模型渠道和 API 工作台。目前属于灰度测试，暂未开放完整的登录、项目绑定和模型调用流程。
+本地模型渠道和 API 工作台。**自 2026 年 10 月 25 日起暂停维护**：不再跟进功能与兼容性更新，已安装的版本可继续使用，配置与数据保留；需要模型网关时请迁移到 Magpie。此前的灰度限制（完整登录、项目绑定与模型调用流程）保持原状。
 
 <p align="center"><img src="assets/readme/ofm.png" width="760" alt="OFM 本地模型插件界面"></p>
 
@@ -72,9 +72,9 @@
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
 | 飞书 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu/v/1.0.2) |
-| Clash | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.0.2) |
+| Clash 1.0.3 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.0/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.0.3) |
 | Magpie 1.1.0 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.0/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/1.1.0) |
-| OFM | [`ofm.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/ofm.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-ofm`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-ofm/v/1.0.2) |
+| OFM（暂停维护） | [`ofm.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/ofm.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-ofm`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-ofm/v/1.0.2) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-install-dark.png"><img src="assets/readme/section-install-light.png" alt="PACKAGES · npm 单包" width="100%"></picture></h2>
 
