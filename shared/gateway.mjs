@@ -2,12 +2,17 @@ import path from 'node:path';
 import {publicServiceError, serviceError} from './errors.mjs';
 
 export function createGateway({context,runtime,kind,defaultExecutable=''}) {
- let config={executable:defaultExecutable,port:kind==='magpie'?3425:38080};
+ let config={executable:defaultExecutable,port:kind==='magpie'?3425:38080,gatewayPort:kind==='magpie'?3426:undefined};
  let state='unconfigured',phase=null,error=null,instance=null,starting=null,stopping=null,stopRequested=false,controller;
  function validate(value) {
   if(!value||typeof value.executable!=='string'||(value.executable&&!path.isAbsolute(value.executable)&&!path.win32.isAbsolute(value.executable)))throw Error('服务路径必须为绝对路径');
   if(!Number.isInteger(value.port)||value.port<1024||value.port>65535)throw Error('端口须为 1024–65535 的整数');
-  return {executable:value.executable,port:value.port};
+  // 网关端口（Magpie 的模型网关）与网页服务端口分开保存：共享时它必须固定，
+  // 否则外部 Agent 的地址每次启动都会变。
+  const gatewayPort=value.gatewayPort==null?undefined:value.gatewayPort;
+  if(gatewayPort!==undefined&&(!Number.isInteger(gatewayPort)||gatewayPort<1024||gatewayPort>65535))throw Error('网关端口须为 1024–65535 的整数');
+  if(gatewayPort!==undefined&&gatewayPort===value.port)throw Error('网关端口不能与服务端口相同');
+  return {executable:value.executable,port:value.port,...(gatewayPort===undefined?{}:{gatewayPort})};
  }
  function view() {
   if(state==='running'&&instance?.alive&&!instance.alive()){state='error';error='服务进程已退出，请检查服务配置后重新启动';}
@@ -23,7 +28,8 @@ export function createGateway({context,runtime,kind,defaultExecutable=''}) {
     const suffix=kind==='magpie'?'magpie.exe':'packages/desktop/service-host.mjs';
     const legacy=new RegExp(`/packages/fish\\.${kind}/\\d+\\.\\d+\\.\\d+/[a-f0-9]{64}/service/${suffix.replaceAll('.','\\.')}$`,'i');
     const bundled=saved.bundled||legacy.test(String(saved.executable).replaceAll('\\','/'));
-    config=validate({...saved,executable:bundled&&defaultExecutable?defaultExecutable:saved.executable});
+    // 未保存过网关端口的老配置沿用默认值，不因缺字段退回随机端口。
+    config=validate({...config,...saved,executable:bundled&&defaultExecutable?defaultExecutable:saved.executable});
    } catch {
     state='error';error='服务配置损坏，原文件已保留；请在服务设置中重新保存配置';
     return view();

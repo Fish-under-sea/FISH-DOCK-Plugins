@@ -43,3 +43,28 @@ test('内置服务路径跟随新资源根，自定义绝对路径不被替换',
  saved=JSON.stringify({executable:`C:/old/packages/fish.ofm/1.0.0/${'a'.repeat(64)}/service/packages/desktop/service-host.mjs`,port:38080});
  assert.equal((await b.load()).executable,'D:/中文 路径/service.mjs');
 });
+
+test('网关端口单独校验、保存并随启动参数传给运行时',async()=>{
+ let saved,startConfig;
+ const context={storage:{read:async()=>saved,write:async(c,n,value)=>{saved=value}}};
+ const service=createGateway({context,kind:'magpie',defaultExecutable:'C:/runtime/magpie.exe',
+  runtime:{start:async config=>{startConfig=config;return {url:'http://127.0.0.1:24567/',alive:()=>true,stop:async()=>{}}}}});
+ await service.load();
+ assert.equal(service.view().gatewayPort,3426);
+ for(const patch of [{gatewayPort:80},{gatewayPort:65536},{gatewayPort:'3490'},{port:24567,gatewayPort:24567}])await assert.rejects(service.save(patch));
+ assert.equal(saved,undefined);
+ await service.save({executable:'C:/runtime/magpie.exe',port:24567,gatewayPort:3490});
+ assert.equal(service.view().gatewayPort,3490);
+ assert.equal(JSON.parse(saved).gatewayPort,3490);
+ await service.start();
+ assert.equal(startConfig.gatewayPort,3490);
+ assert.equal(startConfig.port,24567);
+});
+
+test('没有保存过网关端口的老配置沿用默认端口，不退回随机端口',async()=>{
+ const context={storage:{read:async()=>JSON.stringify({executable:'C:/old/magpie.exe',port:3425}),write:async()=>{}}};
+ const service=createGateway({context,kind:'magpie',defaultExecutable:'C:/runtime/magpie.exe'});
+ const view=await service.load();
+ assert.equal(view.port,3425);
+ assert.equal(view.gatewayPort,3426);
+});

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check-in</title>
+<link rel="stylesheet" href="style.css">
+<script src="_magpie/bridge.js"></script>
+<script src="view.js"></script>
+<script src="app.js" defer></script>
+<body>
+<header>
+  <div class="head">
+    <h1 data-t="title">Check-in</h1>
+    <p class="total" id="total"></p>
+  </div>
+  <div class="acts">
+    <button type="button" id="run" data-t="run">Check in now</button>
+    <button type="button" id="refresh" class="ghost" data-t="refresh">Refresh credits</button>
+  </div>
+</header>
+<main id="vendors"></main>
+<p class="empty" id="empty" hidden data-t="none">No account signed in yet.</p>
+<p class="notice" id="notice" hidden></p>
+<p class="error" id="error" hidden></p>
+</body>
+</html>

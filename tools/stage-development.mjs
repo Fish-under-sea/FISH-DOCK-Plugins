@@ -16,6 +16,8 @@ export function stage({out,sdk,ofm,magpie,mihomo,only}){
  if(!path.isAbsolute(out)||fs.existsSync(out))throw Error('请使用新的绝对输出目录');
  if(!sdk||!path.isAbsolute(sdk))throw Error('请明确指定 Dock SDK 目录');
  const copy=(source,target)=>{if(!fs.lstatSync(source).isFile())throw Error('源资源不是普通文件');fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(source,target)};
+ // 页面插件是整棵目录（package.json + page/），不是单文件，逐层复制，链接一律拒绝。
+ const copyDir=(source,target)=>{fs.mkdirSync(target,{recursive:true});for(const item of fs.readdirSync(source,{withFileTypes:true})){const s=path.join(source,item.name),t=path.join(target,item.name);if(item.isDirectory())copyDir(s,t);else if(item.isFile())fs.copyFileSync(s,t);else throw Error('源资源不是普通文件');}};
  const resources=[];
  const selected=only?definitions.filter(row=>row.key===only):definitions;
  if(!selected.length)throw Error('未知插件');
@@ -25,6 +27,9 @@ export function stage({out,sdk,ofm,magpie,mihomo,only}){
   for(const item of fs.readdirSync(path.join(repository,'plugins',key),{withFileTypes:true})){
    if(item.isFile()&&!item.name.includes('.test.')&&item.name!=='stage.mjs')copy(path.join(repository,'plugins',key,item.name),path.join(root,'plugins',key,item.name));
   }
+  // Magpie 内置的页面插件（page-checkin）以目录随插件发布，首启由 MAGPIE_SEED_EXTRA 装进清单。
+  const bundled=path.join(repository,'plugins',key,'page-plugins');
+  if(key==='magpie'&&fs.existsSync(bundled))copyDir(bundled,path.join(root,'plugins',key,'page-plugins'));
   for(const item of fs.readdirSync(path.join(repository,'shared'),{withFileTypes:true}))if(item.isFile()&&!item.name.includes('.test.'))copy(path.join(repository,'shared',item.name),path.join(root,'shared',item.name));
   copy(path.join(sdk,'node','plugin.mjs'),path.join(root,'plugins',key,'sdk.mjs'));
   copy(path.join(sdk,'browser','bridge.js'),path.join(root,'bridge.js'));

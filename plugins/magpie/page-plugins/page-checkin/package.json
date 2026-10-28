@@ -1,0 +1,20 @@
+{
+  "name": "@magpie-community/page-checkin",
+  "version": "0.1.0",
+  "description": "A page in magpie's window for daily check-ins: each vendor's accounts, today's credits and streak, one switch per vendor or account, and a manual check-in.",
+  "files": ["page", "README.md"],
+  "keywords": ["magpie", "magpie-page", "checkin", "credits"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/magpie-community/plugins.git", "directory": "packages/checkin" },
+  "magpie": {
+    "page": {
+      "title": "Check-in",
+      "titles": { "zh": "自动签到", "zh-TW": "自動簽到" },
+      "file": "page/index.html",
+      "icon": "page/icon.svg"
+    },
+    "permissions": ["checkin:state"],
+    "actions": ["checkin:set-provider", "checkin:set-account", "checkin:run", "checkin:refresh"],
+    "options": { "collapsed": true }
+  }
+}
