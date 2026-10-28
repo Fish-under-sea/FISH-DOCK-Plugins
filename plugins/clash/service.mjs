@@ -6,9 +6,13 @@ const tunStacks=['mixed','gvisor','system'];
 const defaultTun={enable:false,stack:'mixed'};
 const validId=id=>/^sub-[a-f0-9-]{36}$/.test(id);
 function urlValue(value) {
-  let url;try{url=new URL(String(value).trim())}catch{throw Error('订阅地址无效')}
-  if(url.protocol!=='https:'||url.username||url.password||url.hash||url.href.length>8192)
-    throw Error('订阅必须使用不含用户名、密码或片段的 HTTPS 地址');
+  let url;try{url=new URL(String(value).trim())}catch{throw Error('订阅地址无效，请粘贴完整的 http:// 或 https:// 链接')}
+  if(url.protocol!=='http:'&&url.protocol!=='https:')
+    throw Error('订阅地址必须以 http:// 或 https:// 开头');
+  if(url.username||url.password)throw Error('订阅地址不要包含用户名和密码');
+  if(url.href.length>8192)throw Error('订阅地址过长');
+  // 片段（#名称）是订阅备注，不是地址的一部分；机场常带，直接剥掉而不是拒绝。
+  url.hash='';
   return url.href;
 }
 function labelValue(value) {
@@ -52,10 +56,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
           error:s.status==='updating'?'上次更新被中断，旧缓存仍保留':s.status==='error'?(updateMessages[s.errorCode]??updateMessages.UNKNOWN):''
         }));
       } else {
+        // 旧版单订阅凭据：能解析就迁移；已是密文/无法解析则只在本次会话提示一次，
+        // 用户保存新订阅后即彻底清除，避免每次启动都重复提示。
         const old=await context.secrets.read('credentials','subscription.json');
         if(old) {
-          // 旧凭据可能已是加密密文而非明文 URL：无法解析时跳过迁移并保留原值，
-          // 否则会抛错并让 config() 每次失败，页面只能显示空订阅且无法新增。
           let migrated=null;
           try{migrated=urlValue(old)}catch{}
           if(migrated) {
@@ -67,7 +71,6 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
             await context.secrets.write('credentials','subscription.json','');
             legacyPending=false;
           } else {
-            // 无法解析：保留原值不动，但要让页面知道「旧订阅没迁过来，请重新添加地址」。
             legacyPending=true;
           }
         }

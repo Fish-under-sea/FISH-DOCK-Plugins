@@ -111,10 +111,18 @@ test('metadata write failure restores secret and does not lose existing subscrip
 });
 test('invalid URLs/ports are rejected; unsynced subscriptions block startup; interrupted jobs recover',async()=>{
  const f=fixture();await f.service.view();
- for(const url of ['file:///bad','http://example.test','https://user:pass@example.test','https://example.test/#secret'])
-  await assert.rejects(add(f,'A',url));
+ // 只拒真正的非法地址：非 http(s) 协议、带账号密码、空串。
+ for(const url of ['file:///bad','ftp://example.test','https://user:pass@example.test',''])
+  await assert.rejects(add(f,'A',url),/订阅/);
+ // http 与 #片段 必须接受：国内机场大量如此，拒绝会让用户永远导不进来。
+ const httpRow=await f.service.subscriptionSave({name:'http ok',url:'http://example.test/sub?token=x'});
+ assert.equal(httpRow.subscriptions.at(-1).name,'http ok');
+ const fragRow=await f.service.subscriptionSave({name:'fragment ok',url:'https://example.test/sub?token=y#Clash'});
+ assert.equal(fragRow.subscriptions.length,2);
+ assert.equal(f.disk.get(`secret/credentials/${fragRow.subscriptions.at(-1).id}.json`),'https://example.test/sub?token=y');
  await assert.rejects(f.service.save({...kernel,mixedPort:9099}));
- assert.equal(f.disk.size,0);await f.service.save(kernel);await add(f);
+ await f.service.save(kernel);
+ await add(f,'third','https://example.test/three');
  await assert.rejects(f.service.start(),/更新/);
  const release=f.block();await f.service.reload();
  const restart=await fixture(f.disk).service.view();assert.equal(restart.subscriptions[0].status,'error');

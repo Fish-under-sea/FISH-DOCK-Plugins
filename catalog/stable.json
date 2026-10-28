@@ -7,12 +7,12 @@
       "description": "Clash 代理独立插件",
       "author": "FISH",
       "maintainer": "Fish-under-sea",
-      "version": "1.1.6",
+      "version": "1.1.7",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.6/clash.fish-plugin",
-      "sha256": "49aa1003b9f9d0db6fa9301cf7ca6f3966efeb0e63e968b369f90596c4cbf247",
-      "bytes": 12222856,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.7/clash.fish-plugin",
+      "sha256": "5e99e3f7b27d034c1d47ac483f3e1fc4a56512c1e38238103db115997a9f3fa7",
+      "bytes": 12223010,
       "dependencies": [
         "FISH Dock >=1.1.0",
         "Node.js 24（宿主提供）"

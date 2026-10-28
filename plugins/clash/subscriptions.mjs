@@ -47,7 +47,8 @@ async function unusedPort() {
 }
 export async function downloadSubscription(url,{fetch:fetcher=globalThis.fetch,signal,timeoutMs=20000}={}) {
   const parsed=new URL(url);
-  if(parsed.protocol!=='https:'||parsed.username||parsed.password||parsed.hash)throw Error('订阅地址无效');
+  if((parsed.protocol!=='http:'&&parsed.protocol!=='https:')||parsed.username||parsed.password)throw Error('订阅地址无效');
+  parsed.hash='';
   const timeout=AbortSignal.timeout(timeoutMs),abort=signal?AbortSignal.any([signal,timeout]):timeout;
   let response;
   try{response=await fetcher(parsed.href,{redirect:'manual',signal:abort,
