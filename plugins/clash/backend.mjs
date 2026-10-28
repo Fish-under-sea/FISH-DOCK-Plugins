@@ -8,7 +8,9 @@ let service;
 createPlugin({id:'fish.clash',activate:async context=>{
  // TUN 服务目录固定在 ProgramData，跨插件升级不随目录移动。
  const programData=process.env.ProgramData||'C:/ProgramData';
- const runtime=createRuntime({...context,tun:createTun({context,programData})});
+ // 内置 geo 数据随插件分发，位于插件自己的 service 目录（与 tun-service.exe 同级）。
+ const geoDir=fileURLToPath(new URL('./service',import.meta.url));
+ const runtime=createRuntime({...context,tun:createTun({context,programData}),geoDir});
  await runtime.proxy.restore();
  const kernel=fileURLToPath(new URL('../../service/mihomo.exe',import.meta.url));
  service=createClash({context,runtime,defaultKernel:(await stat(kernel).catch(()=>null))?.isFile()?kernel:''});

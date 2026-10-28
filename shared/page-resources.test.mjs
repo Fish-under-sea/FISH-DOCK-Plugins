@@ -12,7 +12,9 @@ for(const entry of ['shared/gateway-page.html','plugins/feishu/page.html','plugi
   assert.ok(references.length>0);
   for(const reference of references){
    assert.ok(!reference.includes('://'));
-   assert.ok(fs.existsSync(path.resolve(path.dirname(file),reference)),`${entry} 引用了缺失资源 ${reference}`);
+   // 缓存击中用的 ?v=… 只是查询串，不是文件名的一部分；剥离后再判存在。
+   const target=reference.split(/[?#]/)[0];
+   assert.ok(fs.existsSync(path.resolve(path.dirname(file),target)),`${entry} 引用了缺失资源 ${reference}`);
   }
  });
 }

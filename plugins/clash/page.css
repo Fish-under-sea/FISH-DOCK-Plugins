@@ -19,3 +19,24 @@ header>div:first-child{display:flex;align-items:center;gap:10px}.toolbar>label{d
 .banner{margin:8px 8px 12px;padding:9px 12px;border-radius:12px;border:1px solid var(--dock-line);background:var(--dock-card);font-size:12.5px}
 .banner.bad{border-color:rgba(255,69,58,.55);background:rgba(255,69,58,.12);color:#ff8a80}
 .banner.good{border-color:rgba(48,209,88,.5);background:rgba(48,209,88,.10)}
+/* 节点页：组卡网格 + 节点网格 + 延迟色阶（Verge 式分组浏览，内化为 Dock 卡片语言）。 */
+.group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:10px 0 16px}
+.group-card{display:grid;gap:3px;text-align:left;padding:10px 12px}
+.group-card .g-name{font-weight:600;overflow-wrap:anywhere}
+.group-card .g-now{color:var(--dock-muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.group-card .g-count{color:var(--dock-muted);font-size:11px}
+.group-card[aria-current="true"]{border-color:#0a84ff;background:rgba(10,132,255,.12)}
+.nodes-title{display:flex;align-items:baseline;gap:8px;margin:14px 0 8px;font-size:14px}
+.nodes{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+.node .n-label{min-width:0;display:grid;gap:2px}
+.node .n-name{overflow-wrap:anywhere}
+.node .n-delay{white-space:nowrap;font-size:11.5px}
+.n-delay.good{color:#30d158}.n-delay.warm{color:#ffd60a}.n-delay.bad{color:#ff453a}
+/* 订阅卡流量额度条：服务器在 subscription-userinfo 回报时显示。 */
+.usage{margin:8px 0 2px}
+.usage-bar{height:6px;border-radius:999px;background:var(--dock-card);border:1px solid var(--dock-line);overflow:hidden}
+.usage-fill{display:block;height:100%;background:#0a84ff;border-radius:999px}
+.usage-fill.warm{background:#ffd60a}
+.usage-fill.hot{background:#ff453a}
+.usage-text{margin:4px 0 0;font-size:11.5px;color:var(--dock-muted)}
+@media(max-width:650px){.group-grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}.nodes{grid-template-columns:1fr}}

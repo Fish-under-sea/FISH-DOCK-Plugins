@@ -52,6 +52,12 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
           status:s.status==='updating'?'error':(['ready','error'].includes(s.status)?s.status:'pending'),
           lastAttempt:s.lastAttempt??null,lastSuccess:s.lastSuccess??null,
           nodeCount:Number.isInteger(s.nodeCount)?s.nodeCount:0,hasCache:s.hasCache===true,
+          // 流量额度只接受服务端解析过的数字结构；损坏值一律丢弃。
+          userInfo:s.userInfo&&Number.isFinite(s.userInfo.total)&&Number.isFinite(s.userInfo.used)&&s.userInfo.used<=s.userInfo.total?
+            {upload:Number.isFinite(s.userInfo.upload)?s.userInfo.upload:null,
+             download:Number.isFinite(s.userInfo.download)?s.userInfo.download:null,
+             total:s.userInfo.total,used:s.userInfo.used,
+             expire:Number.isFinite(s.userInfo.expire)&&s.userInfo.expire>0?s.userInfo.expire:null}:null,
           errorCode:s.status==='updating'?'CANCELLED':Object.hasOwn(updateMessages,s.errorCode)?s.errorCode:null,
           error:s.status==='updating'?'上次更新被中断，旧缓存仍保留':s.status==='error'?(updateMessages[s.errorCode]??updateMessages.UNKNOWN):''
         }));
@@ -92,8 +98,16 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   }
   function sourceNode(name,proxies={}) {
     const source=subscriptions.find(s=>name.startsWith(`[${s.id}] `));
+    const info=proxies[name];
+    // 组成员既可能是订阅节点，也可能是另一个组或内置出站（DIRECT/REJECT 等）。
+    const type=Array.isArray(info?.all)?'group':info?.type??null;
     return {name,label:source?name.slice(source.id.length+3):name,sourceId:source?.id??null,
-      source:source?.name??null,delay:proxies[name]?.history?.at(-1)?.delay??null};
+      source:source?.name??null,type,
+      delay:info?.history?.at(-1)?.delay??null};
+  }
+  // 内核聚合出的 GLOBAL 组与内置出站不算业务代理组，页面不展示。
+  function isProxyGroup(name,proxy) {
+    return name!=='GLOBAL'&&Array.isArray(proxy?.all);
   }
   async function view({controller=true}={}) {
     const c=await config(),state={...c,configured:!!c.kernel,subscriptionConfigured:subscriptions.length>0,
@@ -103,7 +117,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     if(controller&&state.running)try{
       const [version,proxies,status]=await Promise.all([request('/version'),request('/proxies'),request('/configs')]);
       state.version=version.version;state.mode=status.mode;
-      state.groups=Object.entries(proxies.proxies||{}).filter(([,p])=>Array.isArray(p.all)).map(([name,p])=>({
+      state.groups=Object.entries(proxies.proxies||{}).filter(([name,p])=>isProxyGroup(name,p)).map(([name,p])=>({
         name,selected:p.now,nodes:p.all.map(name=>sourceNode(name,proxies.proxies))}));
     }catch{state.error='控制器暂未响应，请刷新或停止内核'}
     if(runtime.tun)try{state.tunService=await runtime.tun.status()}catch{state.tunService=null}
@@ -151,7 +165,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const id=old?.id??`sub-${randomUUID()}`;
       const row={id,name,enabled:old?.enabled??true,status:old?.status??'pending',
         lastAttempt:old?.lastAttempt??null,lastSuccess:old?.lastSuccess??null,
-        nodeCount:old?.nodeCount??0,hasCache:old?.hasCache??false,error:'',errorCode:null};
+        nodeCount:old?.nodeCount??0,hasCache:old?.hasCache??false,userInfo:old?.userInfo??null,error:'',errorCode:null};
       if(url!==previous)row.status='pending';
       await context.secrets.write('credentials',`${id}.json`,url);
       try{await persist(old?subscriptions.map(s=>s.id===id?row:s):[...subscriptions,row])}
@@ -182,7 +196,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       await runtime.updateSubscription({...settings,id,url,signal,
         apply:alive()&&rowFor(id).enabled?()=>request(`/providers/proxies/${id}`,{method:'PUT'}):null,
         commit:result=>exclusive(async()=>persist(subscriptions.map(s=>s.id===id?{...s,status:'ready',error:'',errorCode:null,
-          hasCache:true,nodeCount:result.nodeCount,lastSuccess:new Date().toISOString()}:s)))});
+          hasCache:true,nodeCount:result.nodeCount,
+          // 服务器没回报额度就保留旧值；结构异常视为无额度。
+          userInfo:result.userInfo&&Number.isFinite(result.userInfo.total)&&Number.isFinite(result.userInfo.used)&&result.userInfo.used<=result.userInfo.total?result.userInfo:s.userInfo??null,
+          lastSuccess:new Date().toISOString()}:s)))});
     }catch(error){
       const safe=publicUpdateError(signal.aborted?{code:'CANCELLED'}:error);
       await exclusive(async()=>{

@@ -45,7 +45,9 @@ export function verifyArchive(bytes) {
   const html=files.get(page.entry).toString('utf8');
   for(const [,reference]of html.matchAll(/<(?:script|link)\b[^>]*\b(?:src|href)="([^"]+)"/g)){
    check(!/^(?:[a-z]+:|\/)/i.test(reference),'页面引用了非本地资源');
-   const relative=path.posix.normalize(path.posix.join(path.posix.dirname(page.entry),reference));
+   // ?v=… 只是缓存击中查询串，打包后仍是同一文件。
+   const clean=reference.split(/[?#]/)[0];
+   const relative=path.posix.normalize(path.posix.join(path.posix.dirname(page.entry),clean));
    check(files.has(relative),`页面资源缺失：${relative}`);
   }
  }

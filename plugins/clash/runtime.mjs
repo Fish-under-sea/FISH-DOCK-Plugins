@@ -1,7 +1,9 @@
 import {spawn} from 'node:child_process';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
 import {createServer} from 'node:net';
 import {mkdir} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
+import {writeFile,rename,readFile} from 'node:fs/promises';
 import {createSubscriptionRuntime,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
 export function createProxyLease({storage,adapter}){
  let active=false;
@@ -15,16 +17,110 @@ export function createProxyLease({storage,adapter}){
  }
  return {enable,restore,active:()=>active};
 }
-export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],dataDirectory,tun}){
+export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],dataDirectory,tun,geo=false}){
  const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,profile:{'store-selected':true}};
  const enabled=subscriptions.filter(s=>s.enabled!==false);
- if(enabled.length){value['proxy-providers']=Object.fromEntries(enabled.map(s=>[s.id,fileProvider(s.id,subscriptionPath(dataDirectory,s.id))]));value['proxy-groups']=[{name:'PROXY',type:'select',use:enabled.map(s=>s.id)}];value.rules=['MATCH,PROXY']}else value.rules=['MATCH,DIRECT'];
+ if(enabled.length){
+  value['proxy-providers']=Object.fromEntries(enabled.map(s=>[s.id,fileProvider(s.id,subscriptionPath(dataDirectory,s.id))]));
+  // Verge 风格组树（内化为 FISH Dock 自己的命名与分流）：
+  // 主组可手选也可自动；分类组默认直连还是走代理按国内使用习惯排序；
+  // 规则用 geosite 分流国内直连 + 漏网之鱼兜底。
+  const MAIN='🚀 节点选择',AUTO='♻️ 自动选择',DIRECT_GROUP='🎯 全球直连',FINAL='🐟 漏网之鱼';
+  const category=(name,first)=>({name,type:'select',proxies:[first]});
+  value['proxy-groups']=[
+   {name:MAIN,type:'select',proxies:[AUTO,'DIRECT'],use:enabled.map(s=>s.id)},
+   {name:AUTO,type:'url-test',url:'https://www.gstatic.com/generate_204',interval:300,tolerance:50,use:enabled.map(s=>s.id)},
+   {name:'🛑 广告拦截',type:'select',proxies:['REJECT','DIRECT',MAIN]},
+   category('📲 Telegram',MAIN),
+   category('🤖 AI 服务',MAIN),
+   {name:'Ⓜ️ 微软服务',type:'select',proxies:['DIRECT',MAIN]},
+   {name:'🍎 苹果服务',type:'select',proxies:['DIRECT',MAIN]},
+   {name:DIRECT_GROUP,type:'select',proxies:['DIRECT',MAIN]},
+   {name:FINAL,type:'select',proxies:[MAIN,'DIRECT']}
+  ];
+  if(geo){
+   // 有 geo 数据时按类别分流（与 Clash Verge 同构）。
+   value.rules=[
+    'GEOSITE,category-ads-all,🛑 广告拦截',
+    'GEOSITE,telegram,📲 Telegram',
+    'GEOSITE,openai,🤖 AI 服务',
+    'GEOSITE,bing,🤖 AI 服务',
+    'GEOSITE,microsoft,Ⓜ️ 微软服务',
+    'GEOSITE,apple,🍎 苹果服务',
+    'GEOIP,telegram,📲 Telegram,no-resolve',
+    'GEOSITE,cn,🎯 全球直连',
+    'GEOIP,private,🎯 全球直连,no-resolve',
+    'GEOIP,cn,🎯 全球直连,no-resolve',
+    'MATCH,🐟 漏网之鱼'
+   ];
+   value['geodata-mode']=true;
+   value['geo-auto-update']=true;
+   value['geo-update-interval']=168;
+   value['geo-download-urls']=['https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/','https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/'];
+  }else{
+   // 无 geo 数据（离线/下载失败）：不引用 GEOSITE/GEOIP，保证内核能启动；
+   // 仍保留 .cn 域名与内网直连，其余走漏网之鱼。
+   value.rules=[
+    'DOMAIN-SUFFIX,cn,🎯 全球直连',
+    'IP-CIDR,127.0.0.0/8,🎯 全球直连,no-resolve',
+    'IP-CIDR,10.0.0.0/8,🎯 全球直连,no-resolve',
+    'IP-CIDR,172.16.0.0/12,🎯 全球直连,no-resolve',
+    'IP-CIDR,192.168.0.0/16,🎯 全球直连,no-resolve',
+    'IP-CIDR,169.254.0.0/16,🎯 全球直连,no-resolve',
+    'IP-CIDR6,fe80::/10,🎯 全球直连,no-resolve',
+    'MATCH,🐟 漏网之鱼'
+   ];
+  }
+ }else value.rules=['MATCH,DIRECT'];
  if(tun?.enable){
   value.tun={enable:true,stack:['mixed','gvisor','system'].includes(tun.stack)?tun.stack:'mixed',
    'dns-hijack':['any:53'],'auto-route':true,'auto-detect-interface':true};
   value.dns={enable:true,ipv6:false,'enhanced-mode':'fake-ip','fake-ip-range':'198.18.0.1/16',nameserver:['223.5.5.5','119.29.29.29']};
  }
  return value;
+}
+// geo 数据就位：geodata 模式首启需要 GeoSite.dat/GeoIP.dat。
+// 优先从插件包内（内核同目录，随包分发）复制——完全离线、无网络依赖；
+// 包内没有时才回退到网络下载（跟随重定向、双源×2 次重试）。
+// 全失败返回 false，调用方据此降级到不依赖 geo 的规则，保证内核能启动。
+const GEO_SOURCES=['https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/','https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/'];
+export const GEO_FILES=Object.freeze(['GeoSite.dat','GeoIP.dat']);
+export async function ensureGeoData(home,{bundleDir,fetch:fetcher=globalThis.fetch,signal,timeoutMs=30000}={}){
+  const missing=GEO_FILES.filter(name=>!existsSync(join(home,name)));
+  let failed=0;
+  for(const name of missing){
+    let done=false;
+    // 1) 包内随附文件（最快、离线可用）。
+    const bundled=bundleDir&&join(bundleDir,name);
+    if(bundled&&existsSync(bundled)){
+      try{
+        const bytes=await readFile(bundled);
+        if(bytes.length>1024*1024){
+          const target=join(home,name),candidate=`${target}.copy-${process.pid}`;
+          await writeFile(candidate,bytes);await rename(candidate,target);done=true;
+        }
+      }catch{/* 复制失败则回退网络 */}
+    }
+    // 2) 网络兜底：每源最多 2 次（境外链路偶发 ECONNRESET 很常见）。
+    if(!done)for(const base of GEO_SOURCES)for(let attempt=0;attempt<2&&!done;attempt++){
+      signal?.throwIfAborted();
+      try{
+        const response=await fetcher(base+name,{redirect:'follow',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs)});
+        if(!response.ok||!response.body){await response.body?.cancel().catch(()=>{});continue}
+        const reader=response.body.getReader();const chunks=[];let size=0;
+        try{for(;;){signal?.throwIfAborted();const{done,value}=await reader.read();if(done)break;
+          if((size+=value.byteLength)>32*1024*1024)throw Error('geo 数据超过限制');chunks.push(value)}}
+        finally{await reader.cancel().catch(()=>{})}
+        if(!size)continue;
+        const target=join(home,name),candidate=`${target}.download-${process.pid}`;
+        await writeFile(candidate,Buffer.concat(chunks));
+        await rename(candidate,target);done=true;break;
+      }catch{continue}
+    }
+    // 单个文件拿不到继续下一个；至少一个缺失就返回 false。
+    if(!done)failed++;
+  }
+  return failed===0;
 }
 async function free(port){const server=createServer();await new Promise((resolve,reject)=>{server.once('error',()=>reject(Error('端口已占用，请在配置中修改')));server.listen(port,'127.0.0.1',resolve)});await new Promise(resolve=>server.close(resolve))}
 export function createRuntime(context){
@@ -45,8 +141,16 @@ export function createRuntime(context){
   c.signal?.throwIfAborted();
   await checkExecutable(c.kernel);await free(c.mixedPort);await free(c.controllerPort);
   for(const category of ['tmp','config','credentials'])await mkdir(join(context.dataDirectory,category),{recursive:true});
+  // 内核 -d 目录：TUN 服务用数据根，普通模式用 config 子目录。
+  const kernelHome=c.tun?.enable?context.dataDirectory:join(context.dataDirectory,'config');
+  // geo 数据优先取包内随附文件（插件 service 目录，后端注入 geoDir），离线可用；
+  // 未注入时退回内核同目录；都拿不到则降级为无 geo 规则。
+  const hasSubscriptions=!!c.subscriptions?.some(s=>s.enabled!==false);
+  const geoReady=hasSubscriptions
+    ?await ensureGeoData(kernelHome,{bundleDir:context.geoDir||dirname(c.kernel),signal:c.signal}).catch(()=>false)
+    :false;
   const runtimePath=join(context.dataDirectory,'tmp','mihomo-runtime.json');
-  await context.storage.write('tmp','mihomo-runtime.json',JSON.stringify(kernelConfig({...c,dataDirectory:context.dataDirectory})));
+  await context.storage.write('tmp','mihomo-runtime.json',JSON.stringify(kernelConfig({...c,dataDirectory:context.dataDirectory,geo:geoReady})));
 
   // TUN 交给已安装的 SYSTEM 服务托管：本进程不再 spawn 内核，只写 job.ini。
   if(c.tun?.enable){

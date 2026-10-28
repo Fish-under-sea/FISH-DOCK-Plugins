@@ -4,6 +4,7 @@ dist/
 *.tgz
 .agent-teams/
 .tools/
+.work/
 .env
 .env.*
 *.log
@@ -11,3 +12,7 @@ dist/
 # 自编译 magpie 二进制与构建缓存（由 tools/build-magpie.ps1 产出，不进仓库）
 plugins/magpie/service/
 plugins/magpie/.tools/
+
+# Clash 内置 geo 数据（GeoSite/GeoIP，约 21MB；随发行包分发，不进仓库源码）
+plugins/clash/service/GeoSite.dat
+plugins/clash/service/GeoIP.dat

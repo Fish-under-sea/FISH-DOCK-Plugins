@@ -45,6 +45,24 @@ async function unusedPort() {
   const port=server.address().port;
   await new Promise(resolve=>server.close(resolve));return port;
 }
+// 机场在响应头 subscription-userinfo 里回报流量额度：
+// upload=...; download=...; total=...; expire=<unix 秒>。仅聚合数字，不透传原文。
+export function parseUserInfo(header) {
+  if(typeof header!=='string'||!header.trim())return null;
+  const values={};
+  for(const part of header.split(';')){
+    const at=part.indexOf('=');if(at<=0)continue;
+    const key=part.slice(0,at).trim().toLowerCase();
+    const value=Number(part.slice(at+1).trim());
+    if(!Number.isFinite(value)||value<0)continue;
+    values[key]=value;
+  }
+  if(!Number.isFinite(values.total))return null;
+  const used=(Number.isFinite(values.upload)?values.upload:0)+(Number.isFinite(values.download)?values.download:0);
+  if(used>values.total)return null;
+  const expire=Number.isFinite(values.expire)&&values.expire>0?values.expire:null;
+  return {upload:values.upload??null,download:values.download??null,total:values.total,used,expire};
+}
 export async function downloadSubscription(url,{fetch:fetcher=globalThis.fetch,signal,timeoutMs=20000}={}) {
   const parsed=new URL(url);
   if((parsed.protocol!=='http:'&&parsed.protocol!=='https:')||parsed.username||parsed.password)throw Error('订阅地址无效');
@@ -56,6 +74,8 @@ export async function downloadSubscription(url,{fetch:fetcher=globalThis.fetch,s
   catch{throw updateError(signal?.aborted?'CANCELLED':timeout.aborted?'TIMEOUT':'NETWORK')}
   if(response.status>=300&&response.status<400){await response.body?.cancel().catch(()=>{});throw updateError('REDIRECT')}
   if(!response.ok||!response.body){await response.body?.cancel().catch(()=>{});throw updateError('HTTP')}
+  // 流量额度在下载成功时就解析，随结果返回；服务器没给就是 null。
+  const userInfo=parseUserInfo(response.headers.get('subscription-userinfo'));
   const reader=response.body.getReader(),chunks=[];let size=0;
   try {
     for(;;) {
@@ -69,7 +89,7 @@ export async function downloadSubscription(url,{fetch:fetcher=globalThis.fetch,s
   if(!size)throw updateError('EMPTY');
   const bytes=Buffer.concat(chunks);
   try{new TextDecoder('utf-8',{fatal:true}).decode(bytes)}catch{throw updateError('FORMAT')}
-  return bytes;
+  return {bytes,userInfo};
 }
 
 // Validate with the selected native core, not a hand-written YAML subset or a mock parser.
@@ -144,7 +164,7 @@ export function createSubscriptionRuntime(context,{fetch:fetcher=globalThis.fetc
     const candidate=join(jobDirectory,'provider.yaml');
     let previous,installed=false;
     try {
-      const bytes=await downloadSubscription(url,{fetch:fetcher,signal});
+      const {bytes,userInfo}=await downloadSubscription(url,{fetch:fetcher,signal});
       await writeFile(candidate,bytes,{mode:0o600,flag:'wx'});
       const result=await validate({kernel,id,path:candidate,dataDirectory:root,signal});
       signal?.throwIfAborted();
@@ -153,8 +173,8 @@ export function createSubscriptionRuntime(context,{fetch:fetcher=globalThis.fetc
       await rename(candidate,target);installed=true;
       if(apply)try{await apply()}catch{throw updateError('APPLY')}
       if(signal?.aborted)throw updateError('CANCELLED');
-      if(commit)try{await commit(result)}catch{throw updateError('STORAGE')}
-      return result;
+      if(commit)try{await commit({...result,userInfo})}catch{throw updateError('STORAGE')}
+      return {...result,userInfo};
     }catch(error) {
       if(installed) {
         if(previous===null)await unlink(target);

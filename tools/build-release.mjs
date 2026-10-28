@@ -18,6 +18,15 @@ export function build(options){
 for(const definition of selected){
   const dependency={clash:'mihomo',magpie:'magpie',ofm:'ofm'}[definition.key];
   if(dependency&&!options[dependency])throw Error(`${definition.key} 缺少必需服务资源：--${dependency}`);
+  // Clash 需要内置 geo 数据（plugins/clash/service/GeoSite.dat + GeoIP.dat），
+  // 否则打出的包首启要联网下载，国内易失败。缺失时明确报错而非静默出坏包。
+  if(definition.key==='clash'){
+   for(const name of ['GeoSite.dat','GeoIP.dat']){
+    const file=path.join(repository,'plugins','clash','service',name);
+    if(!fs.existsSync(file)||fs.statSync(file).size<1024*1024)
+      throw Error(`Clash 缺少内置 geo 数据：plugins/clash/service/${name}（需 ≥1MB，可先放入构机缓存）`);
+   }
+  }
  }
  if(!options.out||!path.isAbsolute(options.out)||fs.existsSync(options.out))throw Error('请使用新的绝对输出目录');
  const tag=`v${version}`,out=path.resolve(options.out);const staged=path.join(out,'staged');stage({...options,out:staged,include:selected.map(definition=>definition.key)});const dist=path.join(out,'dist');fs.mkdirSync(dist);

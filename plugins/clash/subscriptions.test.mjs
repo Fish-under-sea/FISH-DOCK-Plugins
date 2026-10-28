@@ -4,7 +4,7 @@ import {mkdtemp,readFile,writeFile,mkdir,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
-import {createSubscriptionRuntime,downloadSubscription,subscriptionPath,publicUpdateError} from './subscriptions.mjs';
+import {createSubscriptionRuntime,downloadSubscription,parseUserInfo,subscriptionPath,publicUpdateError} from './subscriptions.mjs';
 const id='sub-00000000-0000-0000-0000-000000000001';
 const yaml='proxies:\n  - name: same\n    type: ss\n    server: 127.0.0.1\n    port: 9\n    cipher: aes-128-gcm\n    password: synthetic-only\n';
 async function temporary(t) {
@@ -21,7 +21,7 @@ test('download uses bounded real loopback HTTP transport and rejects HTTP errors
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>{server.closeAllConnections();server.close(r)}));
  const options={fetch:(_url,opts)=>fetch(`http://127.0.0.1:${server.address().port}/sub`,opts)};
- assert.equal((await downloadSubscription('https://example.test/token',options)).toString(),yaml);
+ assert.equal((await downloadSubscription('https://example.test/token',options)).bytes.toString(),yaml);
  assert.equal(received['user-agent'],'clash.meta');
  for(const [value,code] of [['error','HTTP'],['redirect','REDIRECT'],['huge','TOO_LARGE'],['empty','EMPTY']]){
   mode=value;await assert.rejects(downloadSubscription('https://example.test/token',options),{code});
@@ -32,6 +32,29 @@ test('download uses bounded real loopback HTTP transport and rejects HTTP errors
  await assert.rejects(downloadSubscription('https://example.test/token',{fetch:async()=>{throw Error('PRIVATE')}}),{code:'NETWORK'});
  assert.equal(publicUpdateError(Error('PRIVATE')).message.includes('PRIVATE'),false);
  await assert.rejects(downloadSubscription('http://example.test/token',options));
+});
+test('subscription-userinfo 头被解析为聚合数字，异常值与缺失头返回 null',async t=>{
+ // 真实响应头场景：机场用 upload/download/total/expire 回报额度。
+ let header='upload=1073741824; download=2147483648; total=107374182400; expire=1767225600';
+ const server=createServer((req,res)=>{
+  if(header!==null)res.setHeader('subscription-userinfo',header);
+  res.end(yaml);
+ });
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>{server.closeAllConnections();server.close(r)}));
+ const options={fetch:(_url,opts)=>fetch(`http://127.0.0.1:${server.address().port}/sub`,opts)};
+ const withQuota=await downloadSubscription('https://example.test/token',options);
+ assert.deepEqual(withQuota.userInfo,{upload:1073741824,download:2147483648,total:107374182400,used:3221225472,expire:1767225600});
+ // 头缺失 → null（页面不显示额度条）。
+ header=null;
+ const without=await downloadSubscription('https://example.test/token',options);
+ assert.equal(without.userInfo,null);
+ // 纯函数：损坏值、超总额度、缺 total 都丢弃。
+ assert.equal(parseUserInfo('upload=abc; download=1'),null);
+ assert.equal(parseUserInfo('upload=99; download=1; total=10'),null);
+ assert.equal(parseUserInfo(''),null);
+ assert.equal(parseUserInfo(undefined),null);
+ const expireLess=parseUserInfo('upload=1; download=2; total=10');
+ assert.deepEqual(expireLess,{upload:1,download:2,total:10,used:3,expire:null});
 });
 test('cache transaction retains bytes on validation, apply, and metadata failures and cleans candidate files',async t=>{
  const root=await temporary(t);let bad=false;

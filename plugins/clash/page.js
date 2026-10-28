@@ -9,7 +9,7 @@
  const button=(action,text,extra='',disabled=busy)=>`<button type="button" data-action="${action}" ${extra} ${disabled?'disabled':''}>${text}</button>`;
  const when=value=>value?esc(new Date(value).toLocaleString()):'—';
  // 页面自身版本：用于区分「插件已升级」与「页面仍在跑旧缓存」。
- const UI_VERSION='1.1.8';
+ const UI_VERSION='1.3.0';
  const say=(text,kind='info')=>{notice=String(text||'');noticeKind=kind};
  // 后端错误文案是固定中文提示，不含地址或凭据；只接受这类已知提示，
  // 其余异常（可能夹带 URL/token 的原始错误）一律折叠为通用说明。
@@ -62,6 +62,20 @@
   catch{if(requestedRevision===revision){error='状态刷新失败，请重试';draw()}}
   finally{polling=false;schedule()}
  }
+ // 流量额度：used/total 字节与到期时间（服务器没给就不显示这条）。
+ const fmtBytes=v=>v>=1024**3?(v/1024**3).toFixed(2)+' GB':v>=1024**2?(v/1024**2).toFixed(1)+' MB':Math.round(v/1024)+' KB';
+ const fmtExpire=unix=>{const d=new Date(unix*1000);return Number.isNaN(d.getTime())?'':d.toLocaleDateString()};
+ function usageBlock(s) {
+  const u=s.userInfo;
+  if(!u||!Number.isFinite(u.total)||!Number.isFinite(u.used)||u.total<=0)return '';
+  const pct=Math.min(100,Math.round(u.used/u.total*100));
+  const left=Math.max(0,u.total-u.used);
+  const expire=u.expire?` · ${fmtExpire(u.expire)} 到期`:'';
+  return `<div class="usage" role="figure" aria-label="流量额度">
+   <div class="usage-bar"><span class="usage-fill ${pct>=90?'hot':pct>=70?'warm':''}" style="width:${pct}%"></span></div>
+   <p class="usage-text">已用 ${fmtBytes(u.used)} / ${fmtBytes(u.total)} · 剩余 ${fmtBytes(left)} · ${pct}%${expire}</p>
+  </div>`;
+ }
  function subscriptionsView() {
   const rows=view.subscriptions||[];
   const empty=rows.length===0?`<div class="empty-card"><p><strong>还没有订阅。</strong></p>
@@ -73,6 +87,7 @@
     <div class="subscription-title"><strong>${esc(s.name)}</strong><span class="tag ${s.enabled?'on':'off'}">${s.enabled?'已启用':'已停用'}</span></div>
     <p class="sub-state ${s.status==='error'?'bad':s.status==='ready'?'good':'muted'}" role="status">${s.updating?'更新中…':{pending:'等待更新',ready:'缓存可用',error:'更新失败'}[s.status]||'等待更新'} · ${s.nodeCount} 个节点 · ${s.hasCache?'保有可用缓存':'尚无缓存'}</p>
     <p class="muted small">最近尝试：${when(s.lastAttempt)} · 最近成功：${when(s.lastSuccess)}</p>
+   ${usageBlock(s)}
     ${s.error?`<p class="bad" role="alert">${esc(s.error)}</p>`:''}
     ${!s.hasCache&&s.status==='pending'?`<p class="muted small">还没下载过节点：点下面的「更新」。</p>`:''}
     <div class="toolbar">${button('update','更新',`data-id="${esc(s.id)}"`,busy||s.updating||!view.configured||!!view.operation)}
@@ -140,8 +155,18 @@
   const current=view.groups.find(g=>g.name===group),double=view.layout==='double',cfg=configDraft||view;
   FishDock.setLayout(double?'double':'single');
   const nav=['nodes','providers','rules','connections'].map(s=>button(`section-${s}`,{nodes:'节点',providers:'订阅',rules:'规则',connections:'连接'}[s],`aria-pressed="${section===s}"`,false)).join('');
-  const nodes=`<h2>代理节点</h2>${view.groups.length?`<label>代理组<select id="group" ${busy?'disabled':''}>${view.groups.map(g=>`<option ${g.name===group?'selected':''} value="${esc(g.name)}">${esc(g.name)}</option>`).join('')}</select></label>`:'<p>尚无代理节点。请在订阅页添加并更新订阅，然后启动内核。</p>'}
-   <div class="nodes">${(current?.nodes||[]).map(n=>button('node',`<span>${esc(n.label??n.name)}${n.source?`<small class="source">${esc(n.source)} · ${esc(n.sourceId)}</small>`:''}</span><span>${n.delay===null?'未测速':`${esc(n.delay)} ms`}</span>`,`class="node" data-node="${esc(n.name)}" aria-current="${n.name===current.selected}"`)).join('')}</div>`;
+  // 延迟色阶：沿用 Dock 的成功/警告/失败色，未测速灰色。
+  const delayClass=d=>d===null?'muted':d<150?'good':d<400?'warm':'bad';
+  const delayText=d=>d===null?'未测速':`${d} ms`;
+  // 组卡：当前选中 + 成员数；点击卡片本身切换当前组。
+  const groupCards=view.groups.map(g=>button('group-card',
+   `<span class="g-name">${esc(g.name)}</span><span class="g-now">${esc(g.selected||'—')}</span><span class="g-count">${g.nodes.length} 项</span>`,
+   `class="group-card" data-group="${esc(g.name)}" aria-current="${g.name===group}"`,false)).join('');
+  const nodes=`<h2>代理组</h2>${view.groups.length?`<div class="group-grid" role="tablist">${groupCards}</div>
+   <h2 class="nodes-title">${esc(current?.name||'')}<span class="muted"> · 当前 ${esc(current?.selected||'—')}</span></h2>
+   <div class="nodes">${(current?.nodes||[]).map(n=>button('node',
+    `<span class="n-label"><span class="n-name">${esc(n.label??n.name)}</span>${n.source?`<small class="source">${esc(n.source)}</small>`:''}</span><span class="n-delay ${delayClass(n.delay)}">${n.type==='group'?esc(n.label):delayText(n.delay)}</span>`,
+    `class="node" data-node="${esc(n.name)}" aria-current="${n.name===current.selected}"`)).join('')}</div>`:'<p>尚无代理节点。请在订阅页添加并更新订阅，然后启动内核。</p>'}`;
   root.innerHTML=`<header><div><h1>Clash</h1><span class="muted">${view.running?'内核运行中':'内核已停止'}${view.version?' · '+esc(view.version):''} · 页面 v${UI_VERSION}</span></div><div class="layouts" aria-label="页面布局">${button('single','单栏',`aria-pressed="${!double}"`)}${button('double','双栏',`aria-pressed="${double}"`)}</div></header>
    <div class="toolbar"><label class="autostart" title="随 Dock 启动就拉起内核"><input id="autostart" type="checkbox"> 自启动</label>${button(view.running||view.operation==='starting'||updating()?'stop':'start',view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',busy||view.operation==='stopping')}${button('view','刷新')}
    ${button('proxy',view.systemProxy?'关闭系统代理':'开启系统代理',`aria-pressed="${view.systemProxy}"`,busy||(!view.running&&!view.systemProxy))}
@@ -171,7 +196,6 @@
    subscriptionForm.oninput=()=>{const data=new FormData(subscriptionForm);draft={...draft,name:data.get('name'),url:data.get('url')}};
    bindSave(subscriptionForm,saveSubscription);
   }
-  const groups=root.querySelector('#group');if(groups)groups.onchange=()=>{group=groups.value;draw()};
   root.querySelector('#mode').onchange=e=>run('mode',{mode:e.target.value});
   if(focus){const next=root.querySelector(`#${focus}`);next?.focus();if(caret&&next?.setSelectionRange)next.setSelectionRange(...caret)}
  }
@@ -194,6 +218,8 @@ function bind() {
     if(a==='save-config')return saveConfig();
    if(a==='single'||a==='double')return run('layout',{layout:a});
    if(a.startsWith('section-')){section=a.slice(8);detail=null;draw();return}
+   // 点击组卡切换当前组（纯前端状态，不发 RPC）；节点点击才走 select。
+   if(a==='group-card'){group=b.dataset.group;draw();return}
    if(a==='node')return run('select',{group,name:b.dataset.node});
    if(a==='proxy')return run('proxy',{enabled:!view.systemProxy});
    if(a==='detail')return run('details',{section});

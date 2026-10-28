@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | Magpie | 0.1.1709；commit `47175a68fffe7a01c596f016c0d0da00545b10a4`；官方 `magpie-windows-amd64.exe` | [MIT 原文](licenses/Magpie.txt)；[对应源码](https://github.com/yetone/magpie/tree/47175a68fffe7a01c596f016c0d0da00545b10a4)；[官方发行](https://github.com/yetone/magpie-releases/releases/tag/v0.1.1709) |
 | mihomo | v1.19.15；Windows amd64 compatible | [GPL-3.0 原文](licenses/mihomo.txt)；[对应源码和构建资料](https://github.com/MetaCubeX/mihomo/tree/v1.19.15) |
+| mihomo geo 数据 | GeoSite.dat / GeoIP.dat；取自 `MetaCubeX/meta-rules-dat` latest（geosite 由 v2fly 域名表汇总，geoip 由 GeoLite2 汇总） | [项目与许可说明](https://github.com/MetaCubeX/meta-rules-dat)；随 Clash 插件内置，用于国内直连与分类分流，运行时不联网下载 |
 | OFM | 本轮 Dock 源码仓中的 `dsh-our-free-model` 及其 standalone 构建 | [原始项目](https://github.com/Ebony-Vinyl/dsh-our-free-model)；LICENSE、channel-pack NOTICE 和 third-party 清单随服务资源一起分发 |
 | Dock Node／浏览器 SDK | FISH Dock 1.1.0；宿主 API 1 | [源码](https://github.com/Fish-under-sea/FISH-Dock/tree/v1.1.0/sdk)；MIT |
 

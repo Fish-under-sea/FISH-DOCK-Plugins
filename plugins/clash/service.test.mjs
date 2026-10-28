@@ -19,12 +19,17 @@ function fixture(disk=new Map()) {
  const request=async(path,options={})=>{
   requests.push({path,...options});if(!up)throw Error('offline');
   const names=owned.subscriptions.map(s=>`[${s.id}] same`);
-  return path==='/version'?{version:'synthetic'}:path==='/proxies'?{proxies:{PROXY:{now:names[0],all:names},
+  return path==='/version'?{version:'synthetic'}:path==='/proxies'?{proxies:{
+   GLOBAL:{now:'🚀 节点选择',all:['🚀 节点选择','♻️ 自动选择','DIRECT',...names]},
+   '🚀 节点选择':{now:'♻️ 自动选择',all:['♻️ 自动选择','DIRECT',...names]},
+   '♻️ 自动选择':{now:names[0],all:names},
+   'Ⓜ️ 微软服务':{now:'DIRECT',all:['DIRECT','🚀 节点选择']},
+   DIRECT:{type:'Direct',now:'',all:null},
    ...Object.fromEntries(names.map(name=>[name,{history:[{delay:20}]}]))}}:
    path==='/configs'?{mode:'rule'}:path==='/connections'?{connections:[{token:'PRIVATE'}],uploadTotal:10}:{url:'https://private.test/?token=PRIVATE'};
  };
  const runtime={start:async c=>{starts++;up=true;owned=c;return {alive:()=>up,stop:async()=>{stops++;up=false}}},
-  updateSubscription:async c=>{updates.push(c);await blocked;if(c.signal.aborted||fail)throw Error('token=PRIVATE');await c.apply?.();await c.commit({nodeCount:2});return {nodeCount:2}},
+  updateSubscription:async c=>{updates.push(c);await blocked;if(c.signal.aborted||fail)throw Error('token=PRIVATE');await c.apply?.();await c.commit({nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}});return {nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}}},
   proxy:{enable:async()=>{},restore:async()=>{},active:()=>false},
   tun:{status:async()=>({installed:tunInstalled,state:tunInstalled?'running':'absent',kernel:tunKernel,log:''}),
    install:async({kernel})=>{tunInstalled=true;tunKernel=kernel},
@@ -50,9 +55,21 @@ test('multiple subscriptions have stable independent IDs and coexist in one runt
  await f.service.reload();await settled(f.service);await f.service.start();
  const state=await f.service.view();
  assert.equal(state.subscriptions.length,2);assert.equal(f.stats().owned.subscriptions.length,2);
- assert.deepEqual(state.groups[0].nodes.map(n=>n.label),['same','same']);
- assert.deepEqual(state.groups[0].nodes.map(n=>n.source),['Renamed','B']);
- await f.service.select({group:'PROXY',name:state.groups[0].nodes[1].name});
+ // view 只暴露代理组（GLOBAL/DIRECT 不算组），主组节点含订阅来源前缀。
+ assert.ok(state.groups.every(g=>g.name!=='GLOBAL'&&g.name!=='DIRECT'));
+ const main=state.groups.find(g=>g.name==='🚀 节点选择');
+ assert.ok(main);assert.equal(main.selected,'♻️ 自动选择');
+ const sourceNodes=main.nodes.filter(n=>n.sourceId);
+ assert.deepEqual(sourceNodes.map(n=>n.label),['same','same']);
+ assert.deepEqual(sourceNodes.map(n=>n.source),['Renamed','B']);
+ assert.ok(main.nodes.some(n=>n.name==='♻️ 自动选择'&&n.sourceId===null));
+ // 自动选择组只含订阅节点。
+ const auto=state.groups.find(g=>g.name==='♻️ 自动选择');
+ assert.ok(auto.nodes.every(n=>n.sourceId));
+ // 默认直连的分类组：DIRECT 排第一。
+ const ms=state.groups.find(g=>g.name==='Ⓜ️ 微软服务');
+ assert.equal(ms.nodes[0].label,'DIRECT');
+ await f.service.select({group:'🚀 节点选择',name:sourceNodes[1].name});
  assert.ok(f.requests.some(r=>r.method==='PUT'&&r.body?.name===`[${b.id}] same`));
  assert.ok(!JSON.stringify(state).includes('PRIVATE'));assert.ok(!f.disk.get('config/subscriptions.json').includes('https:'));
  await assert.rejects(f.service.subscriptionToggle({id:a.id,enabled:false}),/停止/);
@@ -83,6 +100,13 @@ test('refresh failure retains success time and count, updates only one provider 
  assert.equal(after.subscriptions[0].status,'error');assert.equal(after.subscriptions[0].hasCache,true);
  assert.equal(after.subscriptions[0].nodeCount,2);assert.equal(after.subscriptions[1].status,'ready');
  assert.ok(after.subscriptions[0].lastSuccess>=before.subscriptions[0].lastSuccess);
+ // 流量额度随更新落库并持久化：损坏结构不覆盖旧值。
+ assert.deepEqual(after.subscriptions[0].userInfo,{upload:1,download:2,total:10,used:3,expire:1767225600});
+ const restored=await fixture(f.disk).service.view();
+ assert.deepEqual(restored.subscriptions[0].userInfo,{upload:1,download:2,total:10,used:3,expire:1767225600});
+ f.runtime.updateSubscription=async c=>{await c.commit({nodeCount:2,userInfo:{upload:'broken'}});return {nodeCount:2}};
+ await f.service.reload({id:a.id});const damaged=await settled(f.service);
+ assert.deepEqual(damaged.subscriptions[0].userInfo,{upload:1,download:2,total:10,used:3,expire:1767225600});
  assert.ok(!JSON.stringify(after).includes('PRIVATE'));
  assert.ok(!JSON.stringify(await f.service.details({section:'providers'})).includes('PRIVATE'));
  assert.deepEqual(await f.service.details({section:'connections'}),{count:1,uploadTotal:10,downloadTotal:0});
