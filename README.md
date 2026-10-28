@@ -12,7 +12,7 @@
 </picture>
 
 <p>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.0"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：Magpie 1.1.0，其余插件 1.0.2" width="23%"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.1"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：Magpie 1.1.1，其余插件 1.0.2" width="23%"></picture></a>
   <a href="#plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-desktop-zh-dark.png"><img src="assets/readme/config-stat-desktop-zh-light.png" alt="PLUGINS：四个独立插件" width="23%"></picture></a>
   <a href="#packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-mail-zh-dark.png"><img src="assets/readme/config-stat-mail-zh-light.png" alt="PACKAGES：四个 npm 单包" width="23%"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-Dock"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-channels-zh-dark.png"><img src="assets/readme/config-stat-channels-zh-light.png" alt="HOST API：1，兼容 FISH Dock 1.1.0+" width="23%"></picture></a>
@@ -23,7 +23,7 @@
 
 <p>
   <a href="#get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-download-zh-dark.png"><img src="assets/readme/key-download-zh-light.png" alt="下载 / Releases" height="40"></picture></a>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.0"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.1"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-issues-zh-dark.png"><img src="assets/readme/key-issues-zh-light.png" alt="反馈 / Issues" height="40"></picture></a>
 </p>
 
@@ -35,7 +35,7 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-最新补丁：[Magpie 1.1.0](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.0)，随包内置签到页并预置 14 个页面插件，补齐页面写动作桥与签到读写契约；网关页新增「自启动」开关（需 FISH Dock 1.2.1+）。不同原生版本按摘要并存，实际副本每次校验，账号与渠道资料保留；原生更新仍由 Dock 插件管理。随包原生为官方 0.1.1709；Clash 同批升至 1.0.3（内核页也支持自启动开关），飞书与 OFM 保持 1.0.2。
+最新补丁：[Magpie 1.1.1](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.1)，签到页「刷新今日积分」有加载与转圈、厂商分组可点击折叠并在标题前显示厂商标记；自启动改走宿主新接口 dock.autostart（1.2.1 的 host. 前缀会被页面桥丢弃，开关点不动），需 FISH Dock 1.2.2+。不同原生版本按摘要并存，实际副本每次校验，账号与渠道资料保留；随包原生为官方 0.1.1709；Clash 同批升至 1.0.4，飞书与 OFM 保持 1.0.2。
 
 <h2 id="plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-features-dark.png"><img src="assets/readme/section-features-light.png" alt="PLUGINS · 四个插件" width="100%"></picture></h2>
 
@@ -65,15 +65,15 @@
 
 <h2 id="get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-install-dark.png"><img src="assets/readme/section-install-light.png" alt="INSTALL · 安装使用" width="100%"></picture></h2>
 
-1. 安装 [FISH Dock 1.2.1](https://github.com/Fish-under-sea/FISH-Dock/releases/tag/v1.2.1)；网关页的自启动开关需要 1.2.1 及以后的宿主。
+1. 安装 [FISH Dock 1.2.2](https://github.com/Fish-under-sea/FISH-Dock/releases/tag/v1.2.1)；网关页的自启动开关需要 1.2.2 及以后的宿主。
 2. 在「插件」页检查更新、选择插件并确认安装；或按下表下载对应版本的 `.fish-plugin`，核对同版 `SHA256SUMS.txt` 后导入。
 3. 安装后进入插件页确认运行状态；需要账号或订阅的插件，再进入对应页面完成配置。
 
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
 | 飞书 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu/v/1.0.2) |
-| Clash 1.0.3 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.0/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.0.3) |
-| Magpie 1.1.0 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.0/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/1.1.0) |
+| Clash 1.0.4 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.1/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.0.4) |
+| Magpie 1.1.1 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.1/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/1.1.0) |
 | OFM（暂停维护） | [`ofm.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/ofm.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-ofm`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-ofm/v/1.0.2) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-install-dark.png"><img src="assets/readme/section-install-light.png" alt="PACKAGES · npm 单包" width="100%"></picture></h2>
@@ -81,7 +81,7 @@
 每个 npm 包只包含一个对应的插件归档和下载 CLI，不运行安装后脚本，不修改 Dock 或系统设置。
 
 ```powershell
-npm install @fish-under-sea/fish-dock-plugin-magpie@1.1.0
+npm install @fish-under-sea/fish-dock-plugin-magpie@1.1.1
 npx @fish-under-sea/fish-dock-plugin-magpie --out C:/work/plugins
 ```
 
