@@ -37,6 +37,8 @@
 
 最新补丁：[Clash 1.1.2](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.2)，保留现有原生 mihomo 多订阅校验、失败回滚、自启动和节点来源标记，新增 TUN 服务模式：安装时确认一次管理员权限，之后普通权限即可开关 TUN。Magpie 保持 1.1.1，飞书与 OFM 保持 1.0.2。
 
+> ⚠️ npm 上 `@fish-under-sea/fish-dock-plugin-clash@1.1.0` 为误发版本（基于旧基线，缺少 1.0.4 的多订阅修复），请勿使用；请安装 `1.1.2`（当前 `latest`）。
+
 <h2 id="plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-features-dark.png"><img src="assets/readme/section-features-light.png" alt="PLUGINS · 四个插件" width="100%"></picture></h2>
 
 ### 飞书通知
