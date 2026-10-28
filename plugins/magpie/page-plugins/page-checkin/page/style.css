@@ -9,9 +9,16 @@ h1 { font-size: 18px; margin: 0; }
 button { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button[disabled] { opacity: .55; cursor: default; }
+button.busy::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 6px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -1px; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { button.busy::before { animation-duration: 2.4s; } }
 button.ghost { background: transparent; }
 .vendor { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; overflow: hidden; background: var(--card); }
-.vhead { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
+.vhead { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; }
+.vhead:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.vhead:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.vlogo { width: 22px; height: 22px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 600; flex: none; }
+.vcaret { width: 12px; color: var(--dim); font-size: 11px; flex: none; }
 .vname { font-weight: 600; }
 .vmeta { color: var(--dim); font-size: 12px; flex: 1; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }

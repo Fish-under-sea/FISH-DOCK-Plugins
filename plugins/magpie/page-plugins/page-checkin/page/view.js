@@ -4,7 +4,8 @@
   const TEXT = {
     en: {
       title: "Check-in", all: "Check every signed-in account in once a day",
-      run: "Check in now", running: "Checking in…", refresh: "Refresh credits",
+      run: "Check in now", running: "Checking in…", refresh: "Refresh credits", refreshing: "Refreshing…",
+      expand: "Expand", collapse: "Collapse",
       switchOn: "On", switchOff: "Off",
       vendor: "Vendor", accounts: "{n} accounts", credits: "today",
       claimed: "Checked in today", done: "Checked in today (the vendor had it)",
@@ -17,7 +18,8 @@
     },
     zh: {
       title: "自动签到", all: "每天替每个已登录账号签到一次",
-      run: "立即签到", running: "正在签到…", refresh: "刷新今日积分",
+      run: "立即签到", running: "正在签到…", refresh: "刷新今日积分", refreshing: "正在刷新…",
+      expand: "展开", collapse: "收起",
       switchOn: "开", switchOff: "关",
       vendor: "厂商", accounts: "{n} 个账号", credits: "今日",
       claimed: "今日已签到", done: "今日已签到（厂商侧已完成）",

@@ -90,12 +90,12 @@
   if(focus){const next=root.querySelector(`#${focus}`);next?.focus();if(caret&&next?.setSelectionRange)next.setSelectionRange(...caret)}
  }
  async function readAutostart(box){
- try{const row=await FishDock.call('host.autostart');box.checked=row.autostart===true;}
+ try{const row=await FishDock.call('dock.autostart');box.checked=row.autostart===true;}
  catch{const wrap=box.closest('.autostart');if(wrap)wrap.hidden=true;}
 }
 async function setAutostart(box){
  const want=box.checked;box.disabled=true;
- try{const row=await FishDock.call('host.autostart',{autostart:want});box.checked=row.autostart===true;}
+ try{const row=await FishDock.call('dock.autostart',{autostart:want});box.checked=row.autostart===true;}
  catch{box.checked=!want;error='自启动设置未保存，请重试';draw();}
  finally{const again=root.querySelector('#autostart');if(again)again.disabled=false;}
 }

@@ -8,7 +8,7 @@
   let lang = theme.lang;
   let opts = {};
   try { opts = (await magpie.options.get()) || {}; } catch {}
-  const state = {collapsed: opts.collapsed !== false, data: null, busy: false};
+  const state = {collapsed: opts.collapsed !== false, data: null, busy: false, refreshing: false, open: new Set(), seeded: false};
 
   // 宿主还没有 checkin:state 时，读会被拒绝；此时按版本不足提示，不显示空白。
   async function read() {
@@ -44,14 +44,6 @@
     return response.json().catch(() => null);
   }
 
-  function toggle(collapsed) {
-    opts = {...opts, collapsed};
-    state.collapsed = collapsed;
-    clearTimeout(saving);
-    saving = setTimeout(() => {magpie.options.set({...opts, collapsed}).catch(() => {})}, 900);
-  }
-  let saving = null;
-
   function failure(error) {
     $("error").hidden = false;
     $("error").textContent = `${V.text(lang).failed}: ${error.message}`;
@@ -81,22 +73,45 @@
     return box;
   }
 
+  // 厂商标记：先按 id 取一个稳定的颜色，放名字首字，等 magpie 侧给真实图标再换。
+  const PALETTE = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#ef4444", "#6366f1"];
+  function logo(id, name) {
+    let hash = 0;
+    for (const ch of String(id)) hash = (hash * 31 + ch.codePointAt(0)) % 100000;
+    const node = row("span", "vlogo", String(name || id).trim().charAt(0).toUpperCase());
+    node.style.background = PALETTE[hash % PALETTE.length];
+    node.setAttribute("aria-hidden", "true");
+    return node;
+  }
+
   function paint() {
     const t = V.text(lang);
     document.querySelectorAll("[data-t]").forEach((e) => { e.textContent = t[e.dataset.t]; });
     const data = state.data;
     const groups = V.vendorGroups(data || {}, lang);
     const totals = V.totals(groups);
+    if (!state.seeded && groups.length) { for (const group of groups) state.open.add(group.id); state.seeded = true; }
     $("total").textContent = groups.length
       ? `${t.total.replace("{done}", totals.done).replace("{all}", totals.all)} · ${totals.credit} ${t.points}`
       : "";
     $("empty").hidden = groups.length > 0;
     $("run").disabled = state.busy || !groups.length;
     $("run").textContent = state.busy ? t.running : t.run;
+    $("refresh").disabled = state.refreshing || !groups.length;
+    $("refresh").textContent = state.refreshing ? t.refreshing : t.refresh;
+    $("refresh").classList.toggle("busy", state.refreshing);
+    $("refresh").setAttribute("aria-busy", String(state.refreshing));
 
     const cards = groups.map((group) => {
+      const open = state.open.has(group.id);
       const card = row("section", "vendor");
       const head = row("div", "vhead");
+      head.setAttribute("role", "button");
+      head.setAttribute("tabindex", "0");
+      head.setAttribute("aria-expanded", String(open));
+      head.setAttribute("aria-label", `${group.name} · ${open ? t.collapse : t.expand}`);
+      head.append(logo(group.id, group.name));
+      head.append(row("span", "vcaret", open ? "▾" : "▸"));
       head.append(row("div", "vname", group.name));
       head.append(row("div", "vmeta", `${t.accounts.replace("{n}", group.total)} · ${group.done}/${group.total} · ${group.credit} ${t.credits}`));
       head.append(switchFor(group.on, async (on) => {
@@ -106,7 +121,7 @@
       card.append(head);
 
       const body = row("div", "list");
-      body.hidden = state.collapsed;
+      body.hidden = !open;
       for (const account of group.accounts) {
         const line = row("div", "acc");
         const who = row("div", "who");
@@ -122,8 +137,14 @@
         body.append(line);
       }
       card.append(body);
-      head.style.cursor = "pointer";
-      head.addEventListener("click", () => toggle(!state.collapsed));
+      const flip = () => {
+        if (state.open.has(group.id)) state.open.delete(group.id); else state.open.add(group.id);
+        paint();
+      };
+      head.addEventListener("click", (event) => { if (event.target.closest(".seg")) return; flip(); });
+      head.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); flip(); }
+      });
       return card;
     });
     $("vendors").replaceChildren(...cards);
@@ -151,7 +172,11 @@
     paint();
   });
   $("refresh").addEventListener("click", async () => {
+    if (state.refreshing) return;
+    state.refreshing = true;
+    paint();
     try { await act("checkin:refresh", {}); } catch (error) { failure(error); }
+    state.refreshing = false;
     await load();
   });
 

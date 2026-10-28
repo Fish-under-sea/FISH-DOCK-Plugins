@@ -46,7 +46,7 @@ async function autostart(onChange) {
  if (!box) return;
  box.disabled = true;
  try {
-  const row = onChange === undefined ? await FishDock.call('host.autostart') : await FishDock.call('host.autostart', { autostart: onChange });
+  const row = onChange === undefined ? await FishDock.call('dock.autostart') : await FishDock.call('dock.autostart', { autostart: onChange });
   box.checked = row.autostart === true;
  } catch (error) {
   if (onChange === undefined) { if (label) label.hidden = true; }
@@ -63,7 +63,7 @@ async function autostart(onChange) {
  if (!box) return;
  box.disabled = true;
  try {
-  const row = onChange === undefined ? await FishDock.call('host.autostart') : await FishDock.call('host.autostart', { autostart: onChange });
+  const row = onChange === undefined ? await FishDock.call('dock.autostart') : await FishDock.call('dock.autostart', { autostart: onChange });
   box.checked = row.autostart === true;
  } catch (error) {
   if (onChange === undefined) { if (label) label.hidden = true; }
