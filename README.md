@@ -35,7 +35,7 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-最新补丁：[Clash 1.1.7](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.7)，修复旧凭据为密文时阻断订阅保存的问题（页面一直显示「尚未添加订阅」、保存无反应）；并含 TUN 服务模式：安装时确认一次管理员权限，之后普通权限即可开关 TUN。Magpie 保持 1.1.1，飞书与 OFM 保持 1.0.2。
+最新补丁：[Clash 1.1.8](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.8)，修复旧凭据为密文时阻断订阅保存的问题（页面一直显示「尚未添加订阅」、保存无反应）；并含 TUN 服务模式：安装时确认一次管理员权限，之后普通权限即可开关 TUN。Magpie 保持 1.1.1，飞书与 OFM 保持 1.0.2。
 
 > ⚠️ npm 上 `@fish-under-sea/fish-dock-plugin-clash@1.1.0` 为误发版本（基于旧基线，缺少 1.0.4 的多订阅修复），请勿使用；请安装 `1.1.2`（当前 `latest`）。
 
@@ -74,7 +74,7 @@
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
 | 飞书 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu/v/1.0.2) |
-| Clash 1.1.7 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.7/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.1.7) |
+| Clash 1.1.8 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.8/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.1.8) |
 | Magpie 1.1.1 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.1/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/1.1.0) |
 | OFM（暂停维护） | [`ofm.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/ofm.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-ofm`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-ofm/v/1.0.2) |
 

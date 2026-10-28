@@ -40,6 +40,35 @@ function fixture() {
   click:action=>{const button=buttons.find(b=>b.dataset.action===action);assert.ok(button,action);return button.onclick()},
   block:()=>{let release;blocked=new Promise(r=>release=r);return release},fail:()=>{fail=true}};
 }
+test('sandbox 页面点击保存订阅直接调用 RPC，并读取实时输入而非依赖 oninput',async()=>{
+ const f=fixture();await flush();f.click('section-providers');
+ f.element('subscription-name').value='Click save';
+ f.element('subscription-url').value='https://example.test/sub?token=synthetic';
+ const release=f.block();
+ f.click('save-subscription');
+ f.click('save-subscription');
+ assert.equal(f.calls.filter(c=>c.method==='clash.subscriptionSave').length,1);
+ assert.equal(f.calls.find(c=>c.method==='clash.subscriptionSave').params.name,'Click save');
+ assert.equal(f.calls.find(c=>c.method==='clash.subscriptionSave').params.url,'https://example.test/sub?token=synthetic');
+ assert.match(f.root.innerHTML, /type="button"[^>]*data-action="save-subscription"/);
+ release();await flush();
+});
+test('sandbox 页面内核设置保存按钮直接调用 RPC',async()=>{
+ const f=fixture();await flush();
+ f.element('kernel').value='D:/new/mihomo.exe';
+ f.element('mixedPort').value='7897';
+ f.click('save-config');await flush();
+ const saved=f.calls.find(c=>c.method==='clash.save');assert.ok(saved);
+ assert.equal(saved.params.kernel,'D:/new/mihomo.exe');assert.equal(saved.params.mixedPort,7897);
+});
+test('sandbox 页面输入框回车走同一保存路径，无原生表单提交',async()=>{
+ const f=fixture();await flush();f.click('section-providers');
+ f.element('subscription-name').value='Keyboard save';f.element('subscription-url').value='https://example.test/sub';
+ let prevented=false;
+ f.element('subscription-form').onkeydown({key:'Enter',target:{tagName:'INPUT'},preventDefault(){prevented=true}});
+ await flush();assert.equal(prevented,true);
+ assert.equal(f.calls.filter(c=>c.method==='clash.subscriptionSave').length,1);
+});
 test('page retains drafts after refresh/failure and suppresses double submission while awaiting save',async()=>{
  const f=fixture();await flush();f.click('section-providers');
  f.element('subscription-name').value='Draft';

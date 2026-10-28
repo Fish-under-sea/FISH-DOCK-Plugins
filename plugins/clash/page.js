@@ -9,7 +9,7 @@
  const button=(action,text,extra='',disabled=busy)=>`<button type="button" data-action="${action}" ${extra} ${disabled?'disabled':''}>${text}</button>`;
  const when=value=>value?esc(new Date(value).toLocaleString()):'—';
  // 页面自身版本：用于区分「插件已升级」与「页面仍在跑旧缓存」。
- const UI_VERSION='1.1.7';
+ const UI_VERSION='1.1.8';
  const say=(text,kind='info')=>{notice=String(text||'');noticeKind=kind};
  // 后端错误文案是固定中文提示，不含地址或凭据；只接受这类已知提示，
  // 其余异常（可能夹带 URL/token 的原始错误）一律折叠为通用说明。
@@ -84,7 +84,7 @@
    <form id="subscription-form"><h3>${draft.id?'编辑订阅':'添加订阅'}</h3>
     <label>名称<input id="subscription-name" name="name" maxlength="80" required value="${esc(draft.name)}" placeholder="例如：机场A" ${locked()?'disabled':''}></label>
     <label>HTTPS 订阅地址<input id="subscription-url" name="url" type="password" autocomplete="off" spellcheck="false" value="${esc(draft.url)}" placeholder="${draft.id?'留空保持原地址':'https://…'}" ${draft.id?'':'required'} ${locked()?'disabled':''}></label>
-    <button ${locked()?'disabled':''}>${busy?'正在保存…':'保存订阅'}</button>${draft.id?button('cancel-edit','取消编辑'):''}
+    ${button('save-subscription',busy?'正在保存…':'保存订阅','',locked())}${draft.id?button('cancel-edit','取消编辑'):''}
     <p class="muted small">地址加密保存且不回显。支持 mihomo 可读取的代理 YAML/JSON；网页、登录页与普通分享链接不等于订阅。</p>
    </form>`;
  }
@@ -106,8 +106,31 @@
   if(error||view.error)parts.push(`<p class="banner bad" role="alert">${esc(error||view.error)}</p>`);
   else if(notice)parts.push(`<p class="banner ${noticeKind==='ok'?'good':''}" role="status">${esc(notice)}</p>`);
   if(view.legacyPending&&!view.subscriptions.length)
-   parts.push('<p class="banner" role="status">检测到旧版单订阅凭据（已加密，无法自动迁移）。请在下方重新填写订阅名称与 HTTPS 地址并保存，旧文件不会被删除。</p>');
+   parts.push('<p class="banner" role="status">检测到格式未识别的旧版单订阅资料。原数据已保留；可在下方重新添加订阅地址。</p>');
   return parts.join('');
+ }
+ function saveSubscription() {
+  if(locked())return false;
+  const form=root.querySelector('#subscription-form');
+  if(!form||form.reportValidity?.()===false)return false;
+  const data=new FormData(form);
+  draft={...draft,name:String(data.get('name')??''),url:String(data.get('url')??'')};
+  return run('subscriptionSave',{...draft});
+ }
+ function saveConfig() {
+  if(locked())return false;
+  const form=root.querySelector('#config');
+  if(!form||form.reportValidity?.()===false)return false;
+  const data=new FormData(form);
+  const tunEnable=root.querySelector('#tunEnable');
+  return run('save',{kernel:data.get('kernel'),mixedPort:Number(data.get('mixedPort')),
+   controllerPort:Number(data.get('controllerPort')),tun:{enable:tunEnable?.checked===true,stack:String(data.get('tunStack')||'mixed')}});
+ }
+ function bindSave(form,save) {
+  // Dock 普通插件页仅有 allow-scripts；不依赖原生 submit。
+  // 保留 submit 处理器便于独立浏览器使用，回车显式转入同一 RPC 路径。
+  form.onsubmit=e=>{e.preventDefault();return save()};
+  form.onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing&&e.target?.tagName==='INPUT'){e.preventDefault();return save()}};
  }
  function draw() {
   const active=document.activeElement,focus=active?.id;
@@ -137,16 +160,16 @@
    ${cfg.tun?.enable&&!view.tunService?.installed?'<p class="bad" role="alert">TUN 已勾选但服务未安装，启动内核会被拒绝。请先安装 TUN 服务。</p>':''}
    ${tunServiceBlock()}
    </fieldset>
-   <button ${locked()?'disabled':''}>保存内核配置</button></form></details>`;
+   ${button('save-config','保存内核配置','',locked())}</form></details>`;
   bind();
   const form=root.querySelector('#config');
   form.oninput=()=>{const data=new FormData(form);configDraft={kernel:data.get('kernel'),mixedPort:data.get('mixedPort'),controllerPort:data.get('controllerPort'),tun:{enable:data.has('tunEnable'),stack:String(data.get('tunStack')||'mixed')}}};
-  form.onsubmit=e=>{e.preventDefault();const data=new FormData(form);run('save',{kernel:data.get('kernel'),mixedPort:Number(data.get('mixedPort')),controllerPort:Number(data.get('controllerPort')),tun:{enable:data.has('tunEnable'),stack:String(data.get('tunStack')||'mixed')}})};
+  bindSave(form,saveConfig);
   root.querySelector('#settings').ontoggle=e=>{settingsOpen=e.target.open};
   const subscriptionForm=root.querySelector('#subscription-form');
   if(subscriptionForm){
    subscriptionForm.oninput=()=>{const data=new FormData(subscriptionForm);draft={...draft,name:data.get('name'),url:data.get('url')}};
-   subscriptionForm.onsubmit=e=>{e.preventDefault();run('subscriptionSave',{...draft})};
+   bindSave(subscriptionForm,saveSubscription);
   }
   const groups=root.querySelector('#group');if(groups)groups.onchange=()=>{group=groups.value;draw()};
   root.querySelector('#mode').onchange=e=>run('mode',{mode:e.target.value});
@@ -167,6 +190,8 @@ function bind() {
  if(auto){auto.onchange=()=>setAutostart(auto);void readAutostart(auto);}
   root.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{
    const a=b.dataset.action,id=b.dataset.id;
+    if(a==='save-subscription')return saveSubscription();
+    if(a==='save-config')return saveConfig();
    if(a==='single'||a==='double')return run('layout',{layout:a});
    if(a.startsWith('section-')){section=a.slice(8);detail=null;draw();return}
    if(a==='node')return run('select',{group,name:b.dataset.node});

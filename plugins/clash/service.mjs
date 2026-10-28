@@ -23,7 +23,7 @@ function labelValue(value) {
 }
 export function createClash({context,runtime,request:injectedRequest,fetch:fetcher=globalThis.fetch,defaultKernel=''}) {
   let running=null,settings,loading,subscriptions=[],secret='',operation=null,closing=false,operationError='';
-  // 旧版单订阅凭据存在但无法自动迁移（密文/格式不符）时置真，用于页面明确提示「请重新添加」。
+  // secrets.read 由宿主先解密；这里只标记解密后内容仍不符合订阅地址格式的情况。
   let legacyPending=false;
   let queue=Promise.resolve();
   const jobs=new Map(),alive=()=>!!running&&running.alive();
@@ -56,8 +56,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
           error:s.status==='updating'?'上次更新被中断，旧缓存仍保留':s.status==='error'?(updateMessages[s.errorCode]??updateMessages.UNKNOWN):''
         }));
       } else {
-        // 旧版单订阅凭据：能解析就迁移；已是密文/无法解析则只在本次会话提示一次，
-        // 用户保存新订阅后即彻底清除，避免每次启动都重复提示。
+        // 宿主已解密旧版单订阅凭据；格式正常就迁移，格式无效则提示并保留原值。
         const old=await context.secrets.read('credentials','subscription.json');
         if(old) {
           let migrated=null;

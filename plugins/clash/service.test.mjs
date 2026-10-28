@@ -184,9 +184,8 @@ test('TUN 服务安装要求内核已配置且内核未运行',async()=>{
  await f.service.save(kernel);await f.service.start();
  await assert.rejects(f.service.installTunService(),/停止内核/);
 });
-test('旧凭据为不可解析密文时跳过迁移，view 与新增订阅仍可用',async()=>{
- // 真实机器上 credentials/subscription.json 可能已是加密 blob；旧实现直接 new URL 会抛错，
- // 导致 config() 每次失败：页面显示「尚未添加订阅」，保存订阅也无反应。
+test('解密后的旧凭据内容格式无效时保留原值，view 与新增订阅仍可用',async()=>{
+ // 覆盖真正的损坏内容；此替身不代表宿主 DPAPI 解密行为。
  const disk=new Map([['secret/credentials/subscription.json','\u0000binary-blob-not-a-url']]);
  const f=fixture(disk);
  const state=await f.service.view({controller:false});
