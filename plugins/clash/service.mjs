@@ -52,12 +52,18 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       } else {
         const old=await context.secrets.read('credentials','subscription.json');
         if(old) {
-          const id=`sub-${randomUUID()}`;
-          await context.secrets.write('credentials',`${id}.json`,urlValue(old));
-          const hasCache=await runtime.migrateSubscription?.(id)??false;
-          // Commit the stable identity before clearing legacy credentials; retries cannot duplicate it.
-          await persist([{id,name:'原有订阅',enabled:true,status:hasCache?'ready':'pending',lastAttempt:null,lastSuccess:null,nodeCount:0,hasCache,error:''}]);
-          await context.secrets.write('credentials','subscription.json','');
+          // 旧凭据可能已是加密密文而非明文 URL：无法解析时跳过迁移并保留原值，
+          // 否则会抛错并让 config() 每次失败，页面只能显示空订阅且无法新增。
+          let migrated=null;
+          try{migrated=urlValue(old)}catch{}
+          if(migrated) {
+            const id=`sub-${randomUUID()}`;
+            await context.secrets.write('credentials',`${id}.json`,migrated);
+            const hasCache=await runtime.migrateSubscription?.(id)??false;
+            // Commit the stable identity before clearing legacy credentials; retries cannot duplicate it.
+            await persist([{id,name:'原有订阅',enabled:true,status:hasCache?'ready':'pending',lastAttempt:null,lastSuccess:null,nodeCount:0,hasCache,error:''}]);
+            await context.secrets.write('credentials','subscription.json','');
+          }
         }
       }
     })().catch(error=>{loading=null;throw error});

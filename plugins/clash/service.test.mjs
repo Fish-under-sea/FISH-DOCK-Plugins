@@ -176,3 +176,15 @@ test('TUN 服务安装要求内核已配置且内核未运行',async()=>{
  await f.service.save(kernel);await f.service.start();
  await assert.rejects(f.service.installTunService(),/停止内核/);
 });
+test('旧凭据为不可解析密文时跳过迁移，view 与新增订阅仍可用',async()=>{
+ // 真实机器上 credentials/subscription.json 可能已是加密 blob；旧实现直接 new URL 会抛错，
+ // 导致 config() 每次失败：页面显示「尚未添加订阅」，保存订阅也无反应。
+ const disk=new Map([['secret/credentials/subscription.json','\u0000binary-blob-not-a-url']]);
+ const f=fixture(disk);
+ const state=await f.service.view({controller:false});
+ assert.deepEqual(state.subscriptions,[]);
+ assert.equal(disk.get('secret/credentials/subscription.json'),'\u0000binary-blob-not-a-url');
+ const saved=await f.service.subscriptionSave({name:'9YUN',url:'https://example.test/sub?token=PRIVATE'});
+ assert.equal(saved.subscriptions.length,1);
+ assert.equal(saved.subscriptions[0].name,'9YUN');
+});
