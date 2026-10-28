@@ -39,23 +39,7 @@ $('form').addEventListener('submit', event => { event.preventDefault(); void run
 $('form').addEventListener('input', () => { dirty = true; });
 for (const action of ['start', 'stop', 'open']) $(action).onclick = () => run(`gateway.${action}`);
 $('settings').onclick = () => { const expanded = $('configuration').hidden; $('configuration').hidden = !expanded; $('settings').setAttribute('aria-expanded', String(expanded)); };
-$('refresh').onclick = () => { opened = ''; // 自启动：随 Dock 启动就拉起本机服务。关掉它只是不再开机启动，眼下的服务照旧。
-// 宿主（FISH Dock 1.2.1 之前）没有这个接口时把开关藏起来，不打扰既有操作。
-async function autostart(onChange) {
- const box = $('autostart'), label = $('autostart-label');
- if (!box) return;
- box.disabled = true;
- try {
-  const row = onChange === undefined ? await FishDock.call('dock.autostart') : await FishDock.call('dock.autostart', { autostart: onChange });
-  box.checked = row.autostart === true;
- } catch (error) {
-  if (onChange === undefined) { if (label) label.hidden = true; }
-  else { box.checked = !onChange; $('error').textContent = error.message; }
- }
- finally { box.disabled = false; }
-}
-$('autostart').onchange = () => { void autostart($('autostart').checked); };
-void autostart();void run('gateway.view'); };
+$('refresh').onclick = () => { opened = ''; void run('gateway.view'); };
 // 自启动：随 Dock 启动就拉起本机服务。关掉它只是不再开机启动，眼下的服务照旧。
 // 宿主（FISH Dock 1.2.1 之前）没有这个接口时把开关藏起来，不打扰既有操作。
 async function autostart(onChange) {
@@ -71,5 +55,6 @@ async function autostart(onChange) {
  }
  finally { box.disabled = false; }
 }
-$('autostart').onchange = () => { void autostart($('autostart').checked); };
+const autostartBox = $('autostart');
+if (autostartBox) autostartBox.onchange = () => { void autostart(autostartBox.checked); };
 void autostart();void run('gateway.view');
