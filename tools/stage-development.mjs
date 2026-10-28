@@ -34,7 +34,9 @@ export function stage({out,sdk,ofm,magpie,mihomo,only,include}={}){
   for(const item of fs.readdirSync(path.join(repository,'plugins',key),{withFileTypes:true})){
    const source=path.join(repository,'plugins',key,item.name),target=path.join(root,'plugins',key,item.name);
    // 插件目录允许子目录（例如 Clash 的 service/tun-service.exe）；构建期 .cs 源码不进包。
-   if(item.isDirectory())copyDir(source,target);
+   // 以点开头的目录是本地构建缓存（magpie 的 .tools 里有 Go 工具链与模块缓存，上万文件
+   // 且含链接），不进包，否则 copyDir 会撞上非普通文件而中止。
+   if(item.isDirectory()&&!item.name.startsWith('.'))copyDir(source,target);
    else if(item.isFile()&&!item.name.includes('.test.')&&item.name!=='stage.mjs'&&!item.name.endsWith('.cs'))copy(source,target);
   }
   // Magpie 内置的页面插件（page-checkin）以目录随插件发布，首启由 MAGPIE_SEED_EXTRA 装进清单。
