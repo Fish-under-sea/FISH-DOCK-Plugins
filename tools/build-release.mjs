@@ -15,12 +15,12 @@ export function archive(root){
 export function build(options){
  const version=options.version||'1.0.0';if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('版本格式无效');
  const selected=options.only?definitions.filter(d=>d.key===options.only):definitions;if(!selected.length)throw Error('未知插件');
- for(const definition of selected){
+for(const definition of selected){
   const dependency={clash:'mihomo',magpie:'magpie',ofm:'ofm'}[definition.key];
   if(dependency&&!options[dependency])throw Error(`${definition.key} 缺少必需服务资源：--${dependency}`);
  }
  if(!options.out||!path.isAbsolute(options.out)||fs.existsSync(options.out))throw Error('请使用新的绝对输出目录');
- const tag=`v${version}`,out=path.resolve(options.out);const staged=path.join(out,'staged');stage({...options,out:staged});const dist=path.join(out,'dist');fs.mkdirSync(dist);
+ const tag=`v${version}`,out=path.resolve(options.out);const staged=path.join(out,'staged');stage({...options,out:staged,include:selected.map(definition=>definition.key)});const dist=path.join(out,'dist');fs.mkdirSync(dist);
  const entries=[];
  for(const definition of selected){const root=path.join(staged,definition.key),manifest=JSON.parse(fs.readFileSync(path.join(root,'plugin.json'),'utf8'));manifest.version=version;
   fs.copyFileSync(path.join(repository,'LICENSE'),path.join(root,'LICENSE'));

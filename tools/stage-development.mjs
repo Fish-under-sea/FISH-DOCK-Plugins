@@ -5,21 +5,28 @@ import {fileURLToPath} from 'node:url';
 import {stageOfm} from '../plugins/ofm/stage.mjs';
 const repository=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
+// definitions 是发行清单；开发中的插件放在 developmentDefinitions，
+// 只进入开发暂存目录，不进入 build-release 的 ZIP/商店目录。
 export const definitions=[
  {key:'feishu',name:'飞书通知',directory:'.fishplugin-feishu',capabilities:['storage','events','network']},
  {key:'clash',name:'Clash 代理',directory:'.fishplugin-clash',capabilities:['storage','network','services','system-proxy']},
  {key:'magpie',name:'Magpie 网关',directory:'.fishplugin-magpie',capabilities:['storage','network','services']},
  {key:'ofm',name:'OFM 本地模型',directory:'.fishplugin-ourfreemodel',capabilities:['storage','network','services']},
 ];
+export const developmentDefinitions=[
+ {key:'relay-probe',name:'中转站探针',directory:'.fishplugin-relay-probe',capabilities:['storage','network']},
+];
+const stagedDefinitions=[...definitions,...developmentDefinitions];
 // 仅产生供开发加载的目录，不制作 ZIP、不更新线上目录、不携带用户数据。
-export function stage({out,sdk,ofm,magpie,mihomo,only}){
+export function stage({out,sdk,ofm,magpie,mihomo,only,include}={}){
  if(!path.isAbsolute(out)||fs.existsSync(out))throw Error('请使用新的绝对输出目录');
  if(!sdk||!path.isAbsolute(sdk))throw Error('请明确指定 Dock SDK 目录');
  const copy=(source,target)=>{if(!fs.lstatSync(source).isFile())throw Error('源资源不是普通文件');fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(source,target)};
  // 页面插件是整棵目录（package.json + page/），不是单文件，逐层复制，链接一律拒绝。
  const copyDir=(source,target)=>{fs.mkdirSync(target,{recursive:true});for(const item of fs.readdirSync(source,{withFileTypes:true})){const s=path.join(source,item.name),t=path.join(target,item.name);if(item.isDirectory())copyDir(s,t);else if(item.isFile())fs.copyFileSync(s,t);else throw Error('源资源不是普通文件');}};
  const resources=[];
- const selected=only?definitions.filter(row=>row.key===only):definitions;
+// 发行构建传入 include（只有官方插件）；开发暂存不传，连开发插件一起产出。
+ const selected=include?stagedDefinitions.filter(definition=>include.includes(definition.key)):only?definitions.filter(row=>row.key===only):stagedDefinitions;
  if(!selected.length)throw Error('未知插件');
  for(const definition of selected){
   const {key,name,directory,capabilities}=definition,root=path.join(out,key);
@@ -50,5 +57,5 @@ export function stage({out,sdk,ofm,magpie,mihomo,only}){
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const args={};for(let index=2;index<process.argv.length;index+=2){const key=process.argv[index];if(!['--out','--sdk','--ofm','--magpie','--mihomo'].includes(key)||!process.argv[index+1])throw Error('参数为 --out、--sdk 以及可选的 --ofm、--magpie、--mihomo');args[key.slice(2)]=path.resolve(process.argv[index+1]);}
- console.log(JSON.stringify(stage(args).map(row=>({id:row.id,ready:!!row.executable||row.id==='fish.feishu'})),null,2));
+ console.log(JSON.stringify(stage(args).map(row=>({id:row.id,ready:!!row.executable||row.id==='fish.feishu'||row.id==='fish.relay-probe'})),null,2));
 }

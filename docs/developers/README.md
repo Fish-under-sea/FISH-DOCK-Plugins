@@ -1,12 +1,12 @@
 # 插件开发者指南
 
-当前协议为 v1，四个官方插件为 1.0.0。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1，四个已发布官方插件为 1.0.0；`plugins/relay-probe` 是开发中的中转站行为探针，尚未进入发行目录。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
-Dock 仓维护桌面宿主、Node SDK、浏览器桥、安装更新与回滚、Windhawk、「插件」管理页和标签排序。本仓维护 `plugins/feishu`、`plugins/clash`、`plugins/magpie`、`plugins/ofm`，以及 `shared`、`tools/stage-development.mjs`、商店目录和插件文档。
+Dock 仓维护桌面宿主、Node SDK、浏览器桥、安装更新与回滚、Windhawk、「插件」管理页和标签排序。本仓维护 `plugins/feishu`、`plugins/clash`、`plugins/magpie`、`plugins/ofm`，以及开发中的 `plugins/relay-probe`、`shared`、`tools/stage-development.mjs`、商店目录和插件文档。
 
-不要把业务页面重新写入 Dock 设置页，也不要把源码目录当成用户数据目录。正常发行版默认不预装四插件；调试版通过明确的开发目录装载。
+不要把业务页面重新写入 Dock 设置页，也不要把源码目录当成用户数据目录。正常发行版默认不预装这些插件；调试版通过明确的开发目录装载。
 
 ## 清单
 
@@ -78,7 +78,7 @@ Magpie、OFM 的 `gateway.open` 是宿主提供的特定管理页入口，地址
 先按 [项目 README](../../README.md) 暂存开发目录，并用显式 Node、独立 `.fish-dock` 与调试宿主加载。
 
 ```powershell
-node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.test.mjs' 'plugins/magpie/*.test.mjs' 'plugins/ofm/*.test.mjs' 'shared/*.test.mjs'
+node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.test.mjs' 'plugins/magpie/*.test.mjs' 'plugins/ofm/*.test.mjs' 'plugins/relay-probe/*.test.mjs' 'shared/*.test.mjs' 'tools/*.test.mjs'
 ```
 
 `FISH_TEST_MAGPIE` 与 `FISH_TEST_OFM` 启用真实服务验收。验证首次配置、保存失败、业务错误后的继续操作、端口占用、启动就绪、停止、连续启停、卸载保留资料，以及升级失败回滚。前端单测通过后，再用真实 WebView 核对页面加载、布局切换与键盘操作。

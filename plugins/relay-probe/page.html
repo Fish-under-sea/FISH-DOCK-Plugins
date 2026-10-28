@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>中转站探针</title>
+  <link rel="stylesheet" href="../../shared/dock.css">
+  <link rel="stylesheet" href="page.css">
+  <script src="page.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>中转站探针</h1>
+        <p>用 thinking 签名和 tokenizer 计数交叉检查中转站是否非原生。</p>
+      </div>
+    </header>
+    <p id="status" role="status" aria-live="polite">正在读取配置…</p>
+    <form id="settings">
+      <fieldset id="fields" disabled>
+        <legend>目标</legend>
+        <label for="baseUrl">Base URL</label>
+        <input id="baseUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" aria-describedby="baseHelp">
+        <p id="baseHelp" class="note">只填写你信任的 Anthropic 兼容地址；非本机地址必须使用 HTTPS。Key 只保存在本插件的加密凭据中。</p>
+        <label for="apiKey">API Key</label>
+        <input id="apiKey" type="password" autocomplete="new-password" placeholder="留空保留已保存的 Key" aria-describedby="keyState">
+        <p id="keyState" class="note">尚未保存 Key</p>
+        <label for="model">主模型</label>
+        <input id="model" type="text" autocomplete="off" spellcheck="false">
+        <label for="comparisonModel">对照模型</label>
+        <input id="comparisonModel" type="text" autocomplete="off" spellcheck="false">
+        <label class="check"><input type="checkbox" id="clearKey">清除已保存的 Key</label>
+      </fieldset>
+      <div class="actions">
+        <button type="submit" id="save" class="primary" disabled>保存配置</button>
+        <button type="button" id="run" disabled>开始检测</button>
+        <button type="button" id="refresh">刷新</button>
+        <button type="button" id="stop" hidden>停止检测</button>
+      </div>
+    </form>
+    <section id="result" hidden>
+      <h2>检测结果</h2>
+      <p id="verdict" role="status" aria-live="polite"></p>
+      <ul id="evidence" class="evidence"></ul>
+      <dl id="details" class="details"></dl>
+      <details><summary>原始 JSON</summary><pre id="json"></pre></details>
+    </section>
+    <section>
+      <h2>判定边界</h2>
+      <p class="note">这不是官方验真服务。B1 检查 thinking 签名重放是否被校验；C1 检查 count_tokens 与实际 usage 是否一致；C2 检查两个世代模型的 tokenizer 比例。三项都只能给行为证据，不能证明模型身份；高质量中转层可以伪造单个信号。</p>
+    </section>
+  </main>
+</body>
+</html>

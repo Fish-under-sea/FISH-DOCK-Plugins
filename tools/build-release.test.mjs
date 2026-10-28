@@ -1,8 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import {createHash} from 'node:crypto';
 import {inflateRawSync,crc32} from 'node:zlib';
 import {archive,build} from './build-release.mjs';
+import {definitions, stage} from './stage-development.mjs';
+test('发行清单不包含开发探针',()=>{
+ assert.equal(definitions.some(definition=>definition.key==='relay-probe'),false);
+});
+test('stage 只输出选中的插件，并写入正确的 manifest 文件哈希',t=>{
+ const base=fs.mkdtempSync(path.join(os.tmpdir(),'fish-stage-'));t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
+ const sdk=path.join(base,'sdk');fs.mkdirSync(path.join(sdk,'node'),{recursive:true});fs.mkdirSync(path.join(sdk,'browser'),{recursive:true});
+ const sdkSource='export const sdk = true;\n';fs.writeFileSync(path.join(sdk,'node','plugin.mjs'),sdkSource);fs.writeFileSync(path.join(sdk,'browser','bridge.js'),'window.FishDock = {};\n');
+ const devOut=path.join(base,'dev');stage({out:devOut,sdk,include:['relay-probe']});
+ assert.equal(fs.existsSync(path.join(devOut,'feishu')),false);assert.equal(fs.existsSync(path.join(devOut,'relay-probe','plugin.json')),true);
+ const manifest=JSON.parse(fs.readFileSync(path.join(devOut,'relay-probe','plugin.json'),'utf8'));
+ assert.equal(manifest.id,'fish.relay-probe');assert.equal(manifest.backend.entry,'plugins/relay-probe/backend.mjs');assert.equal(manifest.pages[0].entry,'plugins/relay-probe/page.html');
+ const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
+ assert.equal(manifest.files['plugins/relay-probe/probe.mjs'],hash(fs.readFileSync(new URL('../plugins/relay-probe/probe.mjs',import.meta.url))));
+ assert.equal(manifest.files['plugins/relay-probe/sdk.mjs'],hash(sdkSource));
+ const dev=JSON.parse(fs.readFileSync(path.join(devOut,'development.json'),'utf8'));assert.deepEqual(dev.plugins.map(plugin=>plugin.id),['fish.relay-probe']);
+ const releaseOut=path.join(base,'release');stage({out:releaseOut,sdk,include:definitions.map(definition=>definition.key)});
+ assert.equal(fs.existsSync(path.join(releaseOut,'relay-probe')),false);
+ const release=JSON.parse(fs.readFileSync(path.join(releaseOut,'development.json'),'utf8'));assert.deepEqual(release.plugins.map(plugin=>plugin.id),definitions.map(definition=>`fish.${definition.key}`));
+});
 test('单独发布 Magpie 补丁，清单和目录版本一致',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fish-magpie-release-')),sdk=path.join(root,'sdk');
  for(const name of ['node/plugin.mjs','browser/bridge.js']){const file=path.join(sdk,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'synthetic-sdk');}

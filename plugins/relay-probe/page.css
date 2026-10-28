@@ -1,0 +1,19 @@
+/* 中转站探针沿用 Dock 设置卡片；结果区只展示行为证据，不展示 Key。 */
+header p{font-size:12px;margin:4px 0}
+#status{margin:0 8px 10px}
+fieldset{margin-bottom:12px}
+#baseHelp{margin-top:-2px}
+.actions{margin-top:16px}
+#result .note{margin-top:8px}
+.evidence{padding-left:20px;margin:8px 0;color:var(--dock-text)}
+.evidence li{margin:6px 0;overflow-wrap:anywhere}
+.details{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 14px;margin:12px 0}
+.details dt{color:var(--dock-muted)}
+.details dd{margin:0;overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;background:var(--dock-bg);border:1px solid var(--dock-line);border-radius:12px;padding:10px;font-size:11.5px}
+#verdict{font-weight:600}
+#verdict[data-code=likely_forged]{color:#ff6b7a}
+#verdict[data-code=suspicious]{color:#ffd60a}
+#verdict[data-code=native_consistent]{color:#30d158}
+#verdict[data-code=inconclusive],#verdict[data-code=auth_error],#verdict[data-code=endpoint_not_found],#verdict[data-code=network_error],#verdict[data-code=unsupported_surface]{color:var(--dock-muted)}
+@media(max-width:720px){.details{grid-template-columns:1fr}.details dt{margin-top:6px}}
