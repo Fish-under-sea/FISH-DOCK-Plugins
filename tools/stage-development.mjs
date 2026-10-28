@@ -23,7 +23,7 @@ export function stage({out,sdk,ofm,magpie,mihomo,only,include}={}){
  if(!sdk||!path.isAbsolute(sdk))throw Error('请明确指定 Dock SDK 目录');
  const copy=(source,target)=>{if(!fs.lstatSync(source).isFile())throw Error('源资源不是普通文件');fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(source,target)};
  // 页面插件是整棵目录（package.json + page/），不是单文件，逐层复制，链接一律拒绝。
- const copyDir=(source,target)=>{fs.mkdirSync(target,{recursive:true});for(const item of fs.readdirSync(source,{withFileTypes:true})){const s=path.join(source,item.name),t=path.join(target,item.name);if(item.isDirectory())copyDir(s,t);else if(item.isFile())fs.copyFileSync(s,t);else throw Error('源资源不是普通文件');}};
+ const copyDir=(source,target)=>{fs.mkdirSync(target,{recursive:true});for(const item of fs.readdirSync(source,{withFileTypes:true})){const s=path.join(source,item.name),t=path.join(target,item.name);if(item.isDirectory())copyDir(s,t);else if(item.isFile()){if(item.name.endsWith('.cs')||item.name.includes('.test.'))continue;fs.copyFileSync(s,t)}else throw Error('源资源不是普通文件');}};
  const resources=[];
 // 发行构建传入 include（只有官方插件）；开发暂存不传，连开发插件一起产出。
  const selected=include?stagedDefinitions.filter(definition=>include.includes(definition.key)):only?definitions.filter(row=>row.key===only):stagedDefinitions;
@@ -32,7 +32,10 @@ export function stage({out,sdk,ofm,magpie,mihomo,only,include}={}){
   const {key,name,directory,capabilities}=definition,root=path.join(out,key);
   fs.mkdirSync(root,{recursive:true});
   for(const item of fs.readdirSync(path.join(repository,'plugins',key),{withFileTypes:true})){
-   if(item.isFile()&&!item.name.includes('.test.')&&item.name!=='stage.mjs')copy(path.join(repository,'plugins',key,item.name),path.join(root,'plugins',key,item.name));
+   const source=path.join(repository,'plugins',key,item.name),target=path.join(root,'plugins',key,item.name);
+   // 插件目录允许子目录（例如 Clash 的 service/tun-service.exe）；构建期 .cs 源码不进包。
+   if(item.isDirectory())copyDir(source,target);
+   else if(item.isFile()&&!item.name.includes('.test.')&&item.name!=='stage.mjs'&&!item.name.endsWith('.cs'))copy(source,target);
   }
   // Magpie 内置的页面插件（page-checkin）以目录随插件发布，首启由 MAGPIE_SEED_EXTRA 装进清单。
   const bundled=path.join(repository,'plugins',key,'page-plugins');

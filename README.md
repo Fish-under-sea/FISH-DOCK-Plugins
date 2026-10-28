@@ -35,7 +35,7 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-最新补丁：[Magpie 1.1.1](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.1)，签到页「刷新今日积分」有加载与转圈、厂商分组可点击折叠并在标题前显示厂商标记；自启动改走宿主新接口 dock.autostart（1.2.1 的 host. 前缀会被页面桥丢弃，开关点不动），需 FISH Dock 1.2.2+。不同原生版本按摘要并存，实际副本每次校验，账号与渠道资料保留；随包原生为官方 0.1.1709；Clash 同批升至 1.0.4，飞书与 OFM 保持 1.0.2。
+最新补丁：[Clash 1.1.2](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.1.2)，保留现有原生 mihomo 多订阅校验、失败回滚、自启动和节点来源标记，新增 TUN 服务模式：安装时确认一次管理员权限，之后普通权限即可开关 TUN。Magpie 保持 1.1.1，飞书与 OFM 保持 1.0.2。
 
 <h2 id="plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-features-dark.png"><img src="assets/readme/section-features-light.png" alt="PLUGINS · 四个插件" width="100%"></picture></h2>
 
@@ -72,7 +72,7 @@
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
 | 飞书 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu/v/1.0.2) |
-| Clash 1.0.4 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.1/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.0.4) |
+| Clash 1.1.2 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.2/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.1.2) |
 | Magpie 1.1.1 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.1/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/1.1.0) |
 | OFM（暂停维护） | [`ofm.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/ofm.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-ofm`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-ofm/v/1.0.2) |
 

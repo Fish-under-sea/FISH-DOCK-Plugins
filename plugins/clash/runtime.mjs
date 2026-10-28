@@ -15,22 +15,56 @@ export function createProxyLease({storage,adapter}){
  }
  return {enable,restore,active:()=>active};
 }
-export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],dataDirectory}){
+export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],dataDirectory,tun}){
  const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,profile:{'store-selected':true}};
  const enabled=subscriptions.filter(s=>s.enabled!==false);
  if(enabled.length){value['proxy-providers']=Object.fromEntries(enabled.map(s=>[s.id,fileProvider(s.id,subscriptionPath(dataDirectory,s.id))]));value['proxy-groups']=[{name:'PROXY',type:'select',use:enabled.map(s=>s.id)}];value.rules=['MATCH,PROXY']}else value.rules=['MATCH,DIRECT'];
+ if(tun?.enable){
+  value.tun={enable:true,stack:['mixed','gvisor','system'].includes(tun.stack)?tun.stack:'mixed',
+   'dns-hijack':['any:53'],'auto-route':true,'auto-detect-interface':true};
+  value.dns={enable:true,ipv6:false,'enhanced-mode':'fake-ip','fake-ip-range':'198.18.0.1/16',nameserver:['223.5.5.5','119.29.29.29']};
+ }
  return value;
 }
 async function free(port){const server=createServer();await new Promise((resolve,reject)=>{server.once('error',()=>reject(Error('端口已占用，请在配置中修改')));server.listen(port,'127.0.0.1',resolve)});await new Promise(resolve=>server.close(resolve))}
 export function createRuntime(context){
  const adapter={async read(){return powershell('read')},async write(values){await powershell('write',values)}};
  const proxy=createProxyLease({storage:context.storage,adapter});
+ const tun=context.tun||null;
+ let viaService=false;
+ async function waitController(c,limit=8000){
+  const deadline=Date.now()+limit;
+  while(Date.now()<deadline){
+   c.signal?.throwIfAborted();
+   try{const response=await fetch(`http://127.0.0.1:${c.controllerPort}/version`,{headers:{Authorization:`Bearer ${c.secret}`},signal:AbortSignal.timeout(500),redirect:'error'});if(response.ok&&typeof(await response.json()).version==='string')return true}catch{}
+   await new Promise(resolve=>setTimeout(resolve,100));
+  }
+  return false;
+ }
  async function start(c){
   c.signal?.throwIfAborted();
   await checkExecutable(c.kernel);await free(c.mixedPort);await free(c.controllerPort);
   for(const category of ['tmp','config','credentials'])await mkdir(join(context.dataDirectory,category),{recursive:true});
+  const runtimePath=join(context.dataDirectory,'tmp','mihomo-runtime.json');
   await context.storage.write('tmp','mihomo-runtime.json',JSON.stringify(kernelConfig({...c,dataDirectory:context.dataDirectory})));
-  const data=join(context.dataDirectory,'config');const child=spawn(c.kernel,['-d',data,'-f',join(context.dataDirectory,'tmp','mihomo-runtime.json')],{cwd:context.dataDirectory,windowsHide:true,stdio:['ignore','ignore','ignore'],env:{...process.env,SAFE_PATHS:join(context.dataDirectory,'credentials'),TMP:join(context.dataDirectory,'tmp'),TEMP:join(context.dataDirectory,'tmp')}});
+
+  // TUN 交给已安装的 SYSTEM 服务托管：本进程不再 spawn 内核，只写 job.ini。
+  if(c.tun?.enable){
+   if(!tun){const error=Error('当前环境不支持 TUN 服务模式');error.code='TUN_UNAVAILABLE';throw error}
+   const info=await tun.status();
+   if(!info.installed){const error=Error('开启 TUN 前请先在设置里安装 TUN 服务');error.code='TUN_SERVICE_MISSING';throw error}
+   if(info.kernel&&info.kernel.toLowerCase()!==c.kernel.toLowerCase()){
+    const error=Error('已安装的 TUN 服务绑定了另一个内核，请重新安装服务');error.code='TUN_KERNEL_MISMATCH';throw error}
+   viaService=true;
+   try{
+    const applied=await tun.enable({config:runtimePath,home:context.dataDirectory});
+    if(!applied)throw Error('TUN 服务未确认启动，请查看服务日志');
+    if(!(await waitController(c,15000)))throw Error('TUN 内核未在时限内就绪，请检查服务日志与端口');
+    return {alive:()=>viaService,stop:async()=>{await tun.disable().catch(()=>{});viaService=false}};
+   }catch(error){viaService=false;throw error}
+  }
+
+  const data=join(context.dataDirectory,'config');const child=spawn(c.kernel,['-d',data,'-f',runtimePath],{cwd:context.dataDirectory,windowsHide:true,stdio:['ignore','ignore','ignore'],env:{...process.env,SAFE_PATHS:join(context.dataDirectory,'credentials'),TMP:join(context.dataDirectory,'tmp'),TEMP:join(context.dataDirectory,'tmp')}});
   let failure=null;child.on('error',()=>{failure=Error('mihomo 内核启动失败')});
   const exited=new Promise(resolve=>{child.once('exit',resolve);child.once('error',resolve)});
   const alive=()=>!failure&&child.exitCode===null&&child.signalCode===null;
@@ -41,17 +75,14 @@ export function createRuntime(context){
    await context.storage.write('tmp','mihomo-runtime.json','');
   })()}
   try{
-   const deadline=Date.now()+8000;let ready=false;
-   while(Date.now()<deadline&&alive()){
-    c.signal?.throwIfAborted();
-    try{const response=await fetch(`http://127.0.0.1:${c.controllerPort}/version`,{headers:{Authorization:`Bearer ${c.secret}`},signal:AbortSignal.timeout(500),redirect:'error'});if(response.ok&&typeof(await response.json()).version==='string'){ready=true;break}}catch{}
-    await new Promise(resolve=>setTimeout(resolve,100));
-   }
-   if(!ready)throw failure||Error('内核未在时限内就绪，请检查订阅与端口');
+   if(!(await waitController(c)))throw failure||Error('内核未在时限内就绪，请检查订阅与端口');
    child.once('exit',()=>{void proxy.restore().catch(()=>{})});return {alive,stop};
   }catch(error){await stop();throw error}
  }
- return {start,proxy,...createSubscriptionRuntime(context)};
+ return {start,proxy,tun,
+  // 停止时若内核由 TUN 服务托管，一并让服务停下，避免遗留提升权限的内核。
+  tunStop:async()=>{if(viaService&&tun){await tun.disable().catch(()=>{});viaService=false}},
+  ...createSubscriptionRuntime(context)};
 }
 // 使用固定脚本和 JSON stdin，配置值不会拼入 PowerShell 源码。
 function powershell(action,values){

@@ -1,7 +1,7 @@
 (() => {
  const root=document.querySelector('#app');
  let view=null,busy=false,polling=false,error='',group='',section='nodes',detail=null,timer=null,revision=0;
- let draft={id:'',name:'',url:''},configDraft=null,settingsOpen=false,confirmDelete='';
+ let draft={id:'',name:'',url:''},configDraft=null,settingsOpen=false,confirmDelete='',confirmTun='';
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const updating=()=>view?.subscriptions?.some(s=>s.updating);
  const locked=()=>busy||view?.running||!!view?.operation||updating();
@@ -52,6 +52,18 @@
     <p class="muted">地址加密保存且不回显。支持 mihomo 可读取的代理 YAML/JSON；网页、登录页与普通分享链接不等于订阅。</p>
    </form>`;
  }
+ function tunServiceBlock() {
+  const svc=view.tunService;
+  if(!svc)return '<p class="muted">当前环境不支持 TUN 服务模式。</p>';
+  const stateText=!svc.installed?'未安装':svc.state==='running'?'已安装 · 运行中':svc.state==='stopped'?'已安装 · 已停止':'已安装 · 状态未知';
+  return `<div class="tun-service"><p role="status">服务状态：${esc(stateText)}${svc.kernel?' · 绑定内核 '+esc(String(svc.kernel).split(/[\\\\/]/).pop()):''}</p>
+   ${svc.log?`<pre class="svc-log">${esc(svc.log)}</pre>`:''}
+   ${confirmTun==='install'?`<div class="confirm-bar"><p>将请求管理员权限安装 TUN 服务（只需一次）。继续？</p>${button('tun-install-yes','继续安装')}${button('tun-cancel','取消')}</div>`:''}
+   ${confirmTun==='uninstall'?`<div class="confirm-bar"><p>卸载后 TUN 将不可用，需重新安装才能再用。继续？</p>${button('tun-uninstall-yes','确认卸载')}${button('tun-cancel','取消')}</div>`:''}
+   <div class="toolbar">${button('tun-install',svc.installed?'重新安装服务':'安装 TUN 服务','',locked())}
+   ${svc.installed?button('tun-uninstall','卸载服务','',locked()):''}
+   ${button('tun-refresh','刷新状态')}</div></div>`;
+ }
  function draw() {
   const active=document.activeElement,focus=active?.id;
   const caret=active&&typeof active.selectionStart==='number'?[active.selectionStart,active.selectionEnd]:null;
@@ -73,12 +85,18 @@
    <label>mihomo 可执行文件<input id="kernel" name="kernel" value="${esc(cfg.kernel)}" required ${locked()?'disabled':''}></label>
    <div class="columns"><label>混合代理端口<input id="mixedPort" name="mixedPort" type="number" min="1024" max="65535" value="${esc(cfg.mixedPort)}" required ${locked()?'disabled':''}></label>
    <label>控制器端口<input id="controllerPort" name="controllerPort" type="number" min="1024" max="65535" value="${esc(cfg.controllerPort)}" required ${locked()?'disabled':''}></label></div>
+   <fieldset class="tun-box"><legend>TUN 模式</legend>
+   <label class="check"><input id="tunEnable" name="tunEnable" type="checkbox" ${cfg.tun?.enable?'checked':''} ${locked()?'disabled':''}> 启用 TUN（由 SYSTEM 服务托管，普通权限即可用）</label>
+   <label>栈<select id="tunStack" name="tunStack" ${locked()?'disabled':''}>${['mixed','gvisor','system'].map(s=>`<option value="${s}" ${(cfg.tun?.stack||'mixed')===s?'selected':''}>${s}</option>`).join('')}</select></label>
+   ${cfg.tun?.enable&&!view.tunService?.installed?'<p class="bad" role="alert">TUN 已勾选但服务未安装，启动内核会被拒绝。请先安装 TUN 服务。</p>':''}
+   ${tunServiceBlock()}
+   </fieldset>
    <button ${locked()?'disabled':''}>保存内核配置</button></form></details>
    ${busy?'<p role="status">正在执行…</p>':''}${error||view.error?`<p class="bad" role="alert">${esc(error||view.error)}</p>`:''}`;
   bind();
   const form=root.querySelector('#config');
-  form.oninput=()=>{const data=new FormData(form);configDraft={kernel:data.get('kernel'),mixedPort:data.get('mixedPort'),controllerPort:data.get('controllerPort')}};
-  form.onsubmit=e=>{e.preventDefault();const data=new FormData(form);run('save',{kernel:data.get('kernel'),mixedPort:Number(data.get('mixedPort')),controllerPort:Number(data.get('controllerPort'))})};
+  form.oninput=()=>{const data=new FormData(form);configDraft={kernel:data.get('kernel'),mixedPort:data.get('mixedPort'),controllerPort:data.get('controllerPort'),tun:{enable:data.has('tunEnable'),stack:String(data.get('tunStack')||'mixed')}}};
+  form.onsubmit=e=>{e.preventDefault();const data=new FormData(form);run('save',{kernel:data.get('kernel'),mixedPort:Number(data.get('mixedPort')),controllerPort:Number(data.get('controllerPort')),tun:{enable:data.has('tunEnable'),stack:String(data.get('tunStack')||'mixed')}})};
   root.querySelector('#settings').ontoggle=e=>{settingsOpen=e.target.open};
   const subscriptionForm=root.querySelector('#subscription-form');
   if(subscriptionForm){
@@ -116,6 +134,12 @@ function bind() {
    if(a==='cancel-delete'){confirmDelete='';draw();return}
    if(a==='confirm-delete'){confirmDelete='';if(draft.id===id)draft={id:'',name:'',url:''};return run('subscriptionRemove',{id})}
    if(a==='update')return run('reload',{id});
+   if(a==='tun-install'){confirmTun='install';draw();return}
+   if(a==='tun-uninstall'){confirmTun='uninstall';draw();return}
+   if(a==='tun-cancel'){confirmTun='';draw();return}
+   if(a==='tun-install-yes'){confirmTun='';return run('installTunService')}
+   if(a==='tun-uninstall-yes'){confirmTun='';return run('uninstallTunService')}
+   if(a==='tun-refresh')return run('tunService');
    run(a);
   });
  }

@@ -2,6 +2,8 @@ import {randomBytes, randomUUID} from 'node:crypto';
 import {publicUpdateError,updateMessages} from './subscriptions.mjs';
 
 const defaults={kernel:'',mixedPort:7895,controllerPort:9099,layout:'single'};
+const tunStacks=['mixed','gvisor','system'];
+const defaultTun={enable:false,stack:'mixed'};
 const validId=id=>/^sub-[a-f0-9-]{36}$/.test(id);
 function urlValue(value) {
   let url;try{url=new URL(String(value).trim())}catch{throw Error('订阅地址无效')}
@@ -30,7 +32,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const legacy=/\/packages\/fish\.clash\/\d+\.\d+\.\d+\/[a-f0-9]{64}\/service\/mihomo\.exe$/i;
       const bundled=saved.bundled===true||legacy.test(String(saved.kernel).replaceAll('\\','/'));
       settings={kernel:saved.kernel??defaultKernel,mixedPort:saved.mixedPort??defaults.mixedPort,
-        controllerPort:saved.controllerPort??defaults.controllerPort,layout:saved.layout??defaults.layout,bundled};
+        controllerPort:saved.controllerPort??defaults.controllerPort,layout:saved.layout??defaults.layout,bundled,
+        tun:{enable:saved.tun?.enable===true,stack:tunStacks.includes(saved.tun?.stack)?saved.tun.stack:defaultTun.stack}};
       if(bundled)settings.kernel=defaultKernel;
       const raw=await context.storage.read('config','subscriptions.json');
       if(raw) {
@@ -88,6 +91,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       state.groups=Object.entries(proxies.proxies||{}).filter(([,p])=>Array.isArray(p.all)).map(([name,p])=>({
         name,selected:p.now,nodes:p.all.map(name=>sourceNode(name,proxies.proxies))}));
     }catch{state.error='控制器暂未响应，请刷新或停止内核'}
+    if(runtime.tun)try{state.tunService=await runtime.tun.status()}catch{state.tunService=null}
     return state;
   }
   function editable() {
@@ -108,6 +112,12 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         if(!Number.isInteger(port)||port<1024||port>65535)throw Error('端口应为 1024–65535');
       if(next.mixedPort===next.controllerPort)throw Error('混合代理和控制器端口应不同');
       if(params.subscription||params.clearSubscription)throw Error('请在订阅管理中新增或删除订阅');
+      if(params.tun!==undefined){
+        const tun=params.tun||{};
+        if(typeof tun.enable!=='boolean'&&tun.enable!==undefined)throw Error('TUN 开关无效');
+        next.tun={enable:tun.enable===true, stack:tunStacks.includes(tun.stack)?tun.stack:(old.tun?.stack??defaultTun.stack)};
+        if(next.tun.enable&&!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+      }
       next.bundled=!!defaultKernel&&next.kernel.replaceAll('\\','/').toLowerCase()===defaultKernel.replaceAll('\\','/').toLowerCase();
       await context.storage.write('config','clash.json',JSON.stringify(next));settings=next;
       return view({controller:false});
@@ -188,6 +198,30 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       await context.storage.write('config','clash.json',JSON.stringify(next));settings=next;return view();
     });
   }
+  // TUN 服务：安装/卸载各需要一次 UAC；装好后普通权限即可开关 TUN。
+  async function tunService() {
+    if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+    return runtime.tun.status();
+  }
+  async function installTunService() {
+    return exclusive(async()=>{
+      if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+      const c=await config();editable();
+      if(!c.kernel)throw Error('请先选择 mihomo 内核');
+      await runtime.tun.install({kernel:c.kernel,home:context.dataDirectory});
+      return view({controller:false});
+    });
+  }
+  async function uninstallTunService() {
+    return exclusive(async()=>{
+      if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+      const c=await config();editable();
+      await runtime.tun.uninstall();
+      const next={...c,tun:{...c.tun,enable:false}};
+      await context.storage.write('config','clash.json',JSON.stringify(next));settings=next;
+      return view({controller:false});
+    });
+  }
   async function start() {
     if(operation)return operation.promise;
       const task={name:'starting',promise:null,controller:new AbortController()};operation=task;operationError='';
@@ -221,6 +255,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       let restoreError;
       try{await runtime.proxy.restore()}catch(error){restoreError=error}
       if(running){await running.stop();running=null}
+      // TUN 由 SYSTEM 服务托管时，确保服务侧内核也停下（running 为空时的兜底）。
+      try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}
       if(restoreError)throw restoreError;
       return view({controller:false});
     })().catch(error=>{operationError='停止失败，请检查内核和系统代理恢复状态';throw error})
@@ -251,5 +287,6 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       uploadTotal:result.uploadTotal??0,downloadTotal:result.downloadTotal??0};
     return {rules:(result.rules||[]).map(r=>({type:r.type,proxy:r.proxy}))};
   }
-  return {view,save,subscriptionSave,subscriptionToggle,subscriptionRemove,layout,start,stop,shutdown,select,mode,reload,proxy,details};
+  return {view,save,subscriptionSave,subscriptionToggle,subscriptionRemove,layout,start,stop,shutdown,select,mode,reload,proxy,details,
+    tunService,installTunService,uninstallTunService};
 }

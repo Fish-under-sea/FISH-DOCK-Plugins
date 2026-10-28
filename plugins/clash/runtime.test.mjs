@@ -23,3 +23,14 @@ test('mihomo uses independent local file providers with stable source prefixes a
  assert.equal(c['proxy-providers'][a].override['additional-prefix'],`[${a}] `);
  assert.equal(c['proxy-providers'][a].type,'file');assert.equal(c['proxy-providers'][a].url,undefined);
 });
+test('TUN 关闭时不生成 tun/dns 段，开启时生成且栈值受控',()=>{
+ const base={mixedPort:7895,controllerPort:9099,secret:'synthetic',dataDirectory:'D:/synthetic',subscriptions:[]};
+ const off=kernelConfig({...base,tun:{enable:false,stack:'mixed'}});
+ assert.equal(off.tun,undefined);assert.equal(off.dns,undefined);
+ const on=kernelConfig({...base,tun:{enable:true,stack:'gvisor'}});
+ assert.equal(on.tun.enable,true);assert.equal(on.tun.stack,'gvisor');
+ assert.deepEqual(on.tun['dns-hijack'],['any:53']);assert.equal(on.tun['auto-route'],true);
+ assert.equal(on.dns.enable,true);assert.equal(on.dns['enhanced-mode'],'fake-ip');
+ const weird=kernelConfig({...base,tun:{enable:true,stack:'nonsense'}});
+ assert.equal(weird.tun.stack,'mixed');
+});

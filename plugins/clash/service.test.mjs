@@ -25,7 +25,13 @@ function fixture(disk=new Map()) {
  };
  const runtime={start:async c=>{starts++;up=true;owned=c;return {alive:()=>up,stop:async()=>{stops++;up=false}}},
   updateSubscription:async c=>{updates.push(c);await blocked;if(c.signal.aborted||fail)throw Error('token=PRIVATE');await c.apply?.();await c.commit({nodeCount:2});return {nodeCount:2}},
-  proxy:{enable:async()=>{},restore:async()=>{},active:()=>false}};
+  proxy:{enable:async()=>{},restore:async()=>{},active:()=>false},
+  tun:{status:async()=>({installed:tunInstalled,state:tunInstalled?'running':'absent',kernel:tunKernel,log:''}),
+   install:async({kernel})=>{tunInstalled=true;tunKernel=kernel},
+   uninstall:async()=>{tunInstalled=false;return {installed:false}},
+   enable:async()=>true,disable:async()=>true},
+  tunStop:async()=>{}};
+ let tunInstalled=false,tunKernel='';
  const service=createClash({context,runtime,request});
  return {service,disk,requests,updates,runtime,context,stats:()=>({starts,stops,up,owned}),fail:()=>{fail=true},
   block:()=>{let release;blocked=new Promise(r=>release=r);return release}};
@@ -146,4 +152,27 @@ test('layout persists and does not start a core',async()=>{
  const f=fixture();await f.service.layout({layout:'double'});
  assert.equal((await fixture(f.disk).service.view()).layout,'double');
  assert.equal(f.stats().starts,0);await assert.rejects(f.service.layout({layout:'grid'}));
+});
+test('TUN 服务：未安装→安装→卸载，安装后 TUN 开关持久化且栈值受控',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ assert.equal((await f.service.tunService()).installed,false);
+ await f.service.installTunService();
+ const installed=await f.service.tunService();
+ assert.equal(installed.installed,true);assert.equal(installed.kernel,'D:/synthetic/mihomo.exe');
+ await f.service.save({...kernel,tun:{enable:true,stack:'gvisor'}});
+ let state=await f.service.view({controller:false});
+ assert.equal(state.tun.enable,true);assert.equal(state.tun.stack,'gvisor');
+ await f.service.save({...kernel,tun:{enable:true,stack:'nonsense'}});
+ state=await f.service.view({controller:false});
+ assert.equal(state.tun.stack,'gvisor');
+ await f.service.uninstallTunService();
+ state=await f.service.view({controller:false});
+ assert.equal(state.tun.enable,false);
+ assert.equal((await f.service.tunService()).installed,false);
+});
+test('TUN 服务安装要求内核已配置且内核未运行',async()=>{
+ const f=fixture();
+ await assert.rejects(f.service.installTunService());
+ await f.service.save(kernel);await f.service.start();
+ await assert.rejects(f.service.installTunService(),/停止内核/);
 });
