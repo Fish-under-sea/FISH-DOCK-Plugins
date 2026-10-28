@@ -22,9 +22,11 @@
     }
   }
 
-  // 写动作优先走宿主声明的 checkin:*；老宿主没有 magpie.act 时退回它自己的
-  // 设置端点（同源、同一份 settings），行为一致。
+  // 写动作优先走宿主的调用桥。0.1.1709 的页面桥只有 read，没有 act：magpie.call
+  // 是新加的通用通道（按 package.json 的 magpie.calls 白名单分派）；再退回旧
+  // 桥 magpie.act，最后退回宿主自己的设置端点。三层都留着，宿主旧时行为不变。
   async function act(action, params) {
+    if (typeof magpie.call === "function") return magpie.call(action, params);
     if (typeof magpie.act === "function") return magpie.act(action, params);
     const paths = {
       "checkin:set-provider": "/api/settings/plugin-checkin",
@@ -73,15 +75,34 @@
     return box;
   }
 
-  // 厂商标记：先按 id 取一个稳定的颜色，放名字首字，等 magpie 侧给真实图标再换。
+  // 厂商标记：约定 page/logos/<provider id>.svg 放矢量标志，加载成功就用图；
+// 没有这份文件时退回按 id 取色的首字母块。素材与代码解耦，补图即生效。
   const PALETTE = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#ef4444", "#6366f1"];
-  function logo(id, name) {
+  function paletteColor(id) {
     let hash = 0;
     for (const ch of String(id)) hash = (hash * 31 + ch.codePointAt(0)) % 100000;
-    const node = row("span", "vlogo", String(name || id).trim().charAt(0).toUpperCase());
-    node.style.background = PALETTE[hash % PALETTE.length];
-    node.setAttribute("aria-hidden", "true");
-    return node;
+    return PALETTE[hash % PALETTE.length];
+  }
+  function logo(id, name) {
+    const box = row("span", "vlogo");
+    const initial = String(name || id).trim().charAt(0).toUpperCase();
+    const fallback = () => {
+      box.textContent = initial;
+      box.style.background = paletteColor(id);
+    };
+    box.setAttribute("aria-hidden", "true");
+    const img = document.createElement("img");
+    img.alt = "";
+    img.decoding = "async";
+    img.addEventListener("load", () => {
+      box.textContent = "";
+      box.style.background = "none";
+      box.append(img);
+    });
+    img.addEventListener("error", fallback);
+    img.src = `logos/${encodeURIComponent(String(id))}.svg`;
+    fallback();
+    return box;
   }
 
   function paint() {
@@ -113,7 +134,8 @@
       head.append(logo(group.id, group.name));
       head.append(row("span", "vcaret", open ? "▾" : "▸"));
       head.append(row("div", "vname", group.name));
-      head.append(row("div", "vmeta", `${t.accounts.replace("{n}", group.total)} · ${group.done}/${group.total} · ${group.credit} ${t.credits}`));
+      head.append(row("div", "vmeta", `${t.accounts.replace("{n}", group.total)} · ${group.done}/${group.total} · ${group.credit} ${t.credits}`
+        + (group.unknown ? ` · ${t.unknownCount.replace("{n}", group.unknown)}` : "")));
       head.append(switchFor(group.on, async (on) => {
         await act("checkin:set-provider", {provider: group.id, on});
         await load();
@@ -128,7 +150,17 @@
         who.append(row("div", "user", account.user || account.key));
         who.append(row("div", "sub" + (account.status.bad ? " bad" : ""), account.status.text));
         const tail = row("div", "tail");
-        if (account.credit) tail.append(row("span", "credit", `+${account.credit}`));
+        if (account.credit !== null) {
+          tail.append(row("span", "credit", `+${account.credit}`));
+        } else if (account.estimate !== null) {
+          // 厂商没说给了多少：显示按额度面板反推的数，并标明是估的。
+          const guess = row("span", "credit est", `≈+${account.estimate}`);
+          guess.title = t.estimateHint;
+          tail.append(guess);
+        } else if (account.status.key === "claimed" || account.status.key === "done") {
+          // 签到了但厂商没回报数额：说“未告知”，不假装是 0。
+          tail.append(row("span", "credit unknown", t.unknown));
+        }
         tail.append(switchFor(account.on, async (on) => {
           await act("checkin:set-account", {key: account.key, on});
           await load();
@@ -175,7 +207,12 @@
     if (state.refreshing) return;
     state.refreshing = true;
     paint();
+    // 命缓存时这条请求一两百毫秒就回来了，转圈一闪而过看着像没反应；
+    // 补到 600ms 再收起，超过它就是真的在等。
+    const started = Date.now();
     try { await act("checkin:refresh", {}); } catch (error) { failure(error); }
+    const waited = Date.now() - started;
+    if (waited < 600) await new Promise((done) => setTimeout(done, 600 - waited));
     state.refreshing = false;
     await load();
   });
