@@ -7,3 +7,7 @@ dist/
 .env
 .env.*
 *.log
+
+# 自编译 magpie 二进制与构建缓存（由 tools/build-magpie.ps1 产出，不进仓库）
+plugins/magpie/service/
+plugins/magpie/.tools/

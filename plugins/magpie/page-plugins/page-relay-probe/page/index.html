@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中转站探针</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="relay">
+  <header>
+    <h1>中转站探针</h1>
+    <p class="muted">探测由 magpie 本体发出：页面本身连不到网络。判定只看行为指纹（thinking 签名重放、token 计数对账、跨代 tokenizer），不是身份证明。</p>
+  </header>
+
+  <section class="card">
+    <h2>目标</h2>
+    <label>Base URL
+      <input id="baseUrl" type="url" inputmode="url" placeholder="https://relay.example.com" autocomplete="off" spellcheck="false">
+    </label>
+    <label>API Key
+      <input id="apiKey" type="password" placeholder="填入后只保存密文" autocomplete="off" spellcheck="false">
+    </label>
+    <p id="keyState" class="muted" aria-live="polite"></p>
+    <div class="row">
+      <label>主模型
+        <input id="model" type="text" autocomplete="off" spellcheck="false">
+      </label>
+      <label>对照模型
+        <input id="comparisonModel" type="text" autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+    <div class="row">
+      <label>认证方式
+        <select id="authMode">
+          <option value="auto">auto</option>
+          <option value="x-api-key">x-api-key</option>
+          <option value="bearer">bearer</option>
+          <option value="both">both</option>
+        </select>
+      </label>
+      <label>API 版本
+        <input id="apiVersion" type="text" autocomplete="off" spellcheck="false">
+      </label>
+      <label>超时（毫秒）
+        <input id="timeoutMs" type="number" min="5000" max="120000" step="1000">
+      </label>
+    </div>
+    <div class="actions">
+      <button id="save" type="button" disabled>保存</button>
+      <button id="start" type="button" disabled>开始探测</button>
+      <button id="stop" type="button" disabled>停止</button>
+    </div>
+    <p id="notice" class="notice" aria-live="polite"></p>
+  </section>
+
+  <section class="card">
+    <h2>结论</h2>
+    <p id="verdict" class="verdict">还没有探测结果。</p>
+    <ul id="signals" class="signals"></ul>
+    <p id="caveat" class="muted"></p>
+  </section>
+
+  <section class="card">
+    <h2>三组探针</h2>
+    <table>
+      <thead><tr><th>探针</th><th>状态</th><th>说明</th></tr></thead>
+      <tbody id="probes"></tbody>
+    </table>
+  </section>
+</main>
+<script src="_magpie/bridge.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

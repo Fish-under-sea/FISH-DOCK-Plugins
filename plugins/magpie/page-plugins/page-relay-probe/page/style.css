@@ -1,0 +1,52 @@
+/* 中转站探针：只补 magpie 基础样式没覆盖的地方（栅格、结论色、探针表）。
+   颜色一律用 magpie 的 --magpie-* 变量，明暗主题自动跟随。 */
+
+#relay { max-width: 760px; }
+#relay header { margin-bottom: 16px; }
+#relay h1 { font-size: 20px; }
+#relay h2 { font-size: 14px; margin-bottom: 10px; }
+
+.card {
+  background: var(--magpie-card, Canvas);
+  border: 1px solid var(--magpie-line, ButtonBorder);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+#relay label {
+  display: block;
+  font-size: 12px;
+  color: var(--magpie-muted, GrayText);
+  margin-bottom: 10px;
+}
+#relay label input,
+#relay label select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  box-sizing: border-box;
+}
+
+.row { display: flex; gap: 12px; flex-wrap: wrap; }
+.row > label { flex: 1 1 180px; }
+
+.actions { display: flex; gap: 8px; margin-top: 4px; }
+.actions button { min-width: 88px; }
+
+.notice { font-size: 12px; min-height: 1.2em; color: var(--magpie-muted, GrayText); }
+
+.verdict {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.verdict[data-code="likely_forged"] { color: var(--magpie-red, #c0392b); }
+.verdict[data-code="suspicious"] { color: var(--magpie-amber, #b9770e); }
+.verdict[data-code="native_consistent"] { color: var(--magpie-green, #1e8449); }
+
+.signals { margin: 0 0 8px; padding-left: 18px; font-size: 12px; }
+.signals li { margin-bottom: 4px; }
+
+#probes td { font-size: 12px; vertical-align: top; }
+#probes td:nth-child(2) { font-family: var(--magpie-code, ui-monospace, monospace); white-space: nowrap; }

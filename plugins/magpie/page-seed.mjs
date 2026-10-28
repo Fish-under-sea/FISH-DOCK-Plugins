@@ -84,7 +84,7 @@ export function isSeedSpec(spec,name=seedDirectoryName){
 
 // plugins.json 只由结构相同的 {spec,off,options} 条目组成。改写后逐字比较：没变化就
 // 不动磁盘，也不刷新时间戳。
-export function rewriteSeedSpec({raw,spec}){
+export function rewriteSeedSpec({raw,spec,name=seedDirectoryName}){
  const hasRaw=raw!==undefined&&raw!==null;
  const text=hasRaw?String(raw):'';
  const body=text.replace(/^\uFEFF/,'');
@@ -98,7 +98,7 @@ export function rewriteSeedSpec({raw,spec}){
  // 否则 magpie 会按包名去重成随机的那一份。
  let kept=false;
  manifest.plugins=manifest.plugins.filter(entry=>{
-  if(!entry||typeof entry!=='object'||!isSeedSpec(entry.spec))return true;
+  if(!entry||typeof entry!=='object'||!isSeedSpec(entry.spec,name))return true;
   if(kept)return false;
   kept=true;entry.spec=spec;return true;
  });
@@ -124,11 +124,11 @@ async function writeManifest(file,text,signal){
 }
 
 // 让 <data>/plugins.json 用稳定路径引用签到页，其余条目原样保留。
-export async function registerSeedPage({data,directory,onPhase=()=>{},signal}={}){
+export async function registerSeedPage({data,directory,name=seedDirectoryName,onPhase=()=>{},signal}={}){
  const file=path.join(data,'plugins.json');
  let raw;
  try{raw=await fs.readFile(file,'utf8')}catch(error){if(error.code!=='ENOENT')throw error}
- const next=rewriteSeedSpec({raw,spec:directory});
+ const next=rewriteSeedSpec({raw,spec:directory,name});
  if(!next.changed)return {written:false,file,spec:directory};
  onPhase('prepare-data');
  signal?.throwIfAborted();

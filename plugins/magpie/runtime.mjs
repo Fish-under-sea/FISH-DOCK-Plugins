@@ -49,14 +49,16 @@ export function createRuntime(context){
   else do{listeningPort=await freePort()}while(listeningPort===port||listeningPort===upstreamPort);
   if(!listeningPort)throw serviceError('PORT_IN_USE');
   const gateway=gatewayAddr(gatewayHost(prefs.lan),listeningPort);
-  // 出厂预置的页面插件（page-checkin）随 Dock 内置在 page-plugins/ 下。启动前把它
-  // 同步到 <data>/plugins/page-checkin，并让 plugins.json 只用这个稳定路径引用：升级
-  // 之后路径不变，页面才跟着换版本；旧包目录被清理也不会 404。
+  // 出厂预置的页面插件随 Dock 内置在 page-plugins/ 下。启动前逐个同步到
+  // <data>/plugins/<name>，并让 plugins.json 只用这个稳定路径引用：升级之后路径
+  // 不变，页面才跟着换版本；旧包目录被清理也不会 404。
   // 没有内置目录（普通 magpie）时不碰清单，仍由原生按包名装 npm 上的同名包。
+  const bundledPages=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins');
   try{
-   const bundled=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins','page-checkin');
-   const seeded=await syncPageDirectory({source:bundled,data:portable.data,onPhase,signal});
-   if(seeded)await registerSeedPage({data:portable.data,directory:seeded.directory,onPhase,signal});
+   for(const name of ['page-checkin','page-relay-probe']){
+    const seeded=await syncPageDirectory({source:path.join(bundledPages,name),data:portable.data,name,onPhase,signal});
+    if(seeded)await registerSeedPage({data:portable.data,name,directory:seeded.directory,onPhase,signal});
+   }
   }catch(error){if(error.name==='AbortError')throw error;throw serviceError('DATA_MIGRATION_FAILED')}
   onPhase('start-process');
   const child=await startChild({executable:portable.executable,args:['web','--addr',`127.0.0.1:${upstreamPort}`,'--no-open'],cwd:root,signal,
