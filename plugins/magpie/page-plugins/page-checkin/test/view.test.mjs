@@ -159,3 +159,14 @@ test('账号按 key 前缀归组，不受 by 写法影响', () => {
   const g = V.vendorGroups(s, 'zh')[0];
   assert.deepEqual(g.accounts.map((a) => a.key), ['workbuddy|a', 'workbuddy|b', 'workbuddy|c']);
 });
+
+// issue #9 ②：厂商分组默认收起 —— 一进来先看总数，点标题才展开账号列表。
+// 包选项 collapsed: false 仍然让全部分组展开，留给老的偏好。
+test('厂商分组默认收起，只有包选项明确要求才全展开', () => {
+  const groups = V.vendorGroups(state, 'zh');
+  assert.deepEqual(V.openIds(groups, {}), []);
+  assert.deepEqual(V.openIds(groups, {collapsed: true}), []);
+  assert.deepEqual(V.openIds(groups, undefined), []);
+  assert.deepEqual(V.openIds(groups, {collapsed: false}), ['workbuddy', 'qoder']);
+  assert.deepEqual(V.openIds([], {collapsed: false}), []);
+});

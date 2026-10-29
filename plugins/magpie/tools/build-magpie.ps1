@@ -4,7 +4,7 @@
 #
 # 用法：
 #   pwsh -File build-magpie.ps1                                  # 干净基线，版本标识跟随 tag v0.1.1709
-#   pwsh -File build-magpie.ps1 -VersionTag v0.1.1709+fish.1 -FileVersion 0.1.1709.1 -ProductName "magpie fish"
+#   pwsh -File build-magpie.ps1 -VersionTag v0.1.1709+fish.2 -FileVersion 0.1.1709.2 -ProductName "magpie fish"
 [CmdletBinding()]
 param(
   [string]$VersionTag = 'v0.1.1709',

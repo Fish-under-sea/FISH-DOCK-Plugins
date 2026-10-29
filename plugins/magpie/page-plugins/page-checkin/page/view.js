@@ -112,6 +112,15 @@
     return groups.filter((g) => g.total > 0);
   }
 
+  // openIds is which vendors start expanded. The page opens folded: a signed-in
+  // user often has four or five vendors, and every group open pushes the list
+  // past one screen before anything is read (issue #9). A saved option can
+  // still ask for every group open with collapsed: false.
+  function openIds(groups, opts) {
+    if (!opts || opts.collapsed !== false) return [];
+    return (groups || []).map((group) => group.id);
+  }
+
   // totals is the header: how many accounts checked in today, and the credits
   // they took — the day's real total, not the vendor's allowance.
   function totals(groups) {
@@ -122,5 +131,5 @@
     return {all, done, credit, unknown};
   }
 
-  globalThis.CheckinView = {text, todayOf, accountsOf, status, vendorGroups, totals};
+  globalThis.CheckinView = {text, todayOf, accountsOf, status, vendorGroups, totals, openIds};
 })();

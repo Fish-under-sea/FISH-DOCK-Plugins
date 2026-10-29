@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.1709`，加上 `patches/magpie-v0.1.1709+fish.1.patch`。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.1709`，加上 `patches/magpie-v0.1.1709+fish.2.patch`。
 
 ## 为什么要自己编
 
@@ -21,14 +21,14 @@ python tools\download-go.py
 git clone --filter=blob:none --no-checkout https://github.com/yetone/magpie.git upstream
 git -C upstream fetch --depth=1 origin tag v0.1.1709
 git -C upstream checkout -f v0.1.1709
-git -C upstream apply --check patches\magpie-v0.1.1709+fish.1.patch
-git -C upstream apply patches\magpie-v0.1.1709+fish.1.patch
+git -C upstream apply --check patches\magpie-v0.1.1709+fish.2.patch
+git -C upstream apply patches\magpie-v0.1.1709+fish.2.patch
 
 # 3) 编（本机没有 make，手跑 release-windows 的两段式）
 #    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
-  -VersionTag 'v0.1.1709+fish.1' -FileVersion '0.1.1709.1' -ProductName 'magpie fish' `
+  -VersionTag 'v0.1.1709+fish.2' -FileVersion '0.1.1709.2' -ProductName 'magpie fish' `
   -WinresJson <上述 upstream 目录>\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
@@ -45,8 +45,8 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 | 位置 | 值 |
 |---|---|
-| `magpie version` | `magpie v0.1.1709+fish.1` |
-| FileVersion | `0.1.1709.1`（四段数字，Windows 资源要求） |
+| `magpie version` | `magpie v0.1.1709+fish.2` |
+| FileVersion | `0.1.1709.2`（四段数字，Windows 资源要求） |
 | ProductName | `magpie fish` |
 | FileDescription | `magpie fish (FISH Dock build)` |
 | manifest identity | `ai.usemagpie.magpie.fish` |

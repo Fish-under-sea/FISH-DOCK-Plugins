@@ -8,7 +8,9 @@
   let lang = theme.lang;
   let opts = {};
   try { opts = (await magpie.options.get()) || {}; } catch {}
-  const state = {collapsed: opts.collapsed !== false, data: null, busy: false, refreshing: false, open: new Set(), seeded: false};
+  // 厂商分组默认收起：账号多的时候一进来就是好几屏，先看总数、点开再看细节。
+  // 包选项 collapsed: false 仍然让全部分组展开。
+  const state = {data: null, busy: false, refreshing: false, open: new Set(), seeded: false};
 
   // 宿主还没有 checkin:state 时，读会被拒绝；此时按版本不足提示，不显示空白。
   async function read() {
@@ -118,7 +120,7 @@
     const data = state.data;
     const groups = V.vendorGroups(data || {}, lang);
     const totals = V.totals(groups);
-    if (!state.seeded && groups.length) { for (const group of groups) state.open.add(group.id); state.seeded = true; }
+    if (!state.seeded && groups.length) { for (const id of V.openIds(groups, opts)) state.open.add(id); state.seeded = true; }
     $("total").textContent = groups.length
       ? `${t.total.replace("{done}", totals.done).replace("{all}", totals.all)} · ${totals.credit} ${t.points}`
       : "";
