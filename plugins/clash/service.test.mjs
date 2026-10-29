@@ -26,7 +26,9 @@ function fixture(disk=new Map()) {
    'Ⓜ️ 微软服务':{now:'DIRECT',all:['DIRECT','🚀 节点选择']},
    DIRECT:{type:'Direct',now:'',all:null},
    ...Object.fromEntries(names.map(name=>[name,{history:[{delay:20}]}]))}}:
-   path==='/configs'?{mode:'rule'}:path==='/connections'?{connections:[{token:'PRIVATE'}],uploadTotal:10}:{url:'https://private.test/?token=PRIVATE'};
+   path==='/configs'?{mode:'rule'}:path==='/connections'?{connections:[{token:'PRIVATE'}],uploadTotal:10}:
+   path==='/rules'?{rules:[{type:'MATCH',proxy:'x'},{type:'GEOSITE',proxy:'x'},{type:'GEOIP',proxy:'x'}]}:
+   path.includes('/delay?')?{delay:path.includes('youtube')?0:87}:{url:'https://private.test/?token=PRIVATE'};
  };
  const runtime={start:async c=>{starts++;up=true;owned=c;return {alive:()=>up,stop:async()=>{stops++;up=false}}},
   updateSubscription:async c=>{updates.push(c);await blocked;if(c.signal.aborted||fail)throw Error('token=PRIVATE');await c.apply?.();await c.commit({nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}});return {nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}}},
@@ -226,3 +228,50 @@ test('旧凭据跳过迁移时向页面回报 legacyPending，提示重新添加
  await f.service.subscriptionSave({name:'A',url:'https://example.test/a'});
  assert.equal((await f.service.view({controller:false})).legacyPending,true);
 });
+
+
+test('概览数据：规则数量与运行时间只在内核运行时可读',async()=>{
+ const f=fixture();
+ const idle=await f.service.view({controller:false});
+ assert.equal(idle.rulesCount,null);assert.equal(idle.uptimeMs,null);
+ await f.service.save(kernel);await f.service.start();
+ const live=await f.service.view();
+ assert.equal(live.rulesCount,3);
+ assert.ok(Number.isFinite(live.uptimeMs)&&live.uptimeMs>=0);
+ assert.ok(typeof live.os==='string'&&live.os.length>0);
+ await f.service.stop();
+ assert.equal((await f.service.view({controller:false})).uptimeMs,null);
+});
+test('出口 IP 只在经代理时查询，字段归一化并缓存一分钟',async()=>{
+ const f=fixture();
+ assert.equal((await f.service.ipInfo()).available,false);
+ await f.service.save(kernel);await f.service.start();
+ const seen=[];let reply={status:'success',country:'日本',countryCode:'JP',as:'AS2516  KDDI',isp:'KDDI',org:'KDDI Corporation',regionName:'东京',city:'千代田',timezone:'Asia/Tokyo',query:'203.0.113.7'};
+ f.runtime.proxiedGet=async(url,options)=>{seen.push({url,options});return reply};
+ const first=await f.service.ipInfo();
+ assert.equal(first.available,true);assert.equal(first.ip,'203.0.113.7');assert.equal(first.asn,'AS2516');
+ assert.equal(first.location,'日本 · 东京 · 千代田');assert.equal(first.source,'ip-api');
+ // 必须经用户自己的混合代理口，而不是直连。
+ assert.equal(seen[0].url,'http://ip-api.com/json/?lang=zh-CN&fields=status,country,countryCode,regionName,city,isp,org,as,timezone,query');
+ assert.equal(seen[0].options.port,7895);
+ // 缓存命中：再次读取不再发请求。
+ await f.service.ipInfo();
+ assert.equal(seen.length,1);
+ // 刷新失败时降级为不可用，不抛出、不残留旧值。
+ f.runtime.proxiedGet=async()=>{throw Error('offline')};
+ const failed=await f.service.ipInfo({refresh:true});
+ assert.equal(failed.available,false);assert.ok(failed.reason);
+});
+test('网站测试经当前叶子节点测速，超时与无延迟都归零',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ await assert.rejects(f.service.siteTest(),/内核尚未启动/);
+ const a=await add(f);await f.service.reload();await settled(f.service);await f.service.start();
+ const result=await f.service.siteTest();
+ assert.equal(result.node,`[${a.id}] same`);
+ assert.deepEqual(result.sites.map(site=>site.label),['Apple','GitHub','Google','YouTube']);
+ assert.deepEqual(result.sites.map(site=>site.ok),[true,true,true,false]);
+ assert.equal(result.sites[0].delay,87);
+ assert.equal(result.sites[3].delay,null);
+ assert.match(f.requests.at(-1).path,/\/proxies\/.*\/delay\?url=/);
+});
+
