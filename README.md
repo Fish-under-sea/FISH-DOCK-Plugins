@@ -35,9 +35,9 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-最新补丁：[Clash 1.3.0](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.3.0)：节点页改为 Clash Verge 风格分组（节点选择／自动选择／广告拦截／Telegram／AI 服务／微软／苹果／全球直连／漏网之鱼，组卡网格 + 节点网格 + 延迟色阶），规则按类别分流、国内直连；订阅卡新增流量额度条（解析 `subscription-userinfo`，显示已用／总量／剩余／到期）。内置 GeoSite/GeoIP 数据，首启不联网下载。Magpie、飞书与 OFM 版本见下方包列表。
+最新补丁：[Clash 1.3.1](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v1.3.1)：概览页改成 Clash Verge 式八张信息卡（订阅／当前节点／网络设置／代理模式／网站测试／IP 信息／Clash 信息／系统信息），主卡跨行、副卡等高；节点页加搜索、按延迟排序与「只看可用」，工具栏常驻、只有节点列表内部滚动；订阅区在内核运行时给出「先停止内核」说明与就地停止入口，名称与地址改为字段级校验。出口 IP 与网站测试都经用户自己的混合代理口发起，避免直连测出假结果。Magpie、飞书与 OFM 版本见下方包列表。
 
-> ⚠️ npm 上 `@fish-under-sea/fish-dock-plugin-clash@1.1.0` 为误发版本（基于旧基线，缺少 1.0.4 的多订阅修复），请勿使用；请安装 `1.3.0`（当前 `latest`）。
+> ⚠️ npm 上 `@fish-under-sea/fish-dock-plugin-clash@1.1.0` 为误发版本（基于旧基线，缺少 1.0.4 的多订阅修复），请勿使用；请安装 `1.3.1`（当前 `latest`）。
 
 <h2 id="plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-features-dark.png"><img src="assets/readme/section-features-light.png" alt="PLUGINS · 四个插件" width="100%"></picture></h2>
 
@@ -74,7 +74,7 @@
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
 | 飞书 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu/v/1.0.2) |
-| Clash 1.3.0 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.3.0/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.3.0) |
+| Clash 1.3.1 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.3.1/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/1.3.1) |
 | Magpie 1.1.1 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.1.1/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/1.1.0) |
 | OFM（暂停维护） | [`ofm.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/ofm.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-ofm`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-ofm/v/1.0.2) |
 

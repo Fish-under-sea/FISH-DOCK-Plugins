@@ -1,7 +1,7 @@
 (() => {
  const root=document.querySelector('#app');
  // 页面自身版本：用于区分「插件已升级」与「页面仍在跑旧缓存」。
- const UI_VERSION='1.4.0';
+ const UI_VERSION='1.3.1';
  const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],['rules','规则'],['connections','连接']];
  const MODES=[['rule','规则','按规则分流：国内直连，其余走代理'],['global','全局','所有流量都走代理'],
   ['direct','直连','全部不走代理，等价于关闭分流']];
