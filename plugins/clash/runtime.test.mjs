@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createProxyLease, kernelConfig, ensureGeoData, GEO_FILES} from './runtime.mjs';
+import {createProxyLease, kernelConfig, ensureGeoData, GEO_FILES, proxiedGet} from './runtime.mjs';
+import {createServer} from 'node:http';
 import {mkdtemp,writeFile,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -131,4 +132,29 @@ test('ensureGeoData：包内文件优先、网络双源回退、已有文件幂�
  const home2=await mkdtemp(join(tmpdir(),'fish-geo-'));t.after(()=>rm(home2,{recursive:true,force:true}));
  assert.equal(await ensureGeoData(home2,{fetch:fetcher,timeoutMs:500}),false);
  assert.deepEqual(await readdir(home2),[]);
+});
+
+test('出口 IP 查询把绝对 URI 交给本地代理口，并拒绝异常、超限与非 JSON 响应',async()=>{
+ const seen=[];let reply={status:200,body:'{"ip":"203.0.113.7"}'};
+ const server=createServer((request,response)=>{
+  seen.push({method:request.method,url:request.url,host:request.headers.host});
+  response.writeHead(reply.status,{'Content-Type':'application/json'});response.end(reply.body);
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const port=server.address().port;
+ try{
+  assert.deepEqual(await proxiedGet('http://ip-api.test/json?x=1',{port,timeoutMs:3000}),{ip:'203.0.113.7'});
+  // 明文目标必须用绝对 URI 交给代理，Host 保留目标域名而不是代理地址。
+  assert.deepEqual(seen[0],{method:'GET',url:'http://ip-api.test/json?x=1',host:'ip-api.test'});
+  reply={status:502,body:'{}'};
+  await assert.rejects(proxiedGet('http://ip-api.test/json',{port,timeoutMs:3000}),/异常状态/);
+  reply={status:200,body:'not json'};
+  await assert.rejects(proxiedGet('http://ip-api.test/json',{port,timeoutMs:3000}),/有效 JSON/);
+  reply={status:200,body:'x'.repeat(2048)};
+  await assert.rejects(proxiedGet('http://ip-api.test/json',{port,timeoutMs:3000,limit:256}),/超过限制/);
+  await assert.rejects(proxiedGet('ftp://ip-api.test/json',{port}),/查询地址无效/);
+  await assert.rejects(proxiedGet('http://ip-api.test/json',{port:0}),/代理端口无效/);
+ } finally {
+  await new Promise(resolve=>server.close(resolve));
+ }
 });

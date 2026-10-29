@@ -1,9 +1,28 @@
 import {randomBytes, randomUUID} from 'node:crypto';
+import os from 'node:os';
 import {publicUpdateError,updateMessages} from './subscriptions.mjs';
 
 const defaults={kernel:'',mixedPort:7895,controllerPort:9099,layout:'single'};
 const tunStacks=['mixed','gvisor','system'];
 const defaultTun={enable:false,stack:'mixed'};
+// 网站测试与 IP 查询的目标：全部经当前选中节点发起，避免「直连测自己」。
+const siteTargets=Object.freeze([
+ {key:'apple',label:'Apple',url:'https://www.apple.com/library/test/success.html'},
+ {key:'github',label:'GitHub',url:'https://github.com/favicon.ico'},
+ {key:'google',label:'Google',url:'https://www.google.com/generate_204'},
+ {key:'youtube',label:'YouTube',url:'https://www.youtube.com/favicon.ico'}
+]);
+// 出口 IP：优先明文接口（可经 HTTP 代理，字段最全），失败再试 HTTPS。
+const ipSources=Object.freeze([
+ {label:'ip-api',url:'http://ip-api.com/json/?lang=zh-CN&fields=status,country,countryCode,regionName,city,isp,org,as,timezone,query',
+  parse:json=>json?.status!=='success'?null:{ip:json.query,country:json.country,countryCode:json.countryCode,
+   asn:String(json.as??'').split(/\s+/)[0]??'',isp:json.isp??'',org:json.org??'',
+   location:[json.country,json.regionName,json.city].filter(Boolean).join(' · '),timezone:json.timezone??''}},
+ {label:'ip.sb',url:'https://api.ip.sb/geoip',
+  parse:json=>!json?.ip?null:{ip:json.ip,country:json.country??'',countryCode:json.country_code??'',
+   asn:json.asn?`AS${json.asn}`:'',isp:json.isp??'',org:json.organization??'',
+   location:[json.country,json.region,json.city].filter(Boolean).join(' · '),timezone:json.timezone??''}}
+]);
 const validId=id=>/^sub-[a-f0-9-]{36}$/.test(id);
 function urlValue(value) {
   let url;try{url=new URL(String(value).trim())}catch{throw Error('订阅地址无效，请粘贴完整的 http:// 或 https:// 链接')}
@@ -23,6 +42,7 @@ function labelValue(value) {
 }
 export function createClash({context,runtime,request:injectedRequest,fetch:fetcher=globalThis.fetch,defaultKernel=''}) {
   let running=null,settings,loading,subscriptions=[],secret='',operation=null,closing=false,operationError='';
+  let startedAt=0,ipCache=null;
   // secrets.read 由宿主先解密；这里只标记解密后内容仍不符合订阅地址格式的情况。
   let legacyPending=false;
   let queue=Promise.resolve();
@@ -113,10 +133,16 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     const c=await config(),state={...c,configured:!!c.kernel,subscriptionConfigured:subscriptions.length>0,
       legacyPending,
       subscriptions:subscriptions.map(s=>({...s,updating:jobs.has(s.id)})),
-      running:alive(),operation:operation?.name??null,error:operationError,systemProxy:runtime.proxy.active?.()??false,groups:[],mode:'rule'};
+      running:alive(),operation:operation?.name??null,error:operationError,systemProxy:runtime.proxy.active?.()??false,
+      os:`${os.platform()==='win32'?'Windows':os.platform()} ${os.release()}`,
+      uptimeMs:alive()&&startedAt?Date.now()-startedAt:null,
+      rulesCount:null,groups:[],mode:'rule'};
     if(controller&&state.running)try{
-      const [version,proxies,status]=await Promise.all([request('/version'),request('/proxies'),request('/configs')]);
+      // /rules 只用于概览卡片的规则数量；拿不到不影响主视图。
+      const [version,proxies,status,rules]=await Promise.all([
+        request('/version'),request('/proxies'),request('/configs'),request('/rules').catch(()=>null)]);
       state.version=version.version;state.mode=status.mode;
+      state.rulesCount=Array.isArray(rules?.rules)?rules.rules.length:null;
       state.groups=Object.entries(proxies.proxies||{}).filter(([name,p])=>isProxyGroup(name,p)).map(([name,p])=>({
         name,selected:p.now,nodes:p.all.map(name=>sourceNode(name,proxies.proxies))}));
     }catch{state.error='控制器暂未响应，请刷新或停止内核'}
@@ -269,6 +295,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       await context.secrets.write('keys','controller.key',secret);
       const candidate=await runtime.start({...c,secret,subscriptions:enabled,request,signal:task.controller.signal});running=candidate;
       try{await request('/version')}catch{await candidate.stop();running=null;throw Error('内核控制器尚未就绪')}
+      startedAt=Date.now();ipCache=null;
       return view();
     })().catch(error=>{operationError=task.controller.signal.aborted?'启动已取消':'启动失败，请检查内核路径、端口和订阅缓存';throw error})
       .finally(()=>{if(operation===task)operation=null});
@@ -287,6 +314,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       let restoreError;
       try{await runtime.proxy.restore()}catch(error){restoreError=error}
       if(running){await running.stop();running=null}
+      startedAt=0;ipCache=null;
       // TUN 由 SYSTEM 服务托管时，确保服务侧内核也停下（running 为空时的兜底）。
       try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}
       if(restoreError)throw restoreError;
@@ -319,6 +347,47 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       uploadTotal:result.uploadTotal??0,downloadTotal:result.downloadTotal??0};
     return {rules:(result.rules||[]).map(r=>({type:r.type,proxy:r.proxy}))};
   }
+  // 出口 IP 必须经用户配置的代理口查询：直连查询在 TUN 或系统代理下会得到本机出口，
+  // 与页面要展示的「当前节点看到的 IP」不一致。结果缓存 60 秒，避免反复打查询接口。
+  async function ipInfo({refresh=false}={}) {
+    if(!alive())return {available:false,reason:'内核未运行：出口 IP 需要经代理查询'};
+    if(!refresh&&ipCache&&Date.now()-ipCache.at<60000)return ipCache.value;
+    const query=runtime.proxiedGet;
+    if(typeof query!=='function')return {available:false,reason:'当前运行时不支持查询出口 IP'};
+    const {mixedPort}=await config();
+    for(const source of ipSources){
+      try{
+        const value=source.parse(await query(source.url,{port:mixedPort,timeoutMs:6000}));
+        if(value){ipCache={at:Date.now(),value:{available:true,...value,source:source.label}};return ipCache.value}
+      }catch{/* 单个源不可用就换下一个，最终统一降级 */}
+    }
+    return {available:false,reason:'查询服务无响应，请检查代理连通性后重试'};
+  }
+  // 主组的 now 可能仍是另一个组，逐层取到真正的叶子节点再测速。
+  function resolveLeaf(proxies) {
+    let name=proxies?.['🚀 节点选择']?.now;
+    for(let depth=0;depth<8&&name;depth++){
+      const node=proxies[name];
+      if(!node)return null;
+      if(!Array.isArray(node.all))return name;
+      name=node.now;
+    }
+    return null;
+  }
+  async function siteTest() {
+    if(!alive())throw Error('内核尚未启动');
+    const {proxies}=await request('/proxies');
+    const leaf=resolveLeaf(proxies??{});
+    if(!leaf)throw Error('没有可用的代理节点，请先选择节点');
+    const sites=await Promise.all(siteTargets.map(async target=>{
+      try{
+        const result=await request(`/proxies/${encodeURIComponent(leaf)}/delay?url=${encodeURIComponent(target.url)}&timeout=5000`);
+        const delay=Number.isFinite(result?.delay)&&result.delay>0?result.delay:null;
+        return {...target,delay,ok:delay!==null};
+      }catch{return {...target,delay:null,ok:false}}
+    }));
+    return {node:leaf,sites};
+  }
   return {view,save,subscriptionSave,subscriptionToggle,subscriptionRemove,layout,start,stop,shutdown,select,mode,reload,proxy,details,
-    tunService,installTunService,uninstallTunService};
+    tunService,installTunService,uninstallTunService,ipInfo,siteTest};
 }

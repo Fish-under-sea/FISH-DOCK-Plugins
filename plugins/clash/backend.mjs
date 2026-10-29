@@ -16,7 +16,7 @@ createPlugin({id:'fish.clash',activate:async context=>{
  service=createClash({context,runtime,defaultKernel:(await stat(kernel).catch(()=>null))?.isFile()?kernel:''});
  await service.view()},deactivate:async()=>{if(service)await service.shutdown();service=null},commands:{
  ...Object.fromEntries(['view','save','subscriptionSave','subscriptionToggle','subscriptionRemove','layout','select','mode','reload','proxy','details',
-  'tunService','installTunService','uninstallTunService'].map(name=>[`clash.${name}`,params=>service[name](params)])),
+  'tunService','installTunService','uninstallTunService','ipInfo','siteTest'].map(name=>[`clash.${name}`,params=>service[name](params)])),
  'clash.start':()=>{void service.start().catch(()=>{});return service.view({controller:false})},
  'clash.stop':()=>{void service.stop().catch(()=>{});return service.view({controller:false})}
 },onError:()=>{void service?.shutdown().catch(()=>{})}});

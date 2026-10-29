@@ -1,6 +1,8 @@
 import {spawn} from 'node:child_process';
 import {join,dirname} from 'node:path';
-import {createServer} from 'node:net';
+import {createServer,connect as netConnect} from 'node:net';
+import {connect as tlsConnect} from 'node:tls';
+import http from 'node:http';
 import {mkdir} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {writeFile,rename,readFile} from 'node:fs/promises';
@@ -197,5 +199,57 @@ function powershell(action,values){
   const timer=setTimeout(()=>{child.kill();reject(Error('系统代理操作超时'))},5000);
   child.on('error',()=>{clearTimeout(timer);reject(Error('请先安装 PowerShell 7 后使用系统代理控制'))});child.stdout.on('data',b=>{output+=b;if(output.length>16384)child.kill()});
   child.on('close',code=>{clearTimeout(timer);try{if(code!==0)throw Error();resolve(JSON.parse(output))}catch{reject(Error('Windows 系统代理读取或写入失败'))}});child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({action,values}));
+ });
+}
+
+// 出口 IP 查询必须走用户自己的代理口：直连查询在 TUN 或系统代理下会查到本机出口，
+// 结果与实际分流不符。这里只用 Node 自带的 http/net/tls 做一次受限的 GET：
+// 明文地址按绝对 URI 交给代理；https 先 CONNECT 建隧道再在隧道里握手。
+// 限制响应大小与超时，不跟随跳转，不读取认证信息。
+export function proxiedGet(url,{port,timeoutMs=6000,limit=64*1024}={}){
+ return new Promise((resolve,reject)=>{
+  let target;try{target=new URL(String(url))}catch{return reject(Error('查询地址无效'))}
+  if(target.protocol!=='http:'&&target.protocol!=='https:')return reject(Error('查询地址无效'));
+  if(!Number.isInteger(port)||port<1||port>65535)return reject(Error('代理端口无效'));
+  const secure=target.protocol==='https:';
+  const portNumber=Number(target.port||(secure?443:80));
+  let settled=false;
+  const timer=setTimeout(()=>fail(Error('查询超时')),timeoutMs);
+  function settle(fn,value){if(settled)return;settled=true;clearTimeout(timer);fn(value)}
+  const fail=error=>settle(reject,error);
+  const done=value=>settle(resolve,value);
+  const collect=(response,holder)=>{
+   const chunks=[];let size=0;
+   response.on('data',chunk=>{
+    size+=chunk.byteLength;
+    if(size>limit){holder.destroy();fail(Error('查询响应超过限制'));return}
+    chunks.push(chunk);
+   });
+   response.on('end',()=>{
+    if(!response.statusCode||response.statusCode<200||response.statusCode>=300)return fail(Error('查询服务返回异常状态'));
+    try{done(JSON.parse(Buffer.concat(chunks).toString('utf8')))}catch{fail(Error('查询结果不是有效 JSON'))}
+   });
+   response.on('error',fail);
+  };
+  if(!secure){
+   const request=http.request({host:'127.0.0.1',port,method:'GET',path:target.href,
+    headers:{Host:target.host,Accept:'application/json'},timeout:timeoutMs},response=>collect(response,request));
+   request.on('timeout',()=>{request.destroy();fail(Error('查询超时'))});
+   request.on('error',fail);request.end();
+   return;
+  }
+  const tunnel=http.request({host:'127.0.0.1',port,method:'CONNECT',
+   path:`${target.hostname}:${portNumber}`,headers:{Host:`${target.hostname}:${portNumber}`},timeout:timeoutMs});
+  tunnel.on('timeout',()=>{tunnel.destroy();fail(Error('查询超时'))});
+  tunnel.on('error',fail);
+  tunnel.once('connect',(response,socket)=>{
+   if(response.statusCode!==200){socket.destroy();return fail(Error('代理拒绝建立隧道'))}
+   const secureSocket=tlsConnect({socket,servername:target.hostname});
+   secureSocket.on('error',fail);
+   const request=http.request({path:target.pathname+target.search,method:'GET',
+    headers:{Host:target.host,Accept:'application/json'},createConnection:()=>secureSocket},inner=>collect(inner,secureSocket));
+   request.on('error',fail);request.end();
+  });
+  tunnel.end();
  });
 }
