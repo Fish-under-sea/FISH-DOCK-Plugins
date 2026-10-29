@@ -1,6 +1,6 @@
 # 插件开发者指南
 
-当前协议为 v1，四个已发布官方插件为 1.0.0；`plugins/relay-probe` 是开发中的中转站行为探针，尚未进入发行目录。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1，四个已发布官方插件为 2.0.0（作者用数组、不再有维护者字段）；`plugins/relay-probe` 是开发中的中转站行为探针，尚未进入发行目录。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
@@ -21,6 +21,7 @@ Dock 仓维护桌面宿主、Node SDK、浏览器桥、安装更新与回滚、W
   "hostApi": 1,
   "platforms": ["windows-x86_64"],
   "storage": {"directory": ".plugin.acme.weather", "dataSchema": 1},
+  "behaviors": {"autostart": true},
   "backend": {"runtime": "node", "entry": "backend.mjs"},
   "capabilities": ["storage"],
   "pages": [{"id": "main", "title": "天气", "entry": "page.html"}],
@@ -54,6 +55,31 @@ createPlugin({
 协议是带编号的 JSON 行。stdout 只传协议数据。`host.hello` 绑定协议、插件 ID、版本与命名空间；随后激活，再处理业务方法及事件。SDK 检查帧大小、队列、调用时限和响应编号。停用应关闭自有子进程并完成清理。
 
 `context.storage.read/write(category,name,...)` 处理分类文本。`context.secrets.read/write` 处理 `credentials`、`keys` 的加密文本。SDK 拒绝越级路径、设备名和保留 README 文件名。原生服务需要复杂目录时，插件适配器在自身命名空间分类映射。独立进程由宿主管生命周期，未提供操作系统权限沙箱。
+
+## 行为钩子
+
+清单里的 `behaviors.autostart` 决定这颗开关在 Dock 插件卡上出不出现，也是插件侧唯一要看的钩子（2.0.0 起）：
+
+| 清单值 | 卡面 | 宿主传的环境变量 |
+| --- | --- | --- |
+| `true` | 「随 Dock 启动 / 已关闭」两态胶囊 | 打开的那次启动传 `FISH_PLUGIN_AUTOSTART=1` |
+| `false` | 灰色小字「无需自启动」，不占按钮语义 | 不传 |
+
+规则只有一条：**`FISH_PLUGIN_AUTOSTART=1` 只代表「随 Dock 启动」这一次**。安装、点启用、回滚、手动启动都不传 1，服务等用户自己点。`activate()` 末尾按这个语义拉起本机服务，未配置或已在运行时保持原样：
+
+```javascript
+activate:async context=>{
+  service=createGateway({context,runtime:createRuntime(context),kind:'acme'});
+  await service.load();
+  // 只有「随 Dock 启动」这一次把本机服务拉起来。
+  if(process.env.FISH_PLUGIN_AUTOSTART==='1'&&service.view().state==='stopped')void service.start().catch(()=>{});
+},
+```
+
+- 有本机服务的插件（Clash、Magpie、OFM）写 `true`；没有服务的插件（飞书）写 `false`，也不要读这个变量。
+- 清单由 `tools/stage-development.mjs` 生成，开关值写在 `definitions` 的 `autostart` 字段上，不要在打包后手改 `plugin.json`。
+- 服务页与服务卡写的是注册表里同一个 `autostart`，插件不需要自己再存一份。
+- `view()` 是异步的（如 Clash 要读控制器状态）时，先等它再判断，别把 Promise 当对象读 `.state`。
 
 ## 页面 SDK
 

@@ -2,14 +2,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {identity} from './stage-development.mjs';
 
+// 身份与发行目录共用 tools/stage-development.mjs 里的 identity：作者是数组，没有 maintainer。
 export const PLUGINS = [
   {id: 'feishu', name: '飞书通知', description: '飞书群机器人通知、事件筛选和签名测试', licenses: []},
   {id: 'clash', name: 'Clash 代理', description: 'mihomo、订阅、节点、模式和系统代理', licenses: ['mihomo.txt']},
   {id: 'magpie', name: 'Magpie 网关', description: '独立 Magpie 网关和原生管理页', licenses: ['Magpie.txt']},
   {id: 'ofm', name: 'OFM 本地模型', description: '独立 OFM 渠道账号、模型目录和原生管理页', licenses: []},
-];
-export const VERSION = '1.0.0';
+].map(plugin => ({...plugin, authors: identity[plugin.id].authors, ...(identity[plugin.id].note ? {note: identity[plugin.id].note} : {})}));
+export const VERSION = '2.0.0';
 
 const thisDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(thisDir, '..');
@@ -21,7 +23,9 @@ const arg = (args, name, fallback) => {
 
 const packageReadme = (plugin, VERSION) => `# @fish-under-sea/fish-dock-plugin-${plugin.id}
 
-FISH Dock 官方「${plugin.name}」插件，版本 ${VERSION}。适用于 FISH Dock 1.1.0+、Windows x64 和宿主 API 1。
+FISH Dock 官方「${plugin.name}」插件，版本 ${VERSION}。适用于 FISH Dock 2.0.0+、Windows x64 和宿主 API 1。
+
+作者：${plugin.authors.join('、')}。${plugin.note ? `${plugin.note}。` : ''}
 
 此 npm 包只包含文件「${plugin.id}.fish-plugin」，可按需安装单个插件，不会安装其他插件，不运行安装后脚本，也不会自动修改系统设置。
 
@@ -98,7 +102,7 @@ export async function buildNpmPackages({dist, out, sourceRoot = repoRoot, versio
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.join(thisDir, 'build-npm-packages.mjs')) {
   const args = process.argv.slice(2);
-  const dist = path.resolve(arg(args, '--dist', path.join(repoRoot, '..', '..', '.tools', 'plugin-release-1.0.0', 'dist')));
-  const out = path.resolve(arg(args, '--out', path.join(repoRoot, '..', '..', '.tools', 'npm-plugin-packages-1.0.0')));
+  const dist = path.resolve(arg(args, '--dist', path.join(repoRoot, '..', '..', '.tools', 'plugin-release-2.0.0', 'dist')));
+  const out = path.resolve(arg(args, '--out', path.join(repoRoot, '..', '..', '.tools', 'npm-plugin-packages-2.0.0')));
   console.log(JSON.stringify(await buildNpmPackages({dist, out, version: arg(args, '--version', VERSION), only: arg(args, '--only')})));
 }

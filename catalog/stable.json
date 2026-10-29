@@ -5,16 +5,18 @@
       "id": "fish.clash",
       "name": "Clash 代理",
       "description": "Clash 代理独立插件",
-      "author": "FISH",
-      "maintainer": "Fish-under-sea",
-      "version": "1.3.1",
+      "authors": [
+        "Elysia395",
+        "FISH"
+      ],
+      "version": "2.0.0",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.3.1/clash.fish-plugin",
-      "sha256": "09512f45243eee1fd622572f7a3a7b6011ddccef3311fd327dec1ec531fb39c7",
-      "bytes": 17138485,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.0.0/clash.fish-plugin",
+      "sha256": "3cde6f2ac49910b12e7a5c55a5d3c22b49c88de0a330bdca015f2b9259a397e4",
+      "bytes": 17143161,
       "dependencies": [
-        "FISH Dock >=1.1.0",
+        "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
       ]
     },
@@ -22,16 +24,18 @@
       "id": "fish.feishu",
       "name": "飞书通知",
       "description": "飞书通知独立插件",
-      "author": "FISH",
-      "maintainer": "Fish-under-sea",
-      "version": "1.0.2",
+      "authors": [
+        "WTStarMark",
+        "FISH"
+      ],
+      "version": "2.0.0",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/feishu.fish-plugin",
-      "sha256": "3b2e68be48e1e1c6949631609df547b81137fc495f0cde49f1a9e42d33c7c7d2",
-      "bytes": 23003,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.0.0/feishu.fish-plugin",
+      "sha256": "57030e47c685d918fa9b65f904dc01659d22df43f047d186cee41dd8cc26d6d4",
+      "bytes": 24722,
       "dependencies": [
-        "FISH Dock >=1.1.0",
+        "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
       ]
     },
@@ -39,16 +43,18 @@
       "id": "fish.magpie",
       "name": "Magpie 网关",
       "description": "Magpie 网关独立插件",
-      "author": "FISH",
-      "maintainer": "Fish-under-sea",
-      "version": "1.2.4",
+      "authors": [
+        "FISH",
+        "Jassdingk"
+      ],
+      "version": "2.0.0",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.2.4/magpie.fish-plugin",
-      "sha256": "80ca90484424a0676fa0ea72868ad6a99ab1ab29cae1d731d41b64682922d3f8",
-      "bytes": 24541489,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.0.0/magpie.fish-plugin",
+      "sha256": "281a4340c08f06ff0731fa0b78e9b49f46148ef661c3ac5c32b799a5e249e55f",
+      "bytes": 20770745,
       "dependencies": [
-        "FISH Dock >=1.1.0",
+        "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
       ]
     },
@@ -56,16 +62,18 @@
       "id": "fish.ofm",
       "name": "OFM 本地模型",
       "description": "OFM 本地模型独立插件",
-      "author": "FISH",
-      "maintainer": "Fish-under-sea",
-      "version": "1.0.2",
+      "authors": [
+        "FISH"
+      ],
+      "note": "此插件于 10 月 25 日暂停维护",
+      "version": "2.0.0",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v1.0.2/ofm.fish-plugin",
-      "sha256": "91ad6e6262895d1897f82178e4e28164a6d3f9c110c842161442b49348bac9da",
-      "bytes": 1879864,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.0.0/ofm.fish-plugin",
+      "sha256": "b80a43b20d0c5ba068477f1d3143ed73cd1254d616c05981e456b4b5f41e7725",
+      "bytes": 1881796,
       "dependencies": [
-        "FISH Dock >=1.1.0",
+        "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
       ]
     }

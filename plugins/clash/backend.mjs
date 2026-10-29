@@ -14,7 +14,12 @@ createPlugin({id:'fish.clash',activate:async context=>{
  await runtime.proxy.restore();
  const kernel=fileURLToPath(new URL('../../service/mihomo.exe',import.meta.url));
  service=createClash({context,runtime,defaultKernel:(await stat(kernel).catch(()=>null))?.isFile()?kernel:''});
- await service.view()},deactivate:async()=>{if(service)await service.shutdown();service=null},commands:{
+ await service.view();
+ // 宿主只在「随 Dock 启动」这一次传 FISH_PLUGIN_AUTOSTART=1（#22）；安装、点启用、回滚
+ // 与手动启动都不传 1。clash 的 view() 是异步的（要读配置与控制器状态），所以先等它，
+ // 只补「已经有内核、此刻又没在跑」这一种；未配置时留给用户自己选内核。
+ if(process.env.FISH_PLUGIN_AUTOSTART==='1')void service.view().then(view=>{if(view.configured&&!view.running)void service.start().catch(()=>{})}).catch(()=>{});
+},deactivate:async()=>{if(service)await service.shutdown();service=null},commands:{
  ...Object.fromEntries(['view','save','subscriptionSave','subscriptionToggle','subscriptionRemove','layout','select','mode','reload','proxy','details',
   'tunService','installTunService','uninstallTunService','ipInfo','siteTest'].map(name=>[`clash.${name}`,params=>service[name](params)])),
  'clash.start':()=>{void service.start().catch(()=>{});return service.view({controller:false})},

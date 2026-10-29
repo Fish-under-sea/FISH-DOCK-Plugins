@@ -1,6 +1,27 @@
 # 插件维护者指南
 
-本版 Magpie 适配插件为 1.0.3，飞书、Clash、OFM 保持 1.0.2，配套 FISH Dock 1.1.0+。Magpie 随包原生服务固定为官方 0.1.1709。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+2.0.0 把四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉，OFM 带暂停维护标注。Magpie 随包原生服务固定为官方 0.1.1709。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+
+## 身份表
+
+作者与状态说明只在一个地方维护：`tools/stage-development.mjs` 的 `identity`。`build-release`（商店目录 `stable.json`）与 `build-npm-packages`（npm 单包 README）都从这里取，不再各写一份。
+
+| 插件 | `authors` | `note` |
+| --- | --- | --- |
+| `fish.clash` | `["Elysia395","FISH"]` | — |
+| `fish.magpie` | `["FISH","Jassdingk"]` | — |
+| `fish.ofm` | `["FISH"]` | 此插件于 10 月 25 日暂停维护 |
+| `fish.feishu` | `["WTStarMark","FISH"]` | — |
+
+目录条目里不再有 `maintainer`；宿主按数组渲染「A、B」，`note` 单独一行显示。「暂停维护」只影响展示，不改插件行为。
+
+## 行为钩子
+
+清单 `behaviors.autostart` 与 `FISH_PLUGIN_AUTOSTART` 的约定见 [开发者指南](../developers/README.md#行为钩子)。维护者侧要点：
+
+- 开关值写在 `definitions` 的 `autostart` 字段：Clash / Magpie / OFM 为 `true`，飞书为 `false`（无本机服务，卡面显示「无需自启动」）。
+- 只有「随 Dock 启动」这一次宿主传 `FISH_PLUGIN_AUTOSTART=1`；安装、启用、回滚、手动启动都不传。发布前用真实宿主核对一次首启是否只拉一次服务。
+- 服务页的自启动胶囊与服务卡写注册表里同一个 `autostart`；不要给插件另加开关状态。
 
 ## 固定来源与资源
 
@@ -60,10 +81,10 @@ Webhook 测试、系统代理切换、Windhawk 系统安装与应用均为实际
 6. 资源实际可下载后再更新商店索引；索引失败时宿主保留已安装插件的管理能力。
 7. 桌面安装包在 Dock 仓单独制作与发布；npm 为四个插件分别生成单包，进入各输出目录使用 `npm pack --dry-run` 检查后运行 `npm publish --access public`。
 
-正式打包使用 `tools/build-release.mjs` 生成四个 `.fish-plugin`，再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-1.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。`relay-probe` 是开发探针，不在这四个发行物中。
+正式打包使用 `tools/build-release.mjs` 生成四个 `.fish-plugin`，再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-2.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。`relay-probe` 是开发探针，不在这四个发行物中。
 
 两个构建工具均要求新的输出目录，不再清空已有目录；正式构建必须提供所选插件需要的运行时。构建后执行 `node tools/verify-release.mjs --dist <绝对 dist 目录> --npm <绝对 npm 输出目录>`，核对归档资源、页面依赖、清单摘要和 npm 字节一致性。此检查不访问远端下载地址，也不替代安装与实机验收。仅准备本地实验材料可使用 `tools/prepare-local-handoff.ps1`，该脚本不会上传资源或发布 npm。
 
-独立补丁使用 `--version 1.0.1 --only magpie`，两个构建工具都需传入。单插件构建输出的 `stable.json` 仅含本次插件；正式商店目录须只替换相应条目，保留其他插件已发布的版本、下载地址和摘要。
+独立补丁使用 `--version <x.y.z> --only magpie`，两个构建工具都需传入。单插件构建输出的 `stable.json` 仅含本次插件；正式商店目录须只替换相应条目，保留其他插件已发布的版本、下载地址和摘要。
 
 对外开发入口见 [开发者指南](../developers/README.md)，使用与数据目录见 [项目 README](../../README.md)。

@@ -3,7 +3,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {crc32,deflateRawSync} from 'node:zlib';
 import {fileURLToPath} from 'node:url';
-import {stage,definitions} from './stage-development.mjs';
+import {stage,definitions,identity} from './stage-development.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const repository=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 export function archive(root){
@@ -13,7 +13,7 @@ export function archive(root){
  const tail=Buffer.alloc(22),catalog=Buffer.concat(directory);tail.writeUInt32LE(0x06054b50);tail.writeUInt16LE(rows.length,8);tail.writeUInt16LE(rows.length,10);tail.writeUInt32LE(catalog.length,12);tail.writeUInt32LE(offset,16);return Buffer.concat([...parts,catalog,tail]);
 }
 export function build(options){
- const version=options.version||'1.0.0';if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('版本格式无效');
+ const version=options.version||'2.0.0';if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('版本格式无效');
  const selected=options.only?definitions.filter(d=>d.key===options.only):definitions;if(!selected.length)throw Error('未知插件');
 for(const definition of selected){
   const dependency={clash:'mihomo',magpie:'magpie',ofm:'ofm'}[definition.key];
@@ -36,11 +36,13 @@ for(const definition of selected){
   fs.copyFileSync(path.join(repository,'THIRD_PARTY_NOTICES.md'),path.join(root,'THIRD_PARTY_NOTICES.md'));
   const license=definition.key==='magpie'?'Magpie.txt':definition.key==='clash'?'mihomo.txt':null;
   if(license){fs.mkdirSync(path.join(root,'licenses'));fs.copyFileSync(path.join(repository,'licenses',license),path.join(root,'licenses',license));}
-  fs.writeFileSync(path.join(root,'README.md'),`# ${definition.name}\n\n版本 ${version}；FISH Dock 1.1.0+；宿主 API 1；Windows x64。\n\n在 Dock 的插件页安装并启用；服务按需启动，账号与订阅由用户配置。停用与卸载保留资料。\n\n数据根由宿主解析，分类存于 ${definition.directory}；凭据不随安装包分发。\n`);
+  const author=identity[definition.key];
+  if(!author?.authors?.length)throw Error(`${definition.key} 缺少作者信息`);
+  fs.writeFileSync(path.join(root,'README.md'),`# ${definition.name}\n\n版本 ${version}；FISH Dock 2.0.0+；宿主 API 1；Windows x64。\n\n作者：${author.authors.join('、')}。${author.note?`${author.note}。`:''}\n\n在 Dock 的插件页安装并启用；服务按需启动，账号与订阅由用户配置。停用与卸载保留资料。\n\n数据根由宿主解析，分类存于 ${definition.directory}；凭据不随安装包分发。\n`);
   manifest.files={};function inventory(relative=''){for(const item of fs.readdirSync(path.join(root,relative),{withFileTypes:true})){const name=relative?`${relative}/${item.name}`:item.name;if(item.isDirectory())inventory(name);else if(item.isFile()&&name!=='plugin.json')manifest.files[name]=hash(fs.readFileSync(path.join(root,name)));}}inventory();
   fs.writeFileSync(path.join(root,'plugin.json'),JSON.stringify(manifest,null,2)+'\n');
   const file=`${definition.key}.fish-plugin`,bytes=archive(root);fs.writeFileSync(path.join(dist,file),bytes);
-  entries.push({id:manifest.id,name:manifest.name,description:`${manifest.name}独立插件`,author:'FISH',maintainer:'Fish-under-sea',version,hostApi:1,platform:'windows-x86_64',url:`https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/${tag}/${file}`,sha256:hash(bytes),bytes:bytes.length,dependencies:['FISH Dock >=1.1.0','Node.js 24（宿主提供）']});
+  entries.push({id:manifest.id,name:manifest.name,description:`${manifest.name}独立插件`,authors:author.authors,...(author.note?{note:author.note}:{}),version,hostApi:1,platform:'windows-x86_64',url:`https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/${tag}/${file}`,sha256:hash(bytes),bytes:bytes.length,dependencies:['FISH Dock >=2.0.0','Node.js 24（宿主提供）']});
  }
  const catalog={schema:1,plugins:entries};fs.writeFileSync(path.join(dist,'stable.json'),JSON.stringify(catalog,null,2)+'\n');fs.writeFileSync(path.join(dist,'SHA256SUMS.txt'),entries.map(e=>`${e.sha256}  ${e.id.slice(5)}.fish-plugin`).join('\n')+'\n');return {dist,plugins:entries};
 }

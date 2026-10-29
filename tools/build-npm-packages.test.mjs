@@ -40,8 +40,12 @@ test('按插件生成独立 npm 包，不带其他插件资源', async () => {
   const packageRoot = path.join(out, 'feishu');
   const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json')));
   assert.equal(manifest.name, '@fish-under-sea/fish-dock-plugin-feishu');
-  assert.equal(manifest.version, '1.0.0');
+  assert.equal(manifest.version, '2.0.0');
   assert.equal(fs.readFileSync(path.join(packageRoot, 'feishu.fish-plugin'), 'utf8'), 'feishu archive');
   assert.equal(fs.existsSync(path.join(packageRoot, 'clash.fish-plugin')), false);
   assert.equal(fs.existsSync(path.join(packageRoot, 'bin', 'install.mjs')), true);
+  // 2.0.0 起 README 写作者数组、不再出现维护者。
+  const readme = fs.readFileSync(path.join(packageRoot, 'README.md'), 'utf8');
+  assert.match(readme, /作者：WTStarMark、FISH。/);
+  assert.ok(!readme.includes('维护者'));
 });
