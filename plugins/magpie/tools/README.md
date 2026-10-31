@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2336`，加上 `patches/magpie-v0.1.2336+fish.3.patch`。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2336`，加上 `patches/magpie-v0.1.2336+fish.4.patch`。
 
 ## 为什么要自己编
 
@@ -9,7 +9,9 @@
 - 签到页的「关 / 开」「立即签到」点了发不出请求；
 - 中转站探针需要 magpie 本体代为出站。
 
-补丁补了两件事：页面调用通道（`magpie.call` → `POST /api/plugin-pages/call`，按 `package.json` 的 `magpie.calls` 白名单分派）与 `internal/relay` 的探测实现。CSP 一行未改。
+补丁补了继续读：页面调用通道（`magpie.call` → `POST /api/plugin-pages/call`，按 `package.json` 的 `magpie.calls` 白名单分派）与 `internal/relay` 的探测实现。CSP 一行未改。
+
+`fish.4` 又补了一条厂商口径：**讯飞（Loom / Loomy）一天只签一个账号，一次按 400 积分记**（`internal/provider/plugin_checkin.go` 的 `loomyAccounts` / `loomyCredit`）。多号同签会让额度对不上，插件不报积分时页面又会一直显示「0 今日」；插件自己报了就按它报的。判定用 provider id 前缀 `loomy`，`loomy` 与 `loomy-plugin` 两种写法都认。
 
 ## 构建
 
@@ -21,15 +23,15 @@ python tools\download-go.py
 git clone --filter=blob:none --no-checkout https://github.com/yetone/magpie.git upstream
 git -C upstream fetch --depth=1 origin tag v0.1.2336
 git -C upstream worktree add ..\upstream-2336 v0.1.2336
-git -C ..\upstream-2336 apply --check patches\magpie-v0.1.2336+fish.3.patch
-git -C ..\upstream-2336 apply patches\magpie-v0.1.2336+fish.3.patch
+git -C ..\upstream-2336 apply --check patches\magpie-v0.1.2336+fish.4.patch
+git -C ..\upstream-2336 apply patches\magpie-v0.1.2336+fish.4.patch
 
 # 3) 编（本机没有 make，手跑 release-windows 的两段式）
 #    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
   -UpstreamRoot ..\upstream-2336 `
-  -VersionTag 'v0.1.2336+fish.3' -FileVersion '0.1.2336.3' -ProductName 'magpie fish' `
+  -VersionTag 'v0.1.2336+fish.4' -FileVersion '0.1.2336.4' -ProductName 'magpie fish' `
   -WinresJson ..\upstream-2336\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
@@ -46,8 +48,8 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 | 位置 | 值 |
 |---|---|
-| `magpie version` | `magpie v0.1.2336+fish.3` |
-| FileVersion | `0.1.2336.3`（四段数字，Windows 资源要求） |
+| `magpie version` | `magpie v0.1.2336+fish.4` |
+| FileVersion | `0.1.2336.4`（四段数字，Windows 资源要求） |
 | ProductName | `magpie fish` |
 | FileDescription | `magpie fish (FISH Dock build)` |
 | manifest identity | `ai.usemagpie.magpie.fish` |
