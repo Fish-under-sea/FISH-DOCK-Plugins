@@ -16,7 +16,7 @@ export function build(options){
  const version=options.version||'2.0.0';if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('版本格式无效');
  const selected=options.only?definitions.filter(d=>d.key===options.only):definitions;if(!selected.length)throw Error('未知插件');
 for(const definition of selected){
-  const dependency={clash:'mihomo',magpie:'magpie',ofm:'ofm'}[definition.key];
+  const dependency={clash:'mihomo',magpie:'magpie',ofm:options.ofmStaged?'ofmStaged':'ofm'}[definition.key];
   if(dependency&&!options[dependency])throw Error(`${definition.key} 缺少必需服务资源：--${dependency}`);
   // Clash 需要内置 geo 数据（plugins/clash/service/GeoSite.dat + GeoIP.dat），
   // 否则打出的包首启要联网下载，国内易失败。缺失时明确报错而非静默出坏包。
@@ -46,4 +46,4 @@ for(const definition of selected){
  }
  const catalog={schema:1,plugins:entries};fs.writeFileSync(path.join(dist,'stable.json'),JSON.stringify(catalog,null,2)+'\n');fs.writeFileSync(path.join(dist,'SHA256SUMS.txt'),entries.map(e=>`${e.sha256}  ${e.id.slice(5)}.fish-plugin`).join('\n')+'\n');return {dist,plugins:entries};
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){const options={};for(let i=2;i<process.argv.length;i+=2){if(!['--out','--sdk','--ofm','--magpie','--mihomo','--version','--only'].includes(process.argv[i])||!process.argv[i+1])throw Error('需要 --out --sdk，可选 --ofm --magpie --mihomo --version --only');options[process.argv[i].slice(2)]=['--version','--only'].includes(process.argv[i])?process.argv[i+1]:path.resolve(process.argv[i+1]);}console.log(JSON.stringify(build(options),null,2));}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){const options={};for(let i=2;i<process.argv.length;i+=2){if(!['--out','--sdk','--ofm','--ofm-staged','--magpie','--mihomo','--version','--only'].includes(process.argv[i])||!process.argv[i+1])throw Error('需要 --out --sdk，可选 --ofm/--ofm-staged --magpie --mihomo --version --only');options[process.argv[i].slice(2)==='ofm-staged'?'ofmStaged':process.argv[i].slice(2)]=['--version','--only'].includes(process.argv[i])?process.argv[i+1]:path.resolve(process.argv[i+1]);}console.log(JSON.stringify(build(options),null,2));}

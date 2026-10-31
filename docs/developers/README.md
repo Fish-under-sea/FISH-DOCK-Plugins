@@ -78,7 +78,7 @@ activate:async context=>{
 
 - 有本机服务的插件（Clash、Magpie、OFM）写 `true`；没有服务的插件（飞书）写 `false`，也不要读这个变量。
 - 清单由 `tools/stage-development.mjs` 生成，开关值写在 `definitions` 的 `autostart` 字段上，不要在打包后手改 `plugin.json`。
-- 服务页与服务卡写的是注册表里同一个 `autostart`，插件不需要自己再存一份。
+- 自启动开关只有宿主插件卡一处：插件页里不要再放开关，也不要去调 `dock.autostart`，否则两处状态会打架。
 - `view()` 是异步的（如 Clash 要读控制器状态）时，先等它再判断，别把 Promise 当对象读 `.state`。
 
 ## 页面 SDK

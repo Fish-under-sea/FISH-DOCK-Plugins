@@ -32,6 +32,8 @@ test('按插件生成独立 npm 包，不带其他插件资源', async () => {
   fs.mkdirSync(dist, {recursive: true});
   fs.mkdirSync(path.join(source, 'licenses'), {recursive: true});
   for (const id of ['feishu', 'clash', 'magpie', 'ofm']) fs.writeFileSync(path.join(dist, `${id}.fish-plugin`), `${id} archive`);
+  // 版本只有一个来源：发行目录的 stable.json（以前这里写死 2.0.0，发 2.0.1 时包里还是旧版本）。
+  fs.writeFileSync(path.join(dist, 'stable.json'), JSON.stringify({schema: 1, plugins: ['fish.feishu', 'fish.clash', 'fish.magpie', 'fish.ofm'].map(id => ({id, version: '2.0.0'}))}));
   fs.writeFileSync(path.join(source, 'LICENSE'), 'MIT');
   fs.writeFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'), 'notices');
   fs.writeFileSync(path.join(source, 'licenses', 'mihomo.txt'), 'license');
@@ -48,4 +50,21 @@ test('按插件生成独立 npm 包，不带其他插件资源', async () => {
   const readme = fs.readFileSync(path.join(packageRoot, 'README.md'), 'utf8');
   assert.match(readme, /作者：WTStarMark、FISH。/);
   assert.ok(!readme.includes('维护者'));
+});
+
+test('发行目录里版本不一致时直接拒绝，不产出半个包', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fish-npm-version-'));
+  const dist = path.join(root, 'dist');
+  const source = path.join(root, 'source');
+  const out = path.join(root, 'npm');
+  fs.mkdirSync(dist, {recursive: true});
+  fs.mkdirSync(path.join(source, 'licenses'), {recursive: true});
+  for (const id of ['feishu', 'clash', 'magpie', 'ofm']) fs.writeFileSync(path.join(dist, `${id}.fish-plugin`), `${id} archive`);
+  fs.writeFileSync(path.join(source, 'LICENSE'), 'MIT');
+  fs.writeFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'), 'notices');
+  fs.writeFileSync(path.join(source, 'licenses', 'mihomo.txt'), 'license');
+  fs.writeFileSync(path.join(source, 'licenses', 'Magpie.txt'), 'license');
+  fs.writeFileSync(path.join(dist, 'stable.json'), JSON.stringify({schema: 1, plugins: [{id: 'fish.feishu', version: '2.0.1'}, {id: 'fish.clash', version: '2.0.0'}]}));
+  await assert.rejects(buildNpmPackages({dist, out, sourceRoot: source}), /版本不一致/);
+  assert.equal(fs.existsSync(out), false, '拒绝时连输出目录都不该出现');
 });

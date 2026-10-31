@@ -21,13 +21,13 @@
 
 - 开关值写在 `definitions` 的 `autostart` 字段：Clash / Magpie / OFM 为 `true`，飞书为 `false`（无本机服务，卡面显示「无需自启动」）。
 - 只有「随 Dock 启动」这一次宿主传 `FISH_PLUGIN_AUTOSTART=1`；安装、启用、回滚、手动启动都不传。发布前用真实宿主核对一次首启是否只拉一次服务。
-- 服务页的自启动胶囊与服务卡写注册表里同一个 `autostart`；不要给插件另加开关状态。
+- 自启动只有一个入口：宿主插件卡。插件页不要再放胶囊，也别调 `dock.autostart`——两处开关必然错位（2.0.1 已把插件页里的那颗删掉）。
 
 ## 固定来源与资源
 
 | 资源 | 当前开发验证来源 | 处理方式 |
 | --- | --- | --- |
-| Magpie | `yetone/magpie`，0.1.1709 / commit `47175a68fffe7a01c596f016c0d0da00545b10a4` 对应官方 Windows x64 资源 | 独立进程；逐文件摘要记录于插件清单 |
+| Magpie | `yetone/magpie`，0.1.2336 / commit `847f0c4`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/magpie-v0.1.2336+fish.3.patch` 自行构建 | 独立进程；逐文件摘要记录于插件清单 |
 | mihomo | v1.19.15，`mihomo-windows-amd64-compatible-v1.19.15.zip` | 校验下载后暂存可执行文件，首次按需启动 |
 | OFM | 本机明确指定的 `dsh-our-free-model` 源码目录 | 按所需运行文件暂存，保留自身管理页及渠道逻辑 |
 | Node SDK | 同版 Dock 仓的 `sdk/node/plugin.mjs` | 复制到各插件，与宿主 API 1 联调 |

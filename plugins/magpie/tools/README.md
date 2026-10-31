@@ -1,10 +1,10 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.1709`，加上 `patches/magpie-v0.1.1709+fish.2.patch`。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2336`，加上 `patches/magpie-v0.1.2336+fish.3.patch`。
 
 ## 为什么要自己编
 
-插件页面跑在 CSP `connect-src 'none'` 的沙箱帧里，一条 fetch 都发不出去。上游 0.1.1709 的页面桥只有读，没有调用通道，所以：
+插件页面跑在 CSP `connect-src 'none'` 的沙箱帧里，一条 fetch 都发不出去。上游的页面桥只有读（`magpie.read`）与页面选项，没有调用通道，所以：
 
 - 签到页的「关 / 开」「立即签到」点了发不出请求；
 - 中转站探针需要 magpie 本体代为出站。
@@ -17,19 +17,20 @@
 # 1) Go 1.26.8（winget 在本机是坏的，走 zip；不要用 curl/IWR，Schannel 坏）
 python tools\download-go.py
 
-# 2) 取上游基线
+# 2) 取上游基线（用独立 worktree，别搅动已打补丁的那棵树）
 git clone --filter=blob:none --no-checkout https://github.com/yetone/magpie.git upstream
-git -C upstream fetch --depth=1 origin tag v0.1.1709
-git -C upstream checkout -f v0.1.1709
-git -C upstream apply --check patches\magpie-v0.1.1709+fish.2.patch
-git -C upstream apply patches\magpie-v0.1.1709+fish.2.patch
+git -C upstream fetch --depth=1 origin tag v0.1.2336
+git -C upstream worktree add ..\upstream-2336 v0.1.2336
+git -C ..\upstream-2336 apply --check patches\magpie-v0.1.2336+fish.3.patch
+git -C ..\upstream-2336 apply patches\magpie-v0.1.2336+fish.3.patch
 
 # 3) 编（本机没有 make，手跑 release-windows 的两段式）
 #    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
-  -VersionTag 'v0.1.1709+fish.2' -FileVersion '0.1.1709.2' -ProductName 'magpie fish' `
-  -WinresJson <上述 upstream 目录>\build\windows\fish-winres.json `
+  -UpstreamRoot ..\upstream-2336 `
+  -VersionTag 'v0.1.2336+fish.3' -FileVersion '0.1.2336.3' -ProductName 'magpie fish' `
+  -WinresJson ..\upstream-2336\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
 
@@ -45,8 +46,8 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 | 位置 | 值 |
 |---|---|
-| `magpie version` | `magpie v0.1.1709+fish.2` |
-| FileVersion | `0.1.1709.2`（四段数字，Windows 资源要求） |
+| `magpie version` | `magpie v0.1.2336+fish.3` |
+| FileVersion | `0.1.2336.3`（四段数字，Windows 资源要求） |
 | ProductName | `magpie fish` |
 | FileDescription | `magpie fish (FISH Dock build)` |
 | manifest identity | `ai.usemagpie.magpie.fish` |
@@ -55,11 +56,14 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 ## 上游升级
 
-1. `git -C upstream fetch origin tag <新 tag>` + `checkout -f <新 tag>`；
-2. `git apply --check patches\...` —— 冲突就在这里暴露；
-3. 冲突大多在 `internal/gui/pluginpage.go`、`internal/plugin/page.go`（calls 字段）、`internal/gui/pagebridge.js`，按新版本的结构重排；
-4. 编出新 exe，跑 `go test ./internal/relay/ ./internal/gui/ ./internal/plugin/ ./internal/provider/ -count=1`；
-5. 导出新补丁：`git -C upstream diff > patches/magpie-<新tag>+fish.<n>.patch`，旧补丁留在目录里备查。
+1. `git -C upstream fetch --depth=1 origin tag <新 tag>` + `worktree add <新目录> <新 tag>`；
+2. `git apply -3 patches\...` —— `-3` 比 `--check` 有用：能三点合并的部分自己合掉，只剩真冲突；
+3. 冲突点（1709 → 2336 的实测记录，下次大概率还是这几处）：
+   - `internal/gui/pagebridge.js`：`read:` 那一行后面补 `call:`，注释按新文件的行文重排；
+   - `internal/gui/pluginpage.go`：`pluginPage` / `pluginPanel` 结构体加了新字段（`Icon`、`Replaces`、`hosted`、`options`、`service`），把 `Calls []string` 并进去而不是覆盖整块；`pluginPageRoutes` 的签名新带 `web bool`，补丁里的 `pluginCallRoutes(mux)` 要接在它后面；
+   - `internal/gui/core_budget_test.go`：预算常量一定冲突——**以上游的数为准**，因为补丁只多几字节，跑 `go test ./internal/gui/ -run TestCoreScriptBudget` 看是否仍在上游预算内，超了再按上游注释的规矩上调并写明原因；
+4. 编出新 exe，跑 `go test ./internal/relay/ ./internal/plugin/ ./internal/gui/ ./internal/provider/ -skip TestRestartSwitchedCodexAppReal -count=1`（那条 Real 用例要真实的 Codex app 与可用的 `ps`，本机与干净上游一样 panic，与环境无关）；
+5. 导出新补丁：`git -C <新目录> add -A && git -C <新目录> diff HEAD --binary > patches/magpie-<新tag>+fish.<n>.patch`，旧补丁留在目录里备查。
 
 **跟进节奏**：上游每个大版本跟一次，中间我们自己只发插件补丁包，不为小改动重编。
 

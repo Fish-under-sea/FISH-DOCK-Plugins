@@ -11,7 +11,17 @@ export const PLUGINS = [
   {id: 'magpie', name: 'Magpie 网关', description: '独立 Magpie 网关和原生管理页', licenses: ['Magpie.txt']},
   {id: 'ofm', name: 'OFM 本地模型', description: '独立 OFM 渠道账号、模型目录和原生管理页', licenses: []},
 ].map(plugin => ({...plugin, authors: identity[plugin.id].authors, ...(identity[plugin.id].note ? {note: identity[plugin.id].note} : {})}));
-export const VERSION = '2.0.0';
+
+// 版本只有一个来源：发行目录里的 stable.json。以前这里写死 2.0.0，发 2.0.1 时
+// npm 包的 package.json 仍是旧版本，verify-release 直接判「npm 包身份或版本不一致」。
+export async function catalogVersion(dist) {
+ const catalog = JSON.parse(await fs.readFile(path.join(dist, 'stable.json'), 'utf8'));
+ const versions = [...new Set((catalog.plugins ?? []).map(row => row.version))];
+ if (versions.length !== 1) throw Error(`发行目录里的插件版本不一致：${versions.join('、') || '空'}`);
+ const [version] = versions;
+ if (!/^\d+\.\d+\.\d+$/.test(version)) throw Error('发行目录里的版本格式无效');
+ return version;
+}
 
 const thisDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(thisDir, '..');
@@ -61,7 +71,8 @@ await fs.writeFile(target,bytes,{flag:'wx'});
 console.log(\`已安装：\${target}\\nSHA-256：\${digest}\`);
 `;
 
-export async function buildNpmPackages({dist, out, sourceRoot = repoRoot, version = VERSION, only}) {
+export async function buildNpmPackages({dist, out, sourceRoot = repoRoot, version, only}) {
+  version = version ?? await catalogVersion(dist);
   if(!/^\d+\.\d+\.\d+$/.test(version))throw Error('版本格式无效');
   const selected=only?PLUGINS.filter(p=>p.id===only):PLUGINS;
   if(!selected.length)throw Error('未知插件');
@@ -104,5 +115,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.join(thisDir, 'bui
   const args = process.argv.slice(2);
   const dist = path.resolve(arg(args, '--dist', path.join(repoRoot, '..', '..', '.tools', 'plugin-release-2.0.0', 'dist')));
   const out = path.resolve(arg(args, '--out', path.join(repoRoot, '..', '..', '.tools', 'npm-plugin-packages-2.0.0')));
-  console.log(JSON.stringify(await buildNpmPackages({dist, out, version: arg(args, '--version', VERSION), only: arg(args, '--only')})));
+  console.log(JSON.stringify(await buildNpmPackages({dist, out, version: arg(args, '--version'), only: arg(args, '--only')})));
 }

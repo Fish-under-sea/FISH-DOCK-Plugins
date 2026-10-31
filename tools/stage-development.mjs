@@ -28,7 +28,7 @@ export const identity={
 };
 const stagedDefinitions=[...definitions,...developmentDefinitions];
 // 仅产生供开发加载的目录，不制作 ZIP、不更新线上目录、不携带用户数据。
-export function stage({out,sdk,ofm,magpie,mihomo,only,include}={}){
+export function stage({out,sdk,ofm,ofmStaged,magpie,mihomo,only,include}={}){
  if(!path.isAbsolute(out)||fs.existsSync(out))throw Error('请使用新的绝对输出目录');
  if(!sdk||!path.isAbsolute(sdk))throw Error('请明确指定 Dock SDK 目录');
  const copy=(source,target)=>{if(!fs.lstatSync(source).isFile())throw Error('源资源不是普通文件');fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(source,target)};
@@ -56,7 +56,8 @@ export function stage({out,sdk,ofm,magpie,mihomo,only,include}={}){
   copy(path.join(sdk,'node','plugin.mjs'),path.join(root,'plugins',key,'sdk.mjs'));
   copy(path.join(sdk,'browser','bridge.js'),path.join(root,'bridge.js'));
   let executable=null;
-  if(key==='ofm'&&ofm){stageOfm(ofm,path.join(root,'service'));executable='service/packages/desktop/service-host.mjs';}
+  if(key==='ofm'&&ofmStaged){copyDir(ofmStaged,path.join(root,'service'));executable='service/packages/desktop/service-host.mjs';}
+  else if(key==='ofm'&&ofm){stageOfm(ofm,path.join(root,'service'));executable='service/packages/desktop/service-host.mjs';}
   if(key==='magpie'&&magpie){copy(magpie,path.join(root,'service','magpie.exe'));executable='service/magpie.exe';}
   if(key==='clash'&&mihomo){copy(mihomo,path.join(root,'service','mihomo.exe'));executable='service/mihomo.exe';}
   fs.writeFileSync(path.join(root,'README.md'),`# ${name}\n\n版本：2.0.0；宿主 API：1；开发预览。\n\n数据由宿主解析的 .fish-dock/${directory} 管理，按 credentials、roster、keys、config、exports、backups、tmp 分类。停用和卸载保留资料。\n\n服务按需启动，首次配置由用户确认。此目录尚未发布，不代表线上商店已提供下载。\n`);
@@ -71,6 +72,6 @@ export function stage({out,sdk,ofm,magpie,mihomo,only,include}={}){
  return resources;
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
- const args={};for(let index=2;index<process.argv.length;index+=2){const key=process.argv[index];if(!['--out','--sdk','--ofm','--magpie','--mihomo'].includes(key)||!process.argv[index+1])throw Error('参数为 --out、--sdk 以及可选的 --ofm、--magpie、--mihomo');args[key.slice(2)]=path.resolve(process.argv[index+1]);}
+ const args={};for(let index=2;index<process.argv.length;index+=2){const key=process.argv[index];if(!['--out','--sdk','--ofm','--ofm-staged','--magpie','--mihomo'].includes(key)||!process.argv[index+1])throw Error('参数为 --out、--sdk 以及可选的 --ofm、--ofm-staged、--magpie、--mihomo');args[key.slice(2)==='ofm-staged'?'ofmStaged':key.slice(2)]=path.resolve(process.argv[index+1]);}
  console.log(JSON.stringify(stage(args).map(row=>({id:row.id,ready:!!row.executable||row.id==='fish.feishu'||row.id==='fish.relay-probe'})),null,2));
 }
