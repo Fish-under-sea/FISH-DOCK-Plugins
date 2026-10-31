@@ -11,7 +11,7 @@
       "title": "Check-in",
       "titles": { "zh": "自动签到", "zh-TW": "自動簽到" },
       "file": "page/index.html",
-      "icon": "page/icon.svg"
+      "icon": "page/icon.png"
     },
     "permissions": ["checkin:state"],
     "calls": ["checkin:set-provider", "checkin:set-account", "checkin:run", "checkin:refresh"],

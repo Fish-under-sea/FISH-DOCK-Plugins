@@ -14,7 +14,8 @@
         "zh": "中转站探针",
         "en": "Relay probe"
       },
-      "file": "page/index.html"
+      "file": "page/index.html",
+      "icon": "page/icon.png"
     },
     "calls": ["relay:view", "relay:save", "relay:start", "relay:status", "relay:stop"]
   }

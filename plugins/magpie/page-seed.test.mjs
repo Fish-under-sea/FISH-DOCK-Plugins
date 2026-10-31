@@ -190,7 +190,7 @@ test('仓库里真实的 page-checkin 目录可直接同步并登记',async()=>{
  const source=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins','page-checkin');
  const seeded=await syncPageDirectory({source,data});
  assert.equal(seeded.written,true);
- for(const file of ['package.json','README.md','page/index.html','page/app.js','page/style.css','page/icon.svg','page/view.js']){
+ for(const file of ['package.json','README.md','page/index.html','page/app.js','page/style.css','page/icon.png','page/view.js']){
   assert.equal(await fs.stat(path.join(seeded.directory,...file.split('/'))).then(()=>true),true,`缺少 ${file}`);
  }
  await registerSeedPage({data,directory:seeded.directory});

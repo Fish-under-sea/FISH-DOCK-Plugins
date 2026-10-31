@@ -88,6 +88,16 @@
     return PALETTE[hash % PALETTE.length];
   }
   const prefersDark = () => !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  // 各厂商原图的留白不一样（讯飞的 X 只占画面一半，Kiro 那种本来就撑满），同一个
+  // 22px 格子里会有的撑满、有的缩成指甲盖。按原素材的实际墨迹估一组缩放系数，让
+  // 它们在格子里看起来一样大；素材本身一张没改。
+  const LOGO_SCALE = {
+    raccoon: 1.05, autoclaw: 1, autoclaw_cn: 1, cline: 1.15, codearts: 1.05, kiro: 1, "kiro-color": 1,
+    loomy: 1.25, "loomy-plugin": 1.25, minimax: 1, "minimax-code": 1,
+    "zen-free": 1.15, opencode: 1.15, qoder: 1.05, trae: 1, "trae-cn": 1,
+    workbuddy: 1.05, mimo: 1.2, mimocode: 1.2, zcode: 1,
+  };
+  const logoScale = id => LOGO_SCALE[String(id)] ?? 1;
   function logoSources(id) {
     const bases = prefersDark() ? [`${id}-dark`, String(id)] : [String(id)];
     const list = [];
@@ -116,6 +126,7 @@
     img.addEventListener("load", () => {
       box.textContent = "";
       box.style.background = "none";
+      img.style.transform = `scale(${logoScale(id)})`;
       box.append(img);
     });
     img.addEventListener("error", tryNext);
