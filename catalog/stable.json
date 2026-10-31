@@ -47,31 +47,12 @@
         "FISH",
         "Jassdingk"
       ],
-      "version": "2.1.0",
+      "version": "2.1.1",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.0/magpie.fish-plugin",
-      "sha256": "f40ca5019f0afd91bc06a4db71d80064e15997d798e7e7222aaddbc52a6f22e2",
-      "bytes": 30859277,
-      "dependencies": [
-        "FISH Dock >=2.0.0",
-        "Node.js 24（宿主提供）"
-      ]
-    },
-    {
-      "id": "fish.ofm",
-      "name": "OFM 本地模型",
-      "description": "OFM 本地模型独立插件",
-      "authors": [
-        "FISH"
-      ],
-      "note": "此插件于 10 月 25 日暂停维护",
-      "version": "2.0.1",
-      "hostApi": 1,
-      "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.0.1/ofm.fish-plugin",
-      "sha256": "316053513848dec94cef583e2e6c088b92ec872911bcc0724ebaf89eda277956",
-      "bytes": 1881044,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.1/magpie.fish-plugin",
+      "sha256": "98497ff2277aaed7b523e80078780e2640a2116a4b0655670770147869b29c38",
+      "bytes": 30957961,
       "dependencies": [
         "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
