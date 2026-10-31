@@ -35,7 +35,7 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-本版三个插件同为 **2.1.0**（飞书、Clash、Magpie），要求 **FISH Dock ≥ 2.0.0**。OFM 自 10 月 25 日起暂停维护，也不再在 Dock 的插件页里出现——需要的从 GitHub Release 或 npm 手动装。完整改动见 [2.1.0 发行说明](docs/releases/2.1.0.md)。
+本版三个插件同为 **2.1.0**（飞书、Clash、Magpie），其中 Magpie 另有 **2.1.1** 小版本修图标顺序，要求 **FISH Dock ≥ 2.0.0**。OFM 自 10 月 25 日起暂停维护，也不再在 Dock 的插件页里出现——需要的从 GitHub Release 或 npm 手动装。完整改动见 [2.1.0 发行说明](docs/releases/2.1.0.md)。
 
 **2.1.0 改了什么**
 
@@ -115,7 +115,7 @@
 | --- | --- | --- |
 | 飞书 2.1.0 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.0/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu/v/2.0.0) |
 | Clash 2.1.0 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.0/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.0.0) |
-| Magpie 2.1.0 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.0/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.0.0) |
+| Magpie 2.1.1 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.1/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.0.0) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-packages-dark.png"><img src="assets/readme/section-packages-light.png" alt="PACKAGES · npm 单包" width="100%"></picture></h2>
 
@@ -125,7 +125,7 @@
 | --- | --- | --- | --- |
 | `@fish-under-sea/fish-dock-plugin-feishu` | 2.1.0 | `fish-dock-plugin-feishu` | 27.7 kB（6 个文件） |
 | `@fish-under-sea/fish-dock-plugin-clash` | 2.1.0 | `fish-dock-plugin-clash` | 16.9 MB（7 个文件，含 mihomo 许可） |
-| `@fish-under-sea/fish-dock-plugin-magpie` | 2.1.0 | `fish-dock-plugin-magpie` | 20.7 MB（7 个文件，含 Magpie 许可） |
+| `@fish-under-sea/fish-dock-plugin-magpie` | 2.1.1 | `fish-dock-plugin-magpie` | 20.7 MB（7 个文件，含 Magpie 许可） |
 | `@fish-under-sea/fish-dock-plugin-ofm` | 2.0.1（暂停维护，仅手动） | `fish-dock-plugin-ofm` | 1.9 MB（6 个文件） |
 
 ```powershell
