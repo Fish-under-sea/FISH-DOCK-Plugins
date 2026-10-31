@@ -125,17 +125,17 @@ node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.t
 
 这三个上游各自撑起了本仓的一部分。**没有它们，这里的插件只是几个空壳**——按分量排，依次是：
 
-### [Magpie](https://github.com/yetone/magpie) · 模型网关与插件宿主（第一位）
+### [Magpie](https://github.com/yetone/magpie) · 模型网关与插件宿主
 
 整个 Magpie 插件的地基。供应商注册、页面与面板桥、签到与额度读取、网关路由，全部是上游的代码；本仓写着「Magpie 插件」的那层，实际上只是它的适配层、页面与发布工具。
 
 本仓发布的 `magpie.fish-plugin` 走的是**其源码自编译**：基线 `v0.1.2336`，加上 `patches/` 里我们自己的补丁（页面在 CSP 沙箱里发不出任何请求，所以补一条 `magpie.call` 通道；以及预装插件的图标由本地一套素材接管）。补丁的每一处、为什么补、怎么复现，都写在 [plugins/magpie/tools/README.md](plugins/magpie/tools/README.md) 里。上游的版本标识与第三方声明随包保留（`licenses/Magpie.txt`）。
 
-### [mihomo](https://github.com/MetaCubeX/mihomo) · Clash 内核（第二位）
+### [mihomo](https://github.com/MetaCubeX/mihomo) · Clash 内核
 
 Clash 插件的内核是 mihomo，GPL-3.0 许可。节点、订阅、规则、TUN，真正干活的是它；本仓只写适配层与页面，内核一行没改。发行包里带的是官方 release 的 Windows amd64 构建，`licenses/mihomo.txt` 是它随包的许可证全文，源码与构建方式见上游仓库。
 
-### [Our Free Model](https://github.com/Ebony-Vinyl/dsh-our-free-model) · OFM 的底座（第三位）
+### [Our Free Model](https://github.com/Ebony-Vinyl/dsh-our-free-model) · OFM 的底座
 
 OFM 基于 Our Free Model 的 standalone 构建与渠道能力。该插件自 2026 年 10 月 25 日起暂停维护，已经装好的版本继续可用，配置与数据保留。
 
