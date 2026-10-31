@@ -79,11 +79,20 @@
 
   // 厂商标记：约定 page/logos/<provider id>.{svg,png,webp} 放官方标志，按顺序
   // 试，加载成功就用图；一份都没有时退回按 id 取色的首字母块。素材与代码解耦。
+  // 深色界面优先试 <provider id>-dark.*：品牌标志在深色底上常常反色（白底方块
+  // 贴在深色卡片上很刺眼），有深色版就用，没有就退回同一张。
   const PALETTE = ["#3b82f6", "#8b5cf6", "#ec4899", "#f59e0b", "#10b981", "#06b6d4", "#ef4444", "#6366f1"];
   function paletteColor(id) {
     let hash = 0;
     for (const ch of String(id)) hash = (hash * 31 + ch.codePointAt(0)) % 100000;
     return PALETTE[hash % PALETTE.length];
+  }
+  const prefersDark = () => !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  function logoSources(id) {
+    const bases = prefersDark() ? [`${id}-dark`, String(id)] : [String(id)];
+    const list = [];
+    for (const base of bases) for (const ext of ["svg", "png", "webp"]) list.push(`${base}.${ext}`);
+    return list;
   }
   function logo(id, name) {
     const box = row("span", "vlogo");
@@ -98,11 +107,11 @@
     const img = document.createElement("img");
     img.alt = "";
     img.decoding = "async";
-    const exts = ["svg", "png", "webp"];
+    const sources = logoSources(id);
     let next = 0;
     const tryNext = () => {
-      if (next >= exts.length) { fallback(); return; }
-      img.src = `logos/${encodeURIComponent(String(id))}.${exts[next++]}`;
+      if (next >= sources.length) { fallback(); return; }
+      img.src = `logos/${encodeURIComponent(sources[next++])}`;
     };
     img.addEventListener("load", () => {
       box.textContent = "";
