@@ -28,12 +28,12 @@
         "Elysia395",
         "FISH"
       ],
-      "version": "2.0.2",
+      "version": "2.0.6",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.0.2/clash.fish-plugin",
-      "sha256": "a571353d1b28e4fd517463ceafd4f153acd4026448f7482ef1c57771e2b45691",
-      "bytes": 17143879,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.0.6/clash.fish-plugin",
+      "sha256": "a5e7163aabfaf14bb6ff5763037a64a0647a8439a177634e1797886c54a28937",
+      "bytes": 17147208,
       "dependencies": [
         "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
