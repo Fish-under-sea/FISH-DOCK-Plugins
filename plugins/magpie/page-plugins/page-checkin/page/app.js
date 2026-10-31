@@ -10,7 +10,7 @@
   try { opts = (await magpie.options.get()) || {}; } catch {}
   // 厂商分组默认收起：账号多的时候一进来就是好几屏，先看总数、点开再看细节。
   // 包选项 collapsed: false 仍然让全部分组展开。
-  const state = {data: null, busy: false, refreshing: false, open: new Set(), seeded: false};
+  const state = {data: null, busy: false, refreshing: false, open: new Set(), seeded: false, look: null};
 
   // 宿主还没有 checkin:state 时，读会被拒绝；此时按版本不足提示，不显示空白。
   async function read() {
@@ -134,6 +134,25 @@
     return box;
   }
 
+  // 预装插件美化：素材编在 magpie 的 exe 里，这一行只翻宿主的开关（品牌图标
+  // 目录上的一个标记），所以用户更新社区插件、甚至卸了重装都不会把这层弄丢。
+  // 宿主太旧、没有 brand:status 这条调用时整块不出现——老 magpie 上没有这层，
+  // 摆一个点不动的开关只会让人以为坏了。
+  async function loadLook() {
+    try { state.look = await act("brand:status", {}); } catch { state.look = null; }
+  }
+
+  function paintLook() {
+    const box = $("look");
+    const on = !!(state.look && state.look.on);
+    box.hidden = !state.look;
+    if (!state.look) return;
+    $("lookSeg").replaceChildren(switchFor(on, async (next) => {
+      try { state.look = await act("brand:set", {on: next}); } catch (error) { failure(error); }
+      paint();
+    }));
+  }
+
   function paint() {
     const t = V.text(lang);
     document.querySelectorAll("[data-t]").forEach((e) => { e.textContent = t[e.dataset.t]; });
@@ -151,6 +170,7 @@
     $("refresh").textContent = state.refreshing ? t.refreshing : t.refresh;
     $("refresh").classList.toggle("busy", state.refreshing);
     $("refresh").setAttribute("aria-busy", String(state.refreshing));
+    paintLook();
 
     const cards = groups.map((group) => {
       const open = state.open.has(group.id);
@@ -245,5 +265,6 @@
 
   magpie.onTheme((next) => { lang = next.lang; paint(); });
   setInterval(load, 60_000);
+  await loadLook();
   await load();
 })();

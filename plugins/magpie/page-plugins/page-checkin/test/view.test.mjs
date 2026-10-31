@@ -87,6 +87,19 @@ test('英文与中文各一套文案，语言按前缀判定', () => {
   assert.match(V.text(undefined).run, /Check in now/);
 });
 
+// 预装插件美化那一行：中英都要有，且说的是「插件/供应商/侧边栏里的图标」，
+// 不能写成只管签到页——这一层接管的是整个窗口里的图标。
+test('预装插件美化那一行中英都有，且点明是全局图标', () => {
+  for (const lang of ['zh-CN', 'en']) {
+    const t = V.text(lang);
+    assert.ok(t.lookTitle, `${lang} 缺 lookTitle`);
+    assert.ok(t.lookNote, `${lang} 缺 lookNote`);
+    assert.equal(t.lookNote.includes('签到页'), false, `${lang} 把它写成了只管签到页`);
+  }
+  assert.match(V.text('zh-CN').lookTitle, /预装插件美化/);
+  assert.match(V.text('en').lookTitle, /Preinstalled plugin artwork/);
+});
+
 // 厂商只回「今天已领取」、又没有固定值：不计积分（也不显示未告知），仍按已签到计数。
 test('厂商不给数额且无固定值时不计积分，仍按已签到计入完成数', () => {
   const noAmount = {

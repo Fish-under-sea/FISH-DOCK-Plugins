@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2336`，加上 `patches/magpie-v0.1.2336+fish.6.patch`。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2336`，加上 `patches/magpie-v0.1.2336+fish.7.patch`。
 
 ## 为什么要自己编
 
@@ -13,6 +13,14 @@
 
 `fish.4`→`fish.6` 补了一条厂商口径：**讯飞（Loom / Loomy）每个账号都签，每号一次按 400 积分记**（`internal/provider/plugin_checkin.go` 的 `loomyCredit`，`internal/provider/checkin_view.go` 的读取侧同样补正）。**不要做成「只签一个号」**——账号列表与签到都必须全量，用户登了几个就列几个、签几个（`fish.4`/`fish.5` 期间一度把账号裁成一个，页面上就只剩「1 个账号」）；插件不报积分时页面会一直显示「0 今日」，所以没报就按 400 记，插件自己报了就用它报的。判定用 provider id 前缀 `loomy`，`loomy` 与 `loomy-plugin` 两种写法都认。
 
+`fish.7` 接管了**预装插件的图标**：插件页、供应商页、侧边栏、路由与用量卡片上，只要是预装插件注册的 provider，画面里用的都是我们这套素材（`internal/provider/brandicons/`），插件市场给的名字、插件自带的 `data:` URI 都不再决定画面。三条约束：
+
+- **素材编在 exe 里，不进插件包**。社区插件一更新，`magpie.icon` 就回到原样——那正是「用户更新完全掉」的成因，所以这层不能挂在插件包上。
+- **开关只是一个标记文件** `<data>/icons/brand/on`（`provider.SetBrand`），删掉立刻回到原版，不删用户任何数据；页面那两颗按钮是 `brand:status` / `brand:set`（`internal/gui/pluginpagecall.go`）。`pruneIcons` 会把已落盘的品牌图标当成「有人用」而留下。
+- **一份素材一个文件，深浅自带**：`<provider id>.svg` 里 `.l` / `.d` 两组用 `@media (prefers-color-scheme: dark)` 切换。窗口本来就跟着系统配色走（`app.js` 问的是同一个媒体查询），所以服务端不必猜主题。**实测过**（Chromium 156 headless + CDP `Emulation.setEmulatedMedia`）：`<img src=x.svg>` 里的媒体查询生效，SVG 里的 `<image href="data:image/png;base64,…">` 也渲染得出——位图两套因此也能塞进同一个文件。
+
+素材是拿签到页那批已定稿的图合成的，合的是**根 `<svg>` 上的绘图属性也一起搬**（`fill="currentColor"`、`fill="#CF0A2C"` 这类）。只搬 innerHTML 而不搬根属性，图标会一律变黑——`currentColor` 在 `<img>` 里没有父级可继承，本来恒等于黑，浅色组还要把它落成 `#111111`。
+
 ## 构建
 
 ```powershell
@@ -23,15 +31,15 @@ python tools\download-go.py
 git clone --filter=blob:none --no-checkout https://github.com/yetone/magpie.git upstream
 git -C upstream fetch --depth=1 origin tag v0.1.2336
 git -C upstream worktree add ..\upstream-2336 v0.1.2336
-git -C ..\upstream-2336 apply --check patches\magpie-v0.1.2336+fish.6.patch
-git -C ..\upstream-2336 apply patches\magpie-v0.1.2336+fish.6.patch
+git -C ..\upstream-2336 apply --check patches\magpie-v0.1.2336+fish.7.patch
+git -C ..\upstream-2336 apply patches\magpie-v0.1.2336+fish.7.patch
 
 # 3) 编（本机没有 make，手跑 release-windows 的两段式）
 #    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
   -UpstreamRoot ..\upstream-2336 `
-  -VersionTag 'v0.1.2336+fish.6' -FileVersion '0.1.2336.6' -ProductName 'magpie fish' `
+  -VersionTag 'v0.1.2336+fish.7' -FileVersion '0.1.2336.7' -ProductName 'magpie fish' `
   -WinresJson ..\upstream-2336\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
@@ -48,8 +56,8 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 | 位置 | 值 |
 |---|---|
-| `magpie version` | `magpie v0.1.2336+fish.6` |
-| FileVersion | `0.1.2336.6`（四段数字，Windows 资源要求） |
+| `magpie version` | `magpie v0.1.2336+fish.7` |
+| FileVersion | `0.1.2336.7`（四段数字，Windows 资源要求） |
 | ProductName | `magpie fish` |
 | FileDescription | `magpie fish (FISH Dock build)` |
 | manifest identity | `ai.usemagpie.magpie.fish` |

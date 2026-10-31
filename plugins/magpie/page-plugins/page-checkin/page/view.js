@@ -16,6 +16,8 @@
       failed: "Couldn't read check-ins", needsHost: "This page needs magpie 1.1 or newer.",
       streak: "{n}-day streak", total: "{done} of {all} checked in today", points: "points",
       unknown: "not reported", unknownCount: "{n} not reported", estimateHint: "Estimated from the credits panel",
+      lookTitle: "Preinstalled plugin artwork",
+      lookNote: "Their own icons in Plugins, Models and the sidebar — off puts the originals back.",
     },
     zh: {
       title: "自动签到", all: "每天替每个已登录账号签到一次",
@@ -31,6 +33,8 @@
       failed: "读取签到状态失败", needsHost: "这个页面需要 magpie 1.1 或更新版本。",
       streak: "连续 {n} 天", total: "今日已签到 {done} / {all}", points: "积分",
       unknown: "未告知", unknownCount: "{n} 项未告知", estimateHint: "按额度面板反推",
+      lookTitle: "预装插件美化",
+      lookNote: "插件、供应商、侧边栏里的图标都换成这一套；关掉就回到原版。",
     },
   };
   const OUTCOMES = ["claimed", "done", "ineligible", "inactive", "captcha"];

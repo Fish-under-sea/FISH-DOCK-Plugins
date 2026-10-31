@@ -1,7 +1,7 @@
 {
   "name": "@magpie-community/page-checkin",
-  "version": "0.2.4",
-  "description": "A page in magpie's window for daily check-ins: each vendor's accounts, today's credits and streak, one switch per vendor or account, and a manual check-in.",
+  "version": "0.2.5",
+  "description": "A page in magpie's window for daily check-ins: each vendor's accounts, today's credits and streak, one switch per vendor or account, a manual check-in, and the switch that keeps FISH Dock's own artwork on the preinstalled plugins.",
   "files": ["page", "README.md"],
   "keywords": ["magpie", "magpie-page", "checkin", "credits"],
   "license": "MIT",
@@ -14,7 +14,7 @@
       "icon": "page/icon.png"
     },
     "permissions": ["checkin:state"],
-    "calls": ["checkin:set-provider", "checkin:set-account", "checkin:run", "checkin:refresh"],
+    "calls": ["checkin:set-provider", "checkin:set-account", "checkin:run", "checkin:refresh", "brand:status", "brand:set"],
     "options": { "collapsed": true }
   }
 }

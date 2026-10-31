@@ -4,7 +4,7 @@ magpie 窗口里的一个页面：按厂商分组显示每个已登录账号今�
 
 - 包名：`@magpie-community/page-checkin`
 - 页面标题：`自动签到`（`en`：Check-in）
-- 版本：0.2.3（配合 magpie 1.2.1 的 `checkin:state` 读取）
+- 版本：0.2.5（配合 magpie 1.2.1 的 `checkin:state` 读取，以及 `brand:*` 的预装插件美化开关）
 
 ## 宿主需要提供什么
 
@@ -15,8 +15,22 @@ magpie 窗口里的一个页面：按厂商分组显示每个已登录账号今�
 | 写 `checkin:set-account` | 落到 `settings.checkinOff`（账号级排除） |
 | 写 `checkin:run` | 调 `provider.CheckInPlugins`；`provider` 省略表示全部账号 |
 | 写 `checkin:refresh` | 重新读取额度与今日积分 |
+| 读 `brand:status` | `{on, vendors, count}`：预装插件美化开着没有、覆盖哪几家 |
+| 写 `brand:set` | `{on}`：翻这个开关，返回新状态 |
 
 页面不缓存开关状态：每次进入与每 60 秒重新读取一次，因此和设置页永远同源。宿主没有 `magpie.act` 时，写动作退回同源的 `/api/settings/plugin-checkin`、`/api/settings/checkin-account`、`/api/usage/plugin-checkin`、`/api/usage/quotas/refresh`，行为一致。
+
+## 预装插件美化
+
+页面顶部那颗开关管的是**整个 magpie 窗口里的厂商图标**：插件页、供应商页、侧边栏、路由与用量卡片，凡是预装插件注册的 provider 都换成 FISH Dock 自己那套，默认开启。
+
+它不靠改插件包实现——那正是会掉的地方（社区插件一更新，`magpie.icon` 就回到原样）。实际做法是：
+
+- 素材编在 magpie 的 exe 里（`internal/provider/brandicons/`），由 `provider.PluginIcon` 优先返回；
+- 开关只是 magpie 数据目录下 `icons/brand/on` 一个标记文件，`SetBrand` 写它或删它，删掉即回到原版；
+- 每份素材是一张 SVG，深浅两套画在同一个文件里（`.l` / `.d` 两组 + `prefers-color-scheme`），窗口本来就跟着系统配色走，所以一个文件在两种界面下都对。
+
+宿主太旧、没有 `brand:status` 这条调用时，这块整行不出现——老 magpie 上没有这一层，摆个点不动的开关只会让人以为坏了。
 
 ## 装在哪
 
