@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createProxyLease, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet} from './runtime.mjs';
+import {createProxyLease, createRuntime, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet} from './runtime.mjs';
 import {createServer} from 'node:http';
 import {mkdtemp,writeFile,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -167,4 +167,12 @@ test('TUN 服务还托管着内核时才需要交还，其余状态不误停',()
  assert.equal(tunHandoverNeeded({installed:false,enabled:false,state:'absent'}),false);
  assert.equal(tunHandoverNeeded(null),false);
  assert.equal(tunHandoverNeeded(undefined),false);
+});
+// 出口 IP 查询能力必须由 runtime 交出去：service 用 runtime.proxiedGet 判断
+// 「运行时是否支持查询出口 IP」。漏了这一项，页面就永远显示那句话。
+test('runtime 暴露 proxiedGet，service 才能真正经代理查询出口 IP',()=>{
+ const context={dataDirectory:'D:/synthetic/.fishplugin-clash',storage:{read:async()=>null,write:async()=>{}},tun:null};
+ const runtime=createRuntime(context);
+ assert.equal(typeof runtime.proxiedGet,'function');
+ assert.equal(runtime.proxiedGet,proxiedGet);
 });

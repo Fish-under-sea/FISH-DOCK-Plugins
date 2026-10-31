@@ -195,7 +195,7 @@ export function createRuntime(context){
    child.once('exit',()=>{void proxy.restore().catch(()=>{})});return {alive,stop};
   }catch(error){await stop();throw error}
  }
- return {start,proxy,tun,
+ return {start,proxy,tun,proxiedGet,
   // 停止时若内核由 TUN 服务托管，一并让服务停下，避免遗留提升权限的内核。
   tunStop:async()=>{if(viaService&&tun){await tun.disable().catch(()=>{});viaService=false}},
   ...createSubscriptionRuntime(context)};
