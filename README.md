@@ -35,11 +35,11 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-本版为四个插件 **2.0.0**，要求 **FISH Dock ≥ 2.0.0**。这一版改的是身份与自启动钩子：作者改为数组、维护者字段整体去掉，OFM 标注「此插件于 10 月 25 日暂停维护」；四个插件新增清单行为钩子 `behaviors.autostart`，插件卡与服务页共用一颗「随 Dock 启动」胶囊，宿主只在随 Dock 启动那一次传 `FISH_PLUGIN_AUTOSTART=1`，安装、启用与回滚都不传。业务功能沿用各自上一次发布：Clash Verge 式信息卡与节点页搜索排序（1.3.1）、Magpie 签到页按厂商分组并一键签到（1.2.4）、飞书与 OFM 保持不变。完整变更见 [2.0.0 发行说明](docs/releases/2.0.0.md)。
+本版为四个插件 **2.0.1**，要求 **FISH Dock ≥ 2.0.0**。这一版是 #11 的收口：自启动只留宿主插件卡一个入口，插件页里那颗重复的「随 Dock 启动」胶囊连同 `dock.autostart` 调用整颗删掉（后端读 `FISH_PLUGIN_AUTOSTART` 的分支保留，那是自启动的实际执行点）；Magpie 上游追到 `v0.1.2336+fish.3`——2.0.0 误附了未打补丁的官方 exe，签到页与探针的写动作发不出去，本版修回——并内置 15 项预装插件基线（13 个社区供应商插件首次启动登记、2 个页面插件随包分发，无 `Usage Glance`）；Clash 修掉节点下拉点开就消失（轮询重绘换掉 `<select>`）与 TUN / 普通模式互相占端口两个实测缺陷，页面版本升到 `1.4.0`。完整变更见 [2.0.1 发行说明](docs/releases/2.0.1.md)。
 
 > ⚠️ **2.0.0 是 breaking 版本**：插件清单新增 `behaviors` 字段，FISH Dock 1.2.3 及更早的宿主用 `deny_unknown_fields` 解析，会以「plugin.json 格式无效或含未知字段」直接拒装。**旧宿主请先把 Dock 升到 2.0.0**，再安装这四个插件。
 
-> ⚠️ npm 上 `@fish-under-sea/fish-dock-plugin-clash@1.1.0` 为误发版本（基于旧基线，缺少 1.0.4 的多订阅修复），请勿使用；本版四个单包均为 `2.0.0`。
+> ⚠️ npm 上 `@fish-under-sea/fish-dock-plugin-clash@1.1.0` 为误发版本（基于旧基线，缺少 1.0.4 的多订阅修复），请勿使用；本版四个单包均为 `2.0.1`。
 
 <h2 id="plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-features-dark.png"><img src="assets/readme/section-features-light.png" alt="PLUGINS · 四个插件" width="100%"></picture></h2>
 
