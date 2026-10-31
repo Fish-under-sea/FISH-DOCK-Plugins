@@ -1,7 +1,2 @@
 /* 网关的日常入口是管理页面，服务路径仅在展开设置后出现。 */
 header{min-height:36px;margin:0;padding:4px 8px;gap:10px}header .identity{display:flex;align-items:center;gap:10px;min-width:0}#state{margin:0;font-size:12px;white-space:nowrap}body[data-running=true] #state{color:#30d158}header nav{display:flex;gap:6px;flex-wrap:wrap}#connection{font-size:12px;color:var(--dock-muted)}#form{display:grid;grid-template-columns:minmax(0,1fr) 120px auto;align-items:end;gap:12px}#form label{margin:10px 0 0}#form button{margin-bottom:1px}#configuration{margin-top:10px}#error{margin:8px}#intro{margin-top:14px}#intro p{margin-bottom:16px}main{padding-bottom:0}body[data-running=true] #intro{display:none}body[data-running=true] #open{display:none}@media(max-width:650px){#form{grid-template-columns:1fr}header{align-items:flex-start;flex-wrap:wrap}header .identity{min-height:28px}}
-
-/* 「自启动」气泡（#22）：和刷新/服务设置同规格的胶囊，开着实心、关着描边。 */
-nav .hook{border-radius:999px}
-nav .hook[aria-pressed="true"]{border-color:transparent;background:#3d7bfd;color:#fff}
-nav .hook[aria-pressed="true"]:hover:not(:disabled){background:#4f88ff}

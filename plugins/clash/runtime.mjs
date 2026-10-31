@@ -19,6 +19,11 @@ export function createProxyLease({storage,adapter}){
  }
  return {enable,restore,active:()=>active};
 }
+// 普通模式启动前是否需要让 TUN 服务交出内核：服务已装（job.ini enabled=1）且服务正在
+// 跑，说明内核此刻挂在 SYSTEM 服务名下，占着同一个控制器端口。
+export function tunHandoverNeeded(info){
+ return !!(info&&info.enabled&&info.state==='running');
+}
 export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],dataDirectory,tun,geo=false}){
  const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,profile:{'store-selected':true}};
  const enabled=subscriptions.filter(s=>s.enabled!==false);
@@ -169,6 +174,11 @@ export function createRuntime(context){
     return {alive:()=>viaService,stop:async()=>{await tun.disable().catch(()=>{});viaService=false}};
    }catch(error){viaService=false;throw error}
   }
+
+  // 普通模式：先把 TUN 服务托管的内核交出来。两者写的是同一个控制器端口，同时跑
+  // 只有一个能用——先起的占着端口，另一个连不上，用户看到的就是「TUN 与普通模式
+  // 只能活一个」。停不掉也继续，后面的 free() 与 waitController() 会给出确定错误。
+  if(tun)try{const info=await tun.status();if(tunHandoverNeeded(info))await tun.disable()}catch{}
 
   const data=join(context.dataDirectory,'config');const child=spawn(c.kernel,['-d',data,'-f',runtimePath],{cwd:context.dataDirectory,windowsHide:true,stdio:['ignore','ignore','ignore'],env:{...process.env,SAFE_PATHS:join(context.dataDirectory,'credentials'),TMP:join(context.dataDirectory,'tmp'),TEMP:join(context.dataDirectory,'tmp')}});
   let failure=null;child.on('error',()=>{failure=Error('mihomo 内核启动失败')});

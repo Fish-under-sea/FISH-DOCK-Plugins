@@ -22,7 +22,7 @@ function fixture() {
   set innerHTML(value){
    html=value;elements={};buttons=[];
    for(const m of value.matchAll(/<(?:input|form|details|select)\b[^>]*>/g)){
-    const a=attrs(m[0]);if(a.id)elements[a.id]={...a,value:a.value??'',open:m[0].includes(' open'),disabled:m[0].includes('disabled'),focus(){}};
+    const a=attrs(m[0]);if(a.id)elements[a.id]={...a,tagName:(/^<(\w+)/.exec(m[0])?.[1]??'').toUpperCase(),value:a.value??'',open:m[0].includes(' open'),disabled:m[0].includes('disabled'),focus(){}};
    }
    for(const m of value.matchAll(/<button\b[^>]*>/g)){
     const a=attrs(m[0]);if(a['data-action'])buttons.push({dataset:{action:a['data-action'],id:a['data-id'],node:a['data-node'],group:a['data-group'],mode:a['data-mode']},disabled:m[0].includes('disabled')});
@@ -39,7 +39,6 @@ function fixture() {
   FishDock:{setLayout(){},call:async(method,params)=>{
    calls.push({method,params});
    if(method==='clash.subscriptionSave'){await blocked;if(fail)throw Error('PRIVATE');}
-   if(method==='dock.autostart')return {autostart:true};
    if(method==='clash.ipInfo')return {available:true,ip:'203.0.113.7',country:'日本',countryCode:'JP',
     asn:'AS2516',isp:'KDDI',org:'KDDI Corporation',location:'日本 · 东京 · 千代田',timezone:'Asia/Tokyo'};
    if(method==='clash.siteTest')return {node:'[sub-00000000-0000-0000-0000-000000000001] 香港节点',sites:[
@@ -51,6 +50,8 @@ function fixture() {
   }}};
  vm.runInNewContext(readFileSync(new URL('./page.js',import.meta.url),'utf8'),context);
  return {calls,row,timers,root,element:id=>elements[id],buttons:()=>buttons,
+  // 页面用 document.activeElement 判断「下拉是否展开」，夹具照真实 DOM 的最小面提供。
+  setActive:el=>{context.document.activeElement=el},
   click:action=>{const button=buttons.find(b=>b.dataset.action===action);assert.ok(button,action);return button.onclick()},
   block:()=>{let release;blocked=new Promise(r=>release=r);return release},fail:()=>{fail=true}};
 }
@@ -276,4 +277,20 @@ test('网络设置与代理模式反映实际状态，开关按钮带切换语�
  assert.ok(/<button[^>]*data-action="mode-set"[^>]*data-mode="global"[^>]*aria-pressed="true"/.test(html),'全局模式选中');
  f.click('mode-set');await flush();
  assert.ok(f.calls.some(c=>c.method==='clash.mode'&&c.params.mode==='rule'),'默认切回规则模式');
+});
+// 内核运行时每 1.2 秒轮询重绘，重绘会换掉整块 DOM。下拉框的展开列表挂在元素上，
+// 元素一换就消失——用户看到的是「点一下很快消失，节点选不了」。
+test('节点下拉展开期间不重绘，收起后补一次',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ f.click('view');await flush();
+ const picker=f.element('node-pick');
+ assert.ok(picker,'概览卡应有节点下拉');
+ f.setActive(picker);
+ const pollers=[...f.timers.values()];
+ assert.ok(pollers.length>=1,'running 时应排了轮询');
+ await pollers.at(-1)();await flush();
+ assert.equal(f.element('node-pick'),picker,'展开期间不重建 DOM，下拉不会被换掉');
+ f.setActive(null);
+ picker.onblur();
+ assert.notEqual(f.element('node-pick'),picker,'收起后补一次重绘，数据不积压');
 });

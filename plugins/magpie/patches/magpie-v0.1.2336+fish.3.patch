@@ -1,0 +1,3925 @@
+diff --git a/build/windows/fish-winres.json b/build/windows/fish-winres.json
+new file mode 100644
+index 0000000..2696948
+--- /dev/null
++++ b/build/windows/fish-winres.json
+@@ -0,0 +1,45 @@
++{
++  "RT_GROUP_ICON": {
++    "#3": {
++      "0000": ["icon-256.png", "icon-128.png", "icon-64.png", "icon-48.png", "icon-32.png", "icon-16.png"]
++    }
++  },
++  "RT_MANIFEST": {
++    "#1": {
++      "0409": {
++        "identity": { "name": "ai.usemagpie.magpie.fish", "version": "" },
++        "description": "magpie fish (FISH Dock build)",
++        "minimum-os": "win10",
++        "execution-level": "as invoker",
++        "ui-access": false,
++        "auto-elevate": false,
++        "dpi-awareness": "per monitor v2",
++        "disable-theming": false,
++        "disable-window-filtering": false,
++        "high-resolution-scrolling-aware": false,
++        "ultra-high-resolution-scrolling-aware": false,
++        "long-path-aware": true,
++        "printer-driver-isolation": false,
++        "gdi-scaling": false,
++        "segment-heap": false,
++        "use-common-controls-v6": true
++      }
++    }
++  },
++  "RT_VERSION": {
++    "#1": {
++      "0000": {
++        "fixed": { "file_version": "0.0.0.0", "product_version": "0.0.0.0" },
++        "info": {
++          "0409": {
++            "CompanyName": "FISH Dock",
++            "FileDescription": "magpie fish (FISH Dock build)",
++            "LegalCopyright": "© 2026 yetone · MIT · FISH Dock build",
++            "OriginalFilename": "magpie.exe",
++            "ProductName": "magpie fish"
++          }
++        }
++      }
++    }
++  }
++}
+diff --git a/internal/gui/assets/pluginpages.js b/internal/gui/assets/pluginpages.js
+index ae8cc7c..4c72f0a 100644
+--- a/internal/gui/assets/pluginpages.js
++++ b/internal/gui/assets/pluginpages.js
+@@ -112,6 +112,13 @@
+         if (!e.reads.includes(name)) throw new Error(t("{name} doesn't ask to read {what}", { name: titled(e), what: name }));
+         return api("plugin-pages/read", { spec: e.spec, read: name, params: m.params?.params || {} });
+       }
++      case "call": {
++        const name = String(m.params?.name || "");
++        // a page asks only what its package's magpie.calls names; the
++        // server checks again, so a page can't talk another plugin's way
++        if (!(e.calls || []).includes(name)) throw new Error(t("{name} doesn't ask for {what}", { name: titled(e), what: name }));
++        return api("plugin-pages/call", { spec: e.spec, name, params: m.params?.params || {} });
++      }
+     }
+     throw new Error(t("No such call: {what}", { what: String(m.method) }));
+   }
+diff --git a/internal/gui/assets/plugins.css b/internal/gui/assets/plugins.css
+index 91ff5b5..e01e59e 100644
+--- a/internal/gui/assets/plugins.css
++++ b/internal/gui/assets/plugins.css
+@@ -316,3 +316,13 @@ body.window .pm-manual { --bleed-l: 16px; }
+   .pm-card.ghost .sk, .pm-ghlook, .pm-ghlook .dots i, .pm-arrive .pm-card { animation: none; }
+   .pm-ghlook .dots i { opacity: .5; }
+ }
++/* 插件页图标是一张 <img> 的 SVG，图里用 currentColor 画线；<img> 不继承主题
++   色，于是它永远按 SVG 自己的黑画，深色模式下就成了一块看不见的黑。这里把
++   它钉到正文色上：浅色模式黑、深色模式白。内联 svg.nav-ic（内置页、无图插件）
++   本来就走 currentColor，不受这条影响。 */
++img.nav-ic { filter: brightness(0); }
++@media (prefers-color-scheme: dark) {
++  :root:not([data-theme="light"]) img.nav-ic { filter: brightness(0) invert(1); }
++}
++:root[data-theme="dark"] img.nav-ic { filter: brightness(0) invert(1); }
++
+diff --git a/internal/gui/checkin_call_targets_test.go b/internal/gui/checkin_call_targets_test.go
+new file mode 100644
+index 0000000..7b5a089
+--- /dev/null
++++ b/internal/gui/checkin_call_targets_test.go
+@@ -0,0 +1,65 @@
++package gui
++
++import (
++	"slices"
++	"testing"
++
++	"github.com/yetone/magpie/internal/provider"
++)
++
++// 页面顶部的「立即签到」不带 provider（issue #9）。以前 checkinRun 把空的
++// provider 判成「缺少厂商 id」，那颗按钮点下去只有一条报错；现在空 = 每家。
++func TestCheckinTargetsTreatsNoProviderAsEveryVendor(t *testing.T) {
++	cases := []struct {
++		name   string
++		params map[string]any
++		want   []string
++	}{
++		{"no params at all", nil, nil},
++		{"empty params", map[string]any{}, nil},
++		{"provider left blank", map[string]any{"provider": "   "}, nil},
++		{"provider not a string", map[string]any{"provider": 3}, nil},
++		{"one vendor", map[string]any{"provider": "codearts"}, []string{"codearts"}},
++		{"one vendor, padded", map[string]any{"provider": " codearts "}, []string{"codearts"}},
++	}
++	for _, c := range cases {
++		if got := checkinTargets(c.params); !slices.Equal(got, c.want) {
++			t.Errorf("%s: checkinTargets = %q, want %q", c.name, got, c.want)
++		}
++	}
++}
++
++// 刷新额度以前和签到走同一个分支，「刷新今日积分」于是又签了一次到。现在它
++// 只重读页面上的厂商，页面点的时候不带 provider 就是每家都读。
++func TestCheckinRefreshTargetsReadsEveryShownVendor(t *testing.T) {
++	shown := []provider.CheckinProviderState{
++		{ID: "codearts", Name: "CodeArts"},
++		{ID: "raccoon", Name: "商汤小浣熊"},
++		{ID: "  ", Name: "空 id 不该带出去"},
++	}
++	cases := []struct {
++		name   string
++		params map[string]any
++		want   []string
++	}{
++		{"page names none", map[string]any{}, []string{"codearts", "raccoon"}},
++		{"page names one", map[string]any{"provider": "raccoon"}, []string{"raccoon"}},
++	}
++	for _, c := range cases {
++		if got := checkinRefreshTargets(shown, c.params); !slices.Equal(got, c.want) {
++			t.Errorf("%s: checkinRefreshTargets = %q, want %q", c.name, got, c.want)
++		}
++	}
++	if got := checkinRefreshTargets(nil, map[string]any{}); len(got) != 0 {
++		t.Errorf("nothing shown should read nothing, got %q", got)
++	}
++}
++
++// 两个动词各走各的：签到回签到记录，刷新回整页状态。它们曾经共用一个分支。
++func TestCheckinCallsKeepRunAndRefreshApart(t *testing.T) {
++	if got, err := checkinCall(t.Context(), "checkin:state", nil); err != nil {
++		t.Fatalf("checkin:state: %v", err)
++	} else if _, ok := got.(provider.CheckinViewState); !ok {
++		t.Errorf("checkin:state = %T, want provider.CheckinViewState", got)
++	}
++}
+diff --git a/internal/gui/checkin_state_read_test.go b/internal/gui/checkin_state_read_test.go
+new file mode 100644
+index 0000000..2624f1a
+--- /dev/null
++++ b/internal/gui/checkin_state_read_test.go
+@@ -0,0 +1,41 @@
++package gui
++
++import (
++	"encoding/json"
++	"path/filepath"
++	"slices"
++	"testing"
++
++	"github.com/yetone/magpie/internal/plugin"
++)
++
++// checkin:state 是插件页「自动签到」的读：它必须在 PageReads 里，且 pageRead
++// 能给出页面要的几栏，而不是被当成未知的读拒掉。
++func TestCheckinStateIsADeclaredRead(t *testing.T) {
++	if !slices.Contains(plugin.PageReads, "checkin:state") {
++		t.Fatal("plugin.PageReads has no checkin:state")
++	}
++	h := t.TempDir()
++	t.Setenv("HOME", h)
++	t.Setenv("USERPROFILE", h)
++	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
++	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
++	t.Setenv("XDG_DATA_HOME", filepath.Join(h, ".local", "share"))
++	v, err := pageRead("checkin:state", nil)
++	if err != nil {
++		t.Fatalf("pageRead(checkin:state): %v", err)
++	}
++	b, err := json.Marshal(v)
++	if err != nil {
++		t.Fatalf("marshal: %v", err)
++	}
++	var m map[string]any
++	if err := json.Unmarshal(b, &m); err != nil {
++		t.Fatalf("checkin:state is not a JSON object: %s", b)
++	}
++	for _, k := range []string{"providers", "accounts", "today"} {
++		if _, ok := m[k]; !ok {
++			t.Errorf("checkin:state has no %q: %s", k, b)
++		}
++	}
++}
+diff --git a/internal/gui/pagebridge.js b/internal/gui/pagebridge.js
+index d4aca0f..00e3b04 100644
+--- a/internal/gui/pagebridge.js
++++ b/internal/gui/pagebridge.js
+@@ -10,6 +10,11 @@
+ //   await magpie.options.set(o)   sets them, and answers with them
+ //   await magpie.read(name, p)    a read its package.json's
+ //                                 magpie.permissions declares
++//   await magpie.call(name, p)    an action its package.json's
++//                                 magpie.calls declares: the page reaches
++//                                 no network of its own (its policy is
++//                                 connect-src 'none'), so anything it
++//                                 wants done is asked here
+ //   magpie.context                where a panel is (P5): { provider: {
+ //                                 id, name } } in a provider's editor,
+ //                                 else {}; set once magpie.ready is
+@@ -112,6 +117,7 @@
+       set: (options) => call("options.set", { options }),
+     },
+     read: (name, params) => call("read", { name, params }),
++    call: (name, params) => call("call", { name, params }),
+   };
+   api.ready = call("hello").then(({ context, service, ...theme }) => {
+     api.theme = theme;
+diff --git a/internal/gui/plugincall_test.go b/internal/gui/plugincall_test.go
+new file mode 100644
+index 0000000..222fa27
+--- /dev/null
++++ b/internal/gui/plugincall_test.go
+@@ -0,0 +1,138 @@
++package gui
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"slices"
++	"strings"
++	"testing"
++
++	"github.com/yetone/magpie/internal/provider"
++	"github.com/yetone/magpie/internal/settings"
++)
++
++// 插件页的 magpie.call 是它唯一的出口（CSP connect-src 'none'）。这里钉住
++// 校验顺序与分派：没声明的名字一律拒，声明了的真的到得了执行处。
++
++func TestCallAllowedRefusesWhatThePackageDidNotDeclare(t *testing.T) {
++	if callAllowed(nil, "relay:view") {
++		t.Fatal("没有 magpie.calls 的插件被放过了")
++	}
++	if callAllowed([]string{"relay:view"}, "relay:start") {
++		t.Fatal("没声明的名字被放过了")
++	}
++	if callAllowed([]string{"relay:view"}, "") {
++		t.Fatal("空名字被放过了")
++	}
++	if !callAllowed([]string{"relay:view", "checkin:state"}, "checkin:state") {
++		t.Fatal("声明过的名字被拒了")
++	}
++}
++
++// spec 不是开着的插件页：请求被拒，且不透露有哪些插件。
++func TestPluginCallRouteRefusesUnknownSpec(t *testing.T) {
++	mux := http.NewServeMux()
++	pluginCallRoutes(mux)
++	body := `{"spec":"nope.plugin","name":"relay:view"}`
++	req := httptest.NewRequest(http.MethodPost, "/api/plugin-pages/call", strings.NewReader(body))
++	rec := httptest.NewRecorder()
++	mux.ServeHTTP(rec, req)
++	if rec.Code == http.StatusOK {
++		t.Fatalf("未知插件被放过了: %d %s", rec.Code, rec.Body.String())
++	}
++	if strings.Contains(strings.ToLower(rec.Body.String()), "relay:view") {
++		t.Fatalf("响应泄漏了方法名: %s", rec.Body.String())
++	}
++}
++
++// 分派：relay:view 回配置与状态，Key 只有打码；checkin:state 回签到开关与厂商。
++func TestPluginCallDispatchesRelayAndCheckin(t *testing.T) {
++	value, err := pluginCall(context.Background(), "", "relay:view", nil)
++	if err != nil {
++		t.Fatalf("relay:view: %v", err)
++	}
++	view, ok := value.(map[string]any)
++	if !ok {
++		t.Fatalf("relay:view 返回 %T", value)
++	}
++	config, ok := view["config"].(map[string]any)
++	if !ok {
++		t.Fatal("relay:view 没有 config")
++	}
++	if _, ok := config["hasKey"]; !ok {
++		t.Fatal("relay:view 没有 hasKey")
++	}
++	encoded, _ := json.Marshal(view)
++	for key := range config {
++		if key == "apiKey" || key == "key" {
++			t.Fatal("relay:view 回显了 Key 字段")
++		}
++	}
++	if strings.Contains(string(encoded), "\"sealedKey\"") {
++		t.Fatal("relay:view 回显了密文 Key")
++	}
++
++	// checkin:state 回的是 provider.CheckinViewState 这个结构（插件页要的聚合
++	// 值：厂商、账号、今天的结果、积分），不是一层 map：页面按字段名读，宿主按
++	// 类型给，中间不再转换一次。
++	checkin, err := pluginCall(context.Background(), "", "checkin:state", nil)
++	if err != nil {
++		t.Fatalf("checkin:state: %v", err)
++	}
++	state, ok := checkin.(provider.CheckinViewState)
++	if !ok {
++		t.Fatalf("checkin:state 返回 %T", checkin)
++	}
++	encoded, err = json.Marshal(state)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, field := range []string{"providers", "accounts", "today"} {
++		if !strings.Contains(string(encoded), "\""+field+"\"") {
++			t.Fatalf("checkin:state 没有 %s: %s", field, encoded)
++		}
++	}
++}
++
++// 未知名字在分派处也拒绝（不只是 HTTP 层）。
++func TestPluginCallRefusesUnknownName(t *testing.T) {
++	if _, err := pluginCall(context.Background(), "", "relay:delete-everything", nil); err == nil {
++		t.Fatal("未知 relay 命令被接受了")
++	}
++	if _, err := pluginCall(context.Background(), "", "anything:else", nil); err == nil {
++		t.Fatal("未知命名空间被接受了")
++	}
++}
++
++// 签到开关分两层：厂商级是 settings.PluginCheckins，账号级是 settings.CheckinOff。
++// 账号级这条以前被这里拒成 ACCOUNT_LEVEL_UNSUPPORTED，可设置页一直有它
++// （/api/settings/checkin-account），插件页那个开关因此点不动。
++func TestPluginCallSetsAccountLevelCheckin(t *testing.T) {
++	t.Setenv("MAGPIE_CONFIG", t.TempDir())
++	if _, err := pluginCall(context.Background(), "", "checkin:set-account", map[string]any{"key": "workbuddy|u1", "on": false}); err != nil {
++		t.Fatalf("关掉账号: %v", err)
++	}
++	if !slices.Contains(settings.Load().CheckinOff, "workbuddy|u1") {
++		t.Fatal("关掉的账号没有记进 CheckinOff")
++	}
++	if _, err := pluginCall(context.Background(), "", "checkin:set-account", map[string]any{"key": "workbuddy|u1", "on": true}); err != nil {
++		t.Fatalf("重新打开: %v", err)
++	}
++	if slices.Contains(settings.Load().CheckinOff, "workbuddy|u1") {
++		t.Fatal("重新打开后仍留在 CheckinOff 里")
++	}
++}
++
++func TestPluginCallRefusesAccountLevelCheckinWithoutKey(t *testing.T) {
++	t.Setenv("MAGPIE_CONFIG", t.TempDir())
++	_, err := pluginCall(context.Background(), "", "checkin:set-account", map[string]any{"on": true})
++	if err == nil {
++		t.Fatal("缺少账号 key 被接受了")
++	}
++	coded, ok := err.(interface{ Code() string })
++	if !ok || coded.Code() != "NO_ACCOUNT" {
++		t.Fatalf("error = %v, want NO_ACCOUNT", err)
++	}
++}
+diff --git a/internal/gui/plugincallswindow.go b/internal/gui/plugincallswindow.go
+new file mode 100644
+index 0000000..696aab3
+--- /dev/null
++++ b/internal/gui/plugincallswindow.go
+@@ -0,0 +1,28 @@
++package gui
++
++import "slices"
++
++// callAllowed is whether a page that declared calls may ask for name. A
++// plugin that declared no calls may ask for nothing: the empty answer is
++// the safe one.
++func callAllowed(calls []string, name string) bool {
++	return name != "" && slices.Contains(calls, name)
++}
++
++// windowCalls are the call names a plugin's page or panel may ask for
++// (plugin.WindowSpec.Calls), or false when spec has no page and no panel
++// of its own: a plugin that adds nothing to the window has nothing to ask.
++func windowCalls(spec string) ([]string, bool) {
++	pages, panels := windowParts()
++	for _, p := range pages {
++		if p.Spec == spec {
++			return p.Calls, true
++		}
++	}
++	for _, p := range panels {
++		if p.Spec == spec {
++			return p.Calls, true
++		}
++	}
++	return nil, false
++}
+diff --git a/internal/gui/pluginpage.go b/internal/gui/pluginpage.go
+index f6a4df8..74df7d7 100644
+--- a/internal/gui/pluginpage.go
++++ b/internal/gui/pluginpage.go
+@@ -78,6 +78,9 @@ type pluginPage struct {
+ 	// plugin's in plugins.json's order to ask for it
+ 	Replaces string   `json:"replaces,omitempty"`
+ 	Reads    []string `json:"reads"` // what it may read, of plugin.PageReads
++	// Calls are the window actions it may ask for (plugin.PageCalls), as its
++	// package.json's magpie.calls declares them
++	Calls []string `json:"calls"`
+ 	// Actions are its items in magpie's menus (plugin.ActionSpec); each
+ 	// opens this page
+ 	Actions []pluginAction `json:"actions,omitempty"`
+@@ -112,6 +115,9 @@ type pluginPanel struct {
+ 	Titles map[string]string `json:"titles,omitempty"`
+ 	URL    string            `json:"url"`   // the panel, under pluginPagePrefix
+ 	Reads  []string          `json:"reads"` // what it may read, of plugin.PageReads
++	// Calls are the window actions it may ask for (plugin.PageCalls), as its
++	// package.json's magpie.calls declares them
++	Calls  []string `json:"calls"`
+ 	token  string
+ 	dir    string
+ 	file   string
+@@ -151,10 +157,14 @@ func windowParts() (pages []pluginPage, panels []pluginPanel) {
+ 		if reads == nil {
+ 			reads = []string{}
+ 		}
++		calls := w.Calls
++		if calls == nil {
++			calls = []string{}
++		}
+ 		if spec := w.Page; spec != nil {
+ 			tok := pageToken(e.Spec)
+ 			rel, _ := filepath.Rel(spec.Dir, spec.File)
+-			p := pluginPage{Spec: e.Spec, Name: name, Key: key, Title: spec.Title, Titles: spec.Titles, Reads: reads, token: tok, dir: spec.Dir,
++			p := pluginPage{Spec: e.Spec, Name: name, Key: key, Title: spec.Title, Titles: spec.Titles, Reads: reads, Calls: calls, token: tok, dir: spec.Dir,
+ 				URL: pluginPagePrefix + tok + "/" + filepath.ToSlash(rel), file: filepath.ToSlash(rel), hosted: !only, options: e.Options}
+ 			if !only {
+ 				p.service = spec.Service
+@@ -182,7 +192,7 @@ func windowParts() (pages []pluginPage, panels []pluginPanel) {
+ 		for i, spec := range w.Panels {
+ 			tok := pageToken(e.Spec + "\x00panel\x00" + strconv.Itoa(i))
+ 			rel, _ := filepath.Rel(spec.Dir, spec.File)
+-			p := pluginPanel{Spec: e.Spec, Name: name, Key: fmt.Sprintf("%s-%d", key, i), Slot: spec.Slot, Title: spec.Title, Titles: spec.Titles, Reads: reads,
++			p := pluginPanel{Spec: e.Spec, Name: name, Key: fmt.Sprintf("%s-%d", key, i), Slot: spec.Slot, Title: spec.Title, Titles: spec.Titles, Reads: reads, Calls: calls,
+ 				token: tok, dir: spec.Dir, URL: pluginPagePrefix + tok + "/" + filepath.ToSlash(rel), file: filepath.ToSlash(rel), hosted: !only}
+ 			if p.Title == "" {
+ 				p.Title = plugin.ShortName(name)
+@@ -394,6 +404,9 @@ func apiFramed(r *http.Request) bool {
+ // can 127.0.0.1 be another computer than this one.
+ func pluginPageRoutes(mux *http.ServeMux, web bool) {
+ 	mux.HandleFunc(pluginPagePrefix, func(rw http.ResponseWriter, r *http.Request) { servePluginPage(rw, r, web) })
++	// what a page asks magpie to do (magpie.calls): the only way out of its
++	// frame, since its policy lets it reach no network at all
++	pluginCallRoutes(mux)
+ 	mux.HandleFunc("GET /api/plugin-pages", func(rw http.ResponseWriter, r *http.Request) {
+ 		out := pluginPages()
+ 		if out == nil {
+@@ -560,6 +573,8 @@ func pageRead(read string, params map[string]any) (any, error) {
+ 			out.Models = append(out.Models, model{Model: m, Calls: g.Calls, Input: g.Input, Output: g.Output, Cost: g.Cost})
+ 		}
+ 		return out, nil
++	case "checkin:state":
++		return checkinState(), nil
+ 	}
+ 	return nil, fmt.Errorf("no read %q", read)
+ }
+diff --git a/internal/gui/pluginpagecall.go b/internal/gui/pluginpagecall.go
+new file mode 100644
+index 0000000..2564cb4
+--- /dev/null
++++ b/internal/gui/pluginpagecall.go
+@@ -0,0 +1,424 @@
++package gui
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"slices"
++	"strings"
++	"time"
++
++	"github.com/yetone/magpie/internal/provider"
++	"github.com/yetone/magpie/internal/relay"
++	"github.com/yetone/magpie/internal/settings"
++)
++
++// 插件页能问 magpie 做的事（magpie.calls）。页面跑在 CSP connect-src 'none'
++// 的沙箱帧里，一条 fetch 都发不出去：它要的每一次出站请求、每一次状态改动
++// 都必须回到这里，由 magpie 本体执行。所以这张表是唯一的入口，名字不在表
++// 里的请求一律拒绝，连"这个插件有没有别的办法"都不透露。
++
++// relayService 是进程内的一份探测状态：插件页关掉、重开都接着上一次的结果，
++// 同时也不会因为重开页面就再打一遍上游。
++var relayService = relay.NewManager()
++
++// relayStorePath 是 relay 配置的位置（与 providers.json 同目录）。
++func relayStorePath() string { return relay.Path() }
++
++// pluginCall 执行一次页面请求。spec 是发起请求的插件，name 是它声明的
++// magpie.calls 里的一条，params 由页面给。
++func pluginCall(ctx context.Context, spec, name string, params map[string]any) (any, error) {
++	switch {
++	case strings.HasPrefix(name, "relay:"):
++		return relayCall(ctx, name, params)
++	case strings.HasPrefix(name, "checkin:"):
++		return checkinCall(ctx, name, params)
++	}
++	return nil, errNoCall(name)
++}
++
++// errNoCall 是不认识的名字：不区分"没这个功能"和"你没这个权限"。
++func errNoCall(name string) error { return errors.New("no such call") }
++
++// relayCall 是 relay:* 五条。
++func relayCall(ctx context.Context, name string, params map[string]any) (any, error) {
++	switch name {
++	case "relay:view":
++		return relayView()
++	case "relay:save":
++		return relaySave(params)
++	case "relay:start":
++		return relayStart()
++	case "relay:status":
++		return relayStatus()
++	case "relay:stop":
++		return relayStop()
++	}
++	return nil, errNoCall(name)
++}
++
++// relayView 是页面打开时看到的东西：配置（Key 只有打码）+ 当前状态。
++// 它从不返回明文 Key——页面、截图、日志里都不该出现它。
++func relayView() (any, error) {
++	stored, err := relay.Load(relayStorePath())
++	if err != nil {
++		return nil, err
++	}
++	state := relayService.Snapshot()
++	return map[string]any{
++		"config": map[string]any{
++			"baseUrl":         relay.PublicBaseURL(stored.BaseURL),
++			"baseUrlRaw":      stored.BaseURL,
++			"model":           fallbackString(stored.Model, relay.DefaultModel),
++			"comparisonModel": fallbackString(stored.ComparisonModel, relay.ComparisonModel),
++			"authMode":        fallbackString(stored.AuthMode, "auto"),
++			"apiVersion":      fallbackString(stored.APIVersion, relay.DefaultAPIVersion),
++			"timeoutMs":       stored.TimeoutMs,
++			"keyHint":         relay.Masked(stored),
++			"hasKey":          stored.SealedKey != "",
++		},
++		"state": state,
++	}, nil
++}
++
++// relaySave 存配置。apiKey 空字符串表示"沿用已存的 Key"，所以页面不必为了
++// 改个模型就把 Key 再打一遍。
++func relaySave(params map[string]any) (any, error) {
++	stored, err := relay.Load(relayStorePath())
++	if err != nil {
++		return nil, err
++	}
++	if value, ok := paramString(params, "baseUrl"); ok {
++		stored.BaseURL = value
++	}
++	if value, ok := paramString(params, "model"); ok {
++		stored.Model = value
++	}
++	if value, ok := paramString(params, "comparisonModel"); ok {
++		stored.ComparisonModel = value
++	}
++	if value, ok := paramString(params, "authMode"); ok {
++		stored.AuthMode = value
++	}
++	if value, ok := paramString(params, "apiVersion"); ok {
++		stored.APIVersion = value
++	}
++	if value, ok := paramInt(params, "timeoutMs"); ok {
++		stored.TimeoutMs = value
++	}
++	// 存之前就校验：坏地址不该进了磁盘才在探测时报错。
++	if strings.TrimSpace(stored.BaseURL) != "" {
++		normalized, err := relay.NormalizeBaseURL(stored.BaseURL)
++		if err != nil {
++			return nil, err
++		}
++		stored.BaseURL = normalized
++	}
++	if _, err := relay.ValidateModel(stored.Model, relay.DefaultModel); err != nil {
++		return nil, err
++	}
++	if _, err := relay.ValidateModel(stored.ComparisonModel, relay.ComparisonModel); err != nil {
++		return nil, err
++	}
++	if _, err := relay.ValidateAuthMode(stored.AuthMode); err != nil {
++		return nil, err
++	}
++	if _, err := relay.ValidateAPIVersion(stored.APIVersion); err != nil {
++		return nil, err
++	}
++	if _, err := relay.NormalizeTimeout(stored.TimeoutMs); err != nil {
++		return nil, err
++	}
++	if key, ok := paramString(params, "apiKey"); ok && strings.TrimSpace(key) != "" {
++		sealed, err := relay.SealKey(key)
++		if err != nil {
++			return nil, err
++		}
++		stored.SealedKey = sealed
++		stored.KeyHint = relay.Hint(key)
++	}
++	if err := relay.Save(relayStorePath(), stored); err != nil {
++		return nil, err
++	}
++	return relayView()
++}
++
++// relayStart 用存好的配置起一轮探测。Key 在这里才被解开，解不开就让用户
++// 重填（换机器、换用户都会这样），不静默失败。
++func relayStart() (any, error) {
++	stored, err := relay.Load(relayStorePath())
++	if err != nil {
++		return nil, err
++	}
++	key, err := relay.OpenKey(stored.SealedKey)
++	if err != nil || key == "" {
++		return nil, relayErr("KEY_REQUIRED", "请先填写 API Key")
++	}
++	timeout, err := relay.NormalizeTimeout(stored.TimeoutMs)
++	if err != nil {
++		return nil, err
++	}
++	cfg := relay.Config{
++		BaseURL:         stored.BaseURL,
++		APIKey:          key,
++		Model:           stored.Model,
++		ComparisonModel: stored.ComparisonModel,
++		AuthMode:        stored.AuthMode,
++		APIVersion:      stored.APIVersion,
++		Timeout:         timeout,
++	}
++	if err := relayService.Start(cfg); err != nil {
++		return nil, err
++	}
++	return relayStatus()
++}
++
++func relayStatus() (any, error) { return relayService.Snapshot(), nil }
++
++func relayStop() (any, error) { return relayService.Stop(), nil }
++
++// relayErr 把 relay 包里的错误码带到页面上，页面据此给一句人话。
++func relayErr(code, message string) error { return &relayCallError{code: code, message: message} }
++
++type relayCallError struct {
++	code    string
++	message string
++}
++
++func (e *relayCallError) Error() string { return e.message }
++
++// Code 让页面拿到稳定的分支码。
++func (e *relayCallError) Code() string { return e.code }
++
++// checkinCall 接的是现有的签到与额度刷新逻辑：这些命令以前只能从 magpie
++// 自己的页面点（/api/settings/plugin-checkin、/api/usage/plugin-checkin），
++// 插件页的开关一直是死的——它写的是 fetch，而 CSP 不允许 fetch。
++func checkinCall(ctx context.Context, name string, params map[string]any) (any, error) {
++	switch name {
++	case "checkin:state":
++		return checkinState(), nil
++	case "checkin:set-provider":
++		return checkinSetProvider(params)
++	case "checkin:run":
++		return checkinRun(ctx, params)
++	case "checkin:refresh":
++		return checkinRefresh(ctx, params)
++	case "checkin:set-account":
++		return checkinSetAccount(params)
++	}
++	return nil, errNoCall(name)
++}
++
++// checkinSetAccount 是单个账号的签到开关，用的就是设置页那份 settings.CheckinOff：
++// 关掉只把这个账号排除在每日签到之外，厂商级开关不动。这里原先回一个
++// ACCOUNT_LEVEL_UNSUPPORTED，其实 magpie 一直有这个字段（/api/settings/
++// checkin-account 写的就是它），结果插件页上那个账号开关点下去只会报错。
++func checkinSetAccount(params map[string]any) (any, error) {
++	key, _ := params["key"].(string)
++	if key == "" {
++		return nil, relayErr("NO_ACCOUNT", "缺少账号 key")
++	}
++	on, ok := params["on"].(bool)
++	if !ok {
++		return nil, relayErr("BAD_PARAM", "on 必须是布尔值")
++	}
++	s := settings.Load()
++	off := slices.DeleteFunc(slices.Clone(s.CheckinOff), func(k string) bool { return k == key })
++	if !on {
++		off = append(off, key)
++	}
++	if len(off) == 0 {
++		off = nil
++	}
++	s.CheckinOff = off
++	if err := settings.Save(s); err != nil {
++		return nil, err
++	}
++	return checkinState(), nil
++}
++
++// checkinState 是插件页「自动签到」一次读到的全部内容：厂商、账号、今天每个
++// 账号的结果、实得积分与额度估计。定义在 provider 包，页面只拿聚合值。
++func checkinState() provider.CheckinViewState { return provider.CheckinViewStateNow() }
++
++// checkinSetProvider 是 /api/settings/plugin-checkin 的同一件事。
++func checkinSetProvider(params map[string]any) (any, error) {
++	providerID, ok := paramString(params, "provider")
++	if !ok || strings.TrimSpace(providerID) == "" {
++		return nil, relayErr("PROVIDER_REQUIRED", "缺少厂商 id")
++	}
++	on, _ := paramBool(params, "on")
++	s := settings.Load()
++	if s.PluginCheckins == nil {
++		s.PluginCheckins = map[string]bool{}
++	} else {
++		clone := make(map[string]bool, len(s.PluginCheckins))
++		for id, value := range s.PluginCheckins {
++			clone[id] = value
++		}
++		s.PluginCheckins = clone
++	}
++	s.PluginCheckins[providerID] = on
++	if err := settings.Save(s); err != nil {
++		return nil, err
++	}
++	return checkinState(), nil
++}
++
++// checkinRun 是 /api/usage/plugin-checkin 的同一件事：让插件对某厂商的账号
++// 各签一次到。超时与那条端点一致，都是一分钟。
++//
++// 不带 provider 就是每家都签：页面顶部的「立即签到」本来就不带厂商，以前这里
++// 直接回「缺少厂商 id」，那颗按钮永远失败（issue #9）。参数里给了 provider
++// 仍然只签那一家，与原来一致。
++func checkinRun(ctx context.Context, params map[string]any) (any, error) {
++	runCtx, cancel := context.WithTimeout(ctx, time.Minute)
++	defer cancel()
++	results := provider.CheckInPlugins(runCtx, checkinTargets(params)...)
++	if results == nil {
++		results = []provider.WorkBuddyCheckin{}
++	}
++	return results, nil
++}
++
++// checkinTargets 是这次要签到的厂商：给了 provider 就只签它，没给就是空列表，
++// CheckInPlugins 把空列表当成「每家都签」。空串与纯空白按没给处理。
++func checkinTargets(params map[string]any) []string {
++	id, ok := paramString(params, "provider")
++	if !ok {
++		return nil
++	}
++	if id = strings.TrimSpace(id); id == "" {
++		return nil
++	}
++	return []string{id}
++}
++
++// checkinRefresh 是 /api/usage/quotas/refresh 的同一件事：把额度卡片重新读
++// 一遍，页面随后再读一次 checkin:state 就有新数字。超时与那条端点一致，30 秒。
++//
++// 它以前和 checkin:run 走同一个分支，于是「刷新今日积分」实际是又签了一次到：
++// 签到的结果变不了，额度面板也不会重读。现在两家分开。
++func checkinRefresh(ctx context.Context, params map[string]any) (any, error) {
++	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
++	defer cancel()
++	for _, id := range checkinRefreshTargets(provider.CheckinViewStateNow().Providers, params) {
++		provider.RefreshUsage(readCtx, id, "")
++	}
++	return provider.CheckinViewStateNow(), nil
++}
++
++// checkinRefreshTargets 是这次要重读额度的厂商：给了 provider 就只读它，没给
++// 就把页面上有账号的厂商每家读一遍。
++func checkinRefreshTargets(providers []provider.CheckinProviderState, params map[string]any) []string {
++	if ids := checkinTargets(params); len(ids) > 0 {
++		return ids
++	}
++	ids := make([]string, 0, len(providers))
++	for _, p := range providers {
++		if strings.TrimSpace(p.ID) != "" {
++			ids = append(ids, p.ID)
++		}
++	}
++	return ids
++}
++
++// paramString 取一个字符串参数（页面可能把它包在 params 里）。
++func paramString(params map[string]any, key string) (string, bool) {
++	value, ok := params[key]
++	if !ok {
++		return "", false
++	}
++	text, ok := value.(string)
++	return text, ok
++}
++
++// paramBool 取一个布尔参数。
++func paramBool(params map[string]any, key string) (bool, bool) {
++	value, ok := params[key]
++	if !ok {
++		return false, false
++	}
++	switch v := value.(type) {
++	case bool:
++		return v, true
++	}
++	return false, false
++}
++
++// paramInt 取一个整数参数（JSON 解出来是 float64）。
++func paramInt(params map[string]any, key string) (int, bool) {
++	value, ok := params[key]
++	if !ok {
++		return 0, false
++	}
++	switch v := value.(type) {
++	case float64:
++		return int(v), true
++	case int:
++		return v, true
++	}
++	return 0, false
++}
++
++func fallbackString(value, fallback string) string {
++	if strings.TrimSpace(value) == "" {
++		return fallback
++	}
++	return value
++}
++
++// pluginCallRoutes 注册页面请求的入口：POST /api/plugin-pages/call。
++//
++// 校验顺序是固定的：先看 spec 是不是一个开着的插件页 → 再看 name 是否在它
++// 自己 package.json 的 magpie.calls 里 → 才执行。请求体大小与 read 那条端点
++// 一样压到 64 KiB。
++func pluginCallRoutes(mux *http.ServeMux) {
++	mux.HandleFunc("POST /api/plugin-pages/call", func(rw http.ResponseWriter, r *http.Request) {
++		var in struct {
++			Spec   string         `json:"spec"`
++			Name   string         `json:"name"`
++			Params map[string]any `json:"params"`
++		}
++		if err := json.NewDecoder(http.MaxBytesReader(rw, r.Body, 64<<10)).Decode(&in); err != nil {
++			fail(rw, err)
++			return
++		}
++		calls, ok := windowCalls(in.Spec)
++		if !ok {
++			fail(rw, errors.New("no plugin page "+in.Spec))
++			return
++		}
++		name := strings.TrimSpace(in.Name)
++		if !callAllowed(calls, name) {
++			rw.Header().Set("Content-Type", "application/json")
++			rw.WriteHeader(http.StatusForbidden)
++			_ = json.NewEncoder(rw).Encode(map[string]string{"error": "this page doesn't ask for " + name})
++			return
++		}
++		// 一次调用最多一分钟：签到要联网，探测有自己的超时。
++		ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
++		defer cancel()
++		value, err := pluginCall(ctx, in.Spec, name, in.Params)
++		if err != nil {
++			var coded interface{ Code() string }
++			if errors.As(err, &coded) {
++				rw.Header().Set("Content-Type", "application/json")
++				rw.WriteHeader(http.StatusBadRequest)
++				_ = json.NewEncoder(rw).Encode(map[string]string{"error": err.Error(), "code": coded.Code()})
++				return
++			}
++			var relayError *relay.Error
++			if errors.As(err, &relayError) {
++				rw.Header().Set("Content-Type", "application/json")
++				rw.WriteHeader(http.StatusBadRequest)
++				_ = json.NewEncoder(rw).Encode(map[string]string{"error": relayError.Message, "code": relayError.Code})
++				return
++			}
++			fail(rw, err)
++			return
++		}
++		writeJSON(rw, value)
++	})
++}
+diff --git a/internal/plugin/calls_test.go b/internal/plugin/calls_test.go
+new file mode 100644
+index 0000000..763503a
+--- /dev/null
++++ b/internal/plugin/calls_test.go
+@@ -0,0 +1,104 @@
++package plugin
++
++import (
++	"os"
++	"path/filepath"
++	"slices"
++	"testing"
++)
++
++// magpie.calls 是页面能问 magpie 做的事的声明。这里钉住四条：只留 magpie
++// 真有的名字、格式不对的丢弃、重复的去重、超过上限截断。
++
++func TestCallsKeepingKeepsOnlyWhatMagpieHas(t *testing.T) {
++	got := callsKeeping([]string{"relay:view", "relay:start", "nope:thing", "usage:summary"})
++	want := []string{"relay:view", "relay:start"}
++	if !slices.Equal(got, want) {
++		t.Fatalf("callsKeeping = %v, want %v", got, want)
++	}
++}
++
++func TestCallsKeepingDropsMalformedNames(t *testing.T) {
++	bad := []string{"Relay:View", "relay", "relay:", ":relay", "relay:view:extra", "relay view", "", strings40()}
++	if got := callsKeeping(bad); len(got) != 0 {
++		t.Fatalf("非法名字被留下了: %v", got)
++	}
++}
++
++func TestCallsKeepingDeduplicatesAndCaps(t *testing.T) {
++	// 超过 maxCalls 的部分截断，且顺序按声明
++	many := make([]string, 0, 40)
++	for i := 0; i < 40; i++ {
++		many = append(many, "relay:view")
++	}
++	// 同一个名字只留一次
++	if got := callsKeeping(many); len(got) != 1 {
++		t.Fatalf("重复名字没去重: %v", got)
++	}
++	// PageCalls 只有 10 条，去重后不足 16；钉住"不超过 16"这个上界
++	if len(callsKeeping(PageCalls)) > maxCalls {
++		t.Fatalf("超过 maxCalls: %d", len(callsKeeping(PageCalls)))
++	}
++	if len(PageCalls) < 5 {
++		t.Fatalf("PageCalls 太少: %v", PageCalls)
++	}
++}
++
++func TestCallsKeepingEmptyIsEmpty(t *testing.T) {
++	if got := callsKeeping(nil); len(got) != 0 {
++		t.Fatalf("nil 应当没有 calls: %v", got)
++	}
++}
++
++// Window() 从 package.json 读 magpie.calls：有 page 才有效，且只留合法的。
++func TestWindowReadsMagpieCalls(t *testing.T) {
++	dir := t.TempDir()
++	write := func(name, body string) {
++		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
++			t.Fatal(err)
++		}
++	}
++	write("index.html", "<!doctype html><title>relay</title>")
++	write("package.json", `{
++  "name": "page-relay-probe",
++  "magpie": {
++    "page": {"title": "Relay probe", "file": "index.html"},
++    "calls": ["relay:view", "relay:start", "relay:view", "tampered:call"]
++  }
++}`)
++	window, only := Window(dir)
++	if window == nil || window.Page == nil {
++		t.Fatal("没有读到页面")
++	}
++	if !only {
++		t.Fatal("只有页面的插件应当是 only")
++	}
++	want := []string{"relay:view", "relay:start"}
++	if !slices.Equal(window.Calls, want) {
++		t.Fatalf("Calls = %v, want %v", window.Calls, want)
++	}
++}
++
++// 没有页面也没有面板的插件，没有 calls 可声明。
++func TestWindowWithoutPageHasNoCalls(t *testing.T) {
++	dir := t.TempDir()
++	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
++  "main": "index.js",
++  "magpie": {"calls": ["relay:view"]}
++}`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if window, _ := Window(dir); window != nil {
++		t.Fatalf("没有页面却拿到了 WindowSpec: %+v", window)
++	}
++}
++
++// strings40 是一个格式合法的超长名字（用于验证 "relay:view:extra" 之外的
++// 长度/字符规则不靠猜）。
++func strings40() string {
++	out := "relay:"
++	for i := 0; i < 40; i++ {
++		out += "a"
++	}
++	return out
++}
+diff --git a/internal/plugin/page.go b/internal/plugin/page.go
+index b7d4d23..66a7378 100644
+--- a/internal/plugin/page.go
++++ b/internal/plugin/page.go
+@@ -16,8 +16,8 @@ import (
+ // WindowSpec is what a plugin adds to magpie's window: its page
+ // (package.json's magpie.page), its panels in magpie's own pages
+ // (magpie.panels), the items it adds to magpie's menus (magpie.actions),
+-// and the reads magpie.permissions asks for, which its page and its
+-// panels share.
++// the reads magpie.permissions asks for, which its page and its panels
++// share, and the window actions magpie.calls lets its page ask for.
+ type WindowSpec struct {
+ 	Page   *PageSpec // nil when it adds no page of its own
+ 	Panels []PanelSpec
+@@ -27,6 +27,9 @@ type WindowSpec struct {
+ 	// Reads are the reads it asked for that magpie has (PageReads), in
+ 	// the order asked.
+ 	Reads []string
++	// Calls are the window actions its page and panels may ask for
++	// (PageCalls), in the order asked: magpie.calls.
++	Calls []string
+ }
+ 
+ // PageSpec is a plugin's own page in magpie's window.
+@@ -89,8 +92,45 @@ var actionID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+ const maxActions = 8
+ 
+ // PageReads are the reads a plugin's page can be granted, each in
+-// magpie.permissions. None of them carries a secret.
+-var PageReads = []string{"usage:summary", "providers:list"}
++// magpie.permissions. None of them carries a secret: checkin:state is the
++// aggregated check-in picture (vendors, accounts, today's outcome, credits),
++// never a key or a sign-in.
++var PageReads = []string{"usage:summary", "providers:list", "checkin:state"}
++
++// PageCalls are the window actions a page may ask for, each declared in
++// magpie.calls: the naming reads as namespace:verb, so a page's request
++// says both what it acts on and what it does. A call is not a read: it
++// may spend a request or change a setting, so a page asks for it by name
++// and magpie checks it again where it runs it.
++var PageCalls = []string{
++	"checkin:state", "checkin:set-provider", "checkin:set-account", "checkin:run", "checkin:refresh",
++	"relay:view", "relay:save", "relay:start", "relay:status", "relay:stop",
++}
++
++// maxCalls is how many calls one plugin may declare, at most.
++const maxCalls = 16
++
++// callName is what a call's name is: namespace:verb, lower-case.
++var callName = regexp.MustCompile(`^[a-z][a-z0-9]*:[a-z][a-z0-9-]*$`)
++
++// callsKeeping keeps the calls a page may ask for: only names magpie has
++// (PageCalls), each once, in the order asked, at most maxCalls. Anything
++// else is dropped rather than refused: a package written for a newer
++// magpie still runs here with the calls this one has.
++func callsKeeping(asked []string) []string {
++	var out []string
++	for _, name := range asked {
++		name = strings.TrimSpace(name)
++		if !callName.MatchString(name) || !slices.Contains(PageCalls, name) || slices.Contains(out, name) {
++			continue
++		}
++		if len(out) == maxCalls {
++			break
++		}
++		out = append(out, name)
++	}
++	return out
++}
+ 
+ // PanelSlots are the places in magpie's own pages a plugin's panel can
+ // go: under the Agents page's list, at the end of the Usage page, on
+@@ -165,6 +205,7 @@ func Window(target string) (w *WindowSpec, only bool) {
+ 			Panels      []part   `json:"panels"`
+ 			Actions     []part   `json:"actions"`
+ 			Permissions []string `json:"permissions"`
++			Calls       []string `json:"calls"`
+ 		} `json:"magpie"`
+ 	}
+ 	if json.Unmarshal(b, &pkg) != nil {
+@@ -223,6 +264,11 @@ func Window(target string) (w *WindowSpec, only bool) {
+ 			w.Reads = append(w.Reads, r)
+ 		}
+ 	}
++	// a call is what the page may ask for, so a plugin with no page and no
++	// panel has none to ask; what magpie doesn't have is left out
++	if w.Page != nil || len(w.Panels) > 0 {
++		w.Calls = callsKeeping(pkg.Magpie.Calls)
++	}
+ 	return w, pkg.Main == "" && len(pkg.Exports) == 0
+ }
+ 
+diff --git a/internal/provider/checkin_view.go b/internal/provider/checkin_view.go
+new file mode 100644
+index 0000000..5ddcd46
+--- /dev/null
++++ b/internal/provider/checkin_view.go
+@@ -0,0 +1,166 @@
++package provider
++
++import (
++	"strings"
++	"time"
++
++	"github.com/yetone/magpie/internal/settings"
++)
++
++// CheckinProviderState 是签到页上的一家厂商：开关与显示名。插件页只读这类
++// 聚合信息，拿不到任何密钥。
++type CheckinProviderState struct {
++	ID   string `json:"id"`
++	Name string `json:"name"`
++	On   bool   `json:"on"`
++}
++
++// CheckinAccountState 是一个账号：oday 的签到结果按它的 Key 查。By 是它所属
++// 厂商的 id（与 Key 里 "厂商|登录" 的前缀一致），页面据此分组。
++type CheckinAccountState struct {
++	Key  string `json:"key"`
++	User string `json:"user"`
++	On   bool   `json:"on"`
++	By   string `json:"by"`
++}
++
++// CheckinViewState 是插件页「自动签到」一次读到的全部内容：厂商、账号、今天
++// 每个账号的结果（Today 按账号 Key）、实得积分（Credits），以及厂商额度面板
++// 反推的估计（CreditEstimate，按账号 Key）。没有秘密。
++type CheckinViewState struct {
++	Providers      []CheckinProviderState      `json:"providers"`
++	Accounts       []CheckinAccountState       `json:"accounts"`
++	Today          map[string]WorkBuddyCheckin `json:"today"`
++	Credits        map[string]float64          `json:"credits,omitempty"`
++	CreditEstimate map[string]float64          `json:"creditEstimate,omitempty"`
++}
++
++// checkinVendorNames 是内置签到厂商的显示名（插件厂商的名字来自 PluginCheckins）。
++// 键是账号 Key "厂商|登录" 里的厂商前缀。
++var checkinVendorNames = map[string]string{
++	wbCN.id:             wbCN.name, // workbuddy
++	TraeCNID:            "Trae CN", // trae-cn
++	MiniMaxCodeID:       "MiniMax Code",
++	MiniMaxCodeGlobalID: "MiniMax Code (Global)",
++	"qoder":             "Qoder",
++	QoderCNID:           "Qoder CN",
++}
++
++// CheckinViewStateNow 是 CheckinViewState 的当前读法。
++func CheckinViewStateNow() CheckinViewState { return CheckinViewStateAt(time.Now()) }
++
++// CheckinViewStateAt 汇出签到页要的东西：账号与开关来自 CheckinAccounts，
++// 今天的签到结果来自各厂商已经落盘的签到文件，估计来自额度面板的日间回落。
++// 只读，不发起任何签到。
++func CheckinViewStateAt(now time.Time) CheckinViewState {
++	s := settings.Load()
++	// 插件厂商的名字与开关
++	names := map[string]string{}
++	on := map[string]bool{}
++	for _, pc := range PluginCheckins() {
++		names[pc.ID] = pc.Name
++		on[pc.ID] = PluginCheckinOn(s, pc.ID)
++	}
++	// 内置厂商（若还有账号）：名字固定，开关在设置里
++	builtinOn := map[string]bool{
++		wbCN.id:             s.WorkBuddyCheckin,
++		TraeCNID:            s.TraeCheckin,
++		MiniMaxCodeID:       s.MiniMaxCheckin,
++		MiniMaxCodeGlobalID: s.MiniMaxCheckin,
++		"qoder":             s.QoderCheckin,
++		QoderCNID:           s.QoderCheckin,
++	}
++	for id, name := range checkinVendorNames {
++		if _, ok := names[id]; !ok {
++			names[id] = name
++		}
++		if _, ok := on[id]; !ok {
++			on[id] = builtinOn[id]
++		}
++	}
++
++	accounts := CheckinAccounts()
++	today := checkinTodayEntries(now)
++
++	out := CheckinViewState{
++		Providers: []CheckinProviderState{},
++		Accounts:  []CheckinAccountState{},
++		Today:     map[string]WorkBuddyCheckin{},
++		Credits:   map[string]float64{},
++	}
++	seenVendor := map[string]bool{}
++	counts := map[string]int{}
++	for _, a := range accounts {
++		vendor := checkinVendorOf(a.Key)
++		if vendor == "" {
++			continue
++		}
++		counts[vendor]++
++	}
++	for _, a := range accounts {
++		vendor := checkinVendorOf(a.Key)
++		if vendor == "" {
++			continue
++		}
++		out.Accounts = append(out.Accounts, CheckinAccountState{Key: a.Key, User: a.User, On: a.On, By: vendor})
++		if !seenVendor[vendor] {
++			seenVendor[vendor] = true
++			name := names[vendor]
++			if name == "" {
++				name = vendor
++			}
++			out.Providers = append(out.Providers, CheckinProviderState{ID: vendor, Name: name, On: on[vendor]})
++		}
++		if r, ok := today[a.Key]; ok {
++			out.Today[a.Key] = r
++			if r.Credit > 0 {
++				out.Credits[a.Key] = r.Credit
++			}
++		}
++	}
++	if estimate := CreditEstimates(now); len(estimate) > 0 {
++		by := creditEstimateByAccount(estimate, out.Accounts, counts)
++		if len(by) > 0 {
++			out.CreditEstimate = by
++		}
++	}
++	return out
++}
++
++// checkinVendorOf 是账号 Key "厂商|登录" 的厂商；没有分隔符时算不清，返回空。
++func checkinVendorOf(key string) string {
++	if i := strings.Index(key, "|"); i > 0 {
++		return key[:i]
++	}
++	return ""
++}
++
++// checkinTodayEntries 是今天（北京日）每个账号的签到结果：五份签到文件里
++// 属于今天的那一条，按账号 Key 归并。
++func checkinTodayEntries(now time.Time) map[string]WorkBuddyCheckin {
++	day := CheckinDay(now)
++	out := map[string]WorkBuddyCheckin{}
++	for _, path := range []string{wbCheckinPath(), traeCheckinPath(), miniMaxCheckinPath(), qoderCheckinPath(), pluginCheckinPath()} {
++		for key, r := range shownCheckins(path) {
++			if r.Day == day {
++				out[key] = r
++			}
++		}
++	}
++	return out
++}
++
++// creditEstimateByAccount 是厂商级估计摊到账号上：只有该厂商恰好一个账号时
++// 才能确定是它到账的，否则不摊（乱传会把别家账号的额度算到它头上）。
++func creditEstimateByAccount(perVendor map[string]float64, accounts []CheckinAccountState, counts map[string]int) map[string]float64 {
++	out := map[string]float64{}
++	for _, a := range accounts {
++		if counts[a.By] != 1 {
++			continue
++		}
++		if v, ok := perVendor[a.By]; ok && v > 0 {
++			out[a.Key] = v
++		}
++	}
++	return out
++}
+diff --git a/internal/provider/checkin_view_test.go b/internal/provider/checkin_view_test.go
+new file mode 100644
+index 0000000..3a4972c
+--- /dev/null
++++ b/internal/provider/checkin_view_test.go
+@@ -0,0 +1,39 @@
++package provider
++
++import "testing"
++
++func TestCheckinVendorOf(t *testing.T) {
++	for key, want := range map[string]string{
++		"workbuddy|u1": "workbuddy",
++		"plugin-x|ann": "plugin-x",
++		"qoder-cn|a@b": "qoder-cn",
++		"nopipe":       "",
++		"|leading":     "",
++	} {
++		if got := checkinVendorOf(key); got != want {
++			t.Errorf("checkinVendorOf(%q) = %q, want %q", key, got, want)
++		}
++	}
++}
++
++// 厂商级估计只在它恰好一个账号时摊到那个账号上；两个账号的厂商不摊，以免把
++// 别家账号的额度算到它头上。
++func TestCreditEstimateByAccount(t *testing.T) {
++	perVendor := map[string]float64{"workbuddy": 50, "qoder": 30}
++	accounts := []CheckinAccountState{
++		{Key: "workbuddy|a", By: "workbuddy"},
++		{Key: "qoder|a", By: "qoder"},
++		{Key: "qoder|b", By: "qoder"},
++	}
++	counts := map[string]int{"workbuddy": 1, "qoder": 2}
++	got := creditEstimateByAccount(perVendor, accounts, counts)
++	if got["workbuddy|a"] != 50 {
++		t.Errorf("single-account vendor estimate = %v, want 50", got["workbuddy|a"])
++	}
++	if _, ok := got["qoder|a"]; ok {
++		t.Errorf("two-account vendor must not attribute the estimate, got %v", got)
++	}
++	if _, ok := got["qoder|b"]; ok {
++		t.Errorf("two-account vendor must not attribute the estimate, got %v", got)
++	}
++}
+diff --git a/internal/provider/credits_estimate.go b/internal/provider/credits_estimate.go
+new file mode 100644
+index 0000000..5d695ab
+--- /dev/null
++++ b/internal/provider/credits_estimate.go
+@@ -0,0 +1,63 @@
++package provider
++
++import (
++	"os"
++	"strings"
++	"time"
++)
++
++// CreditEstimates 是"今天大概到账了多少额度"的估计，按厂商聚合。
++//
++// 口径只有一条：用 credits-daily.json 里昨日与今日的用量差。用量回落
++// （今日 < 昨日）说明额度在今天补过，差额就是补进来的量；用量没回落就没有
++// 证据，那个厂商直接不出现——页面按"有则显示 ≈+N、无则不显示"来处理。
++//
++// 这不是账单，也不是承诺：它只是把已经落盘的两次读数摊开讲清楚。
++func CreditEstimates(now time.Time) map[string]float64 {
++	raw, err := os.ReadFile(creditsPath())
++	if err != nil {
++		return nil
++	}
++	accts, err := parseCredits(raw)
++	if err != nil || len(accts) == 0 {
++		return nil
++	}
++	return estimateRefills(accts, now)
++}
++
++// estimateRefills 是估算的纯逻辑部分：测试直接喂 accts，不碰磁盘。
++func estimateRefills(accts map[string]*creditsAccount, now time.Time) map[string]float64 {
++	today := now.Local().Format("2006-01-02")
++	yesterday := now.Local().AddDate(0, 0, -1).Format("2006-01-02")
++	out := map[string]float64{}
++	for key, acct := range accts {
++		if acct == nil || acct.Days == nil {
++			continue
++		}
++		usedToday, okToday := acct.Days[today]
++		usedBefore, okBefore := acct.Days[yesterday]
++		if !okToday || !okBefore {
++			continue
++		}
++		refill := usedBefore - usedToday
++		if refill <= 0 {
++			continue
++		}
++		if acct.Since != "" && acct.Since > yesterday {
++			// 只知道从 Since 起的用量：之前的"昨日"不是读数，是空白。
++			continue
++		}
++		providerID := key
++		if i := strings.Index(key, "|"); i > 0 {
++			providerID = key[:i]
++		}
++		if providerID == "" {
++			continue
++		}
++		out[providerID] += refill
++	}
++	if len(out) == 0 {
++		return nil
++	}
++	return out
++}
+diff --git a/internal/provider/credits_estimate_test.go b/internal/provider/credits_estimate_test.go
+new file mode 100644
+index 0000000..5c2f86f
+--- /dev/null
++++ b/internal/provider/credits_estimate_test.go
+@@ -0,0 +1,62 @@
++package provider
++
++import (
++	"testing"
++	"time"
++)
++
++// creditEstimate 是"今日额度回补"的估计：只认日间用量回落这一个证据，
++// 没有证据的厂商不出现——页面按"有则显示 ≈+N、无则不显示"处理。
++
++func TestEstimateRefillsNeedsAFallInUsage(t *testing.T) {
++	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.Local)
++	today := now.Format("2006-01-02")
++	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
++
++	accts := map[string]*creditsAccount{
++		// 回落：昨日用了 80，今日回到 20 => 回补 60
++		"claude|a@b|Credits": {Since: yesterday, Days: map[string]float64{yesterday: 80, today: 20}},
++		// 没回落：今日用得不比昨日少，没有到账证据
++		"codex|a@b|Credits": {Since: yesterday, Days: map[string]float64{yesterday: 10, today: 30}},
++		// 只有今天：没有昨日读数
++		"qoder|a@b|Credits": {Since: yesterday, Days: map[string]float64{today: 5}},
++		// 读数从今天才开始：昨日那个"0"不是读数
++		"zcode|a@b|Credits": {Since: today, Days: map[string]float64{yesterday: 40, today: 5}},
++	}
++	got := estimateRefills(accts, now)
++	if got["claude"] != 60 {
++		t.Fatalf("claude = %v, want 60 (%v)", got["claude"], got)
++	}
++	if _, ok := got["codex"]; ok {
++		t.Fatalf("codex 没有回落证据却被给了估计: %v", got["codex"])
++	}
++	if _, ok := got["qoder"]; ok {
++		t.Fatalf("qoder 缺昨日读数却给了估计: %v", got["qoder"])
++	}
++	if _, ok := got["zcode"]; ok {
++		t.Fatalf("zcode 的 Since 是今天，昨日的 0 是空白不是读数: %v", got["zcode"])
++	}
++}
++
++func TestEstimateRefillsSumsAcrossAccounts(t *testing.T) {
++	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.Local)
++	today := now.Format("2006-01-02")
++	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
++	accts := map[string]*creditsAccount{
++		"claude|a@b|Credits": {Since: yesterday, Days: map[string]float64{yesterday: 50, today: 10}},
++		"claude|c@d|Credits": {Since: yesterday, Days: map[string]float64{yesterday: 30, today: 10}},
++	}
++	got := estimateRefills(accts, now)
++	if got["claude"] != 60 {
++		t.Fatalf("claude = %v, want 60（两个账号各自回补之和）", got["claude"])
++	}
++}
++
++func TestEstimateRefillsEmptyIsNil(t *testing.T) {
++	if got := estimateRefills(nil, time.Now()); got != nil {
++		t.Fatalf("空输入给了 %v", got)
++	}
++	if got := estimateRefills(map[string]*creditsAccount{"claude|a|C": nil}, time.Now()); got != nil {
++		t.Fatalf("nil 账号给了 %v", got)
++	}
++}
+diff --git a/internal/relay/client.go b/internal/relay/client.go
+new file mode 100644
+index 0000000..9458c27
+--- /dev/null
++++ b/internal/relay/client.go
+@@ -0,0 +1,278 @@
++package relay
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"strings"
++	"time"
++)
++
++// Result 是一次上游调用被摊平后的样子：页面与判定只看这些字段，不再看
++// *http.Response。
++type Result struct {
++	OK        bool
++	Status    int
++	JSON      map[string]any
++	Message   string
++	RequestID string
++	// Kind 只在请求层面失败时填：network 表示连不上/超时，aborted 表示
++	// 用户主动停止。
++	Kind string
++}
++
++// Client 发探测请求。测试把它换成一个只会回合成响应的实现。
++type Client struct {
++	cfg      Config
++	doer     HTTPDoer
++	messages string
++	counts   string
++
++	preferred  string
++	version    string
++	versionStopped bool
++}
++
++// HTTPDoer 是 *http.Client 的最小交集。
++type HTTPDoer interface {
++	Do(req *http.Request) (*http.Response, error)
++}
++
++// NewClient 造一个探测客户端。doer 为 nil 时用默认的 http.Client：
++// 它拒绝任何重定向（中转站把 /v1/messages 302 到别处就是行为异常，
++// 跟着走等于把 Key 交出去）。
++func NewClient(cfg Config, doer HTTPDoer) *Client {
++	if doer == nil {
++		doer = &http.Client{
++			Timeout: cfg.Timeout,
++			CheckRedirect: func(*http.Request, []*http.Request) error {
++				return http.ErrUseLastResponse
++			},
++			Transport: defaultTransport(),
++		}
++	}
++	preferred := cfg.AuthMode
++	if preferred == "auto" {
++		preferred = "x-api-key"
++	}
++	messages, counts := endpoints(cfg.BaseURL)
++	return &Client{
++		cfg:        cfg,
++		doer:       doer,
++		messages:   messages,
++		counts:     counts,
++		preferred:  preferred,
++		version:    cfg.APIVersion,
++	}
++}
++
++// Version 是这一轮最终采用的 anthropic-version。
++func (c *Client) Version() string { return c.version }
++
++// AuthMode 是这一轮最终跑通的认证方式。
++func (c *Client) AuthMode() string { return c.preferred }
++
++func headersFor(mode, key, version string) map[string]string {
++	headers := map[string]string{
++		"content-type":      "application/json",
++		"accept":            "application/json",
++		"anthropic-version": version,
++		"user-agent":        userAgent,
++	}
++	if mode == "x-api-key" || mode == "both" {
++		headers["x-api-key"] = key
++	}
++	if mode == "bearer" || mode == "both" {
++		headers["authorization"] = "Bearer " + key
++	}
++	return headers
++}
++
++// Send 发一次请求，并在 401/403 时按 auto 模式换一种认证头重试。
++func (c *Client) Send(ctx context.Context, url string, body any, timeout time.Duration) Result {
++	modes := []string{c.cfg.AuthMode}
++	if c.cfg.AuthMode == "auto" {
++		other := "bearer"
++		if c.preferred == "bearer" {
++			other = "x-api-key"
++		}
++		modes = []string{c.preferred}
++		if other != c.preferred {
++			modes = append(modes, other)
++		}
++	}
++	var last *Result
++	for index, mode := range modes {
++		result := c.roundTrip(ctx, url, body, mode, timeout)
++		if (result.Status == 401 || result.Status == 403) && index < len(modes)-1 {
++			copied := result
++			last = &copied
++			continue
++		}
++		if result.OK {
++			c.preferred = mode
++		}
++		return result
++	}
++	if last != nil {
++		return *last
++	}
++	return Result{Message: "认证失败"}
++}
++
++// Call 在 Send 之上处理 API 版本回退：只有错误措辞指向版本头时才降级，
++// 模型不存在一类错误不能把整轮探针切到旧版本。
++func (c *Client) Call(ctx context.Context, url string, body any) Result {
++	result := c.Send(ctx, url, body, c.cfg.Timeout)
++	if !result.OK && result.Status == 400 && c.version == DefaultAPIVersion && !c.versionStopped &&
++		versionHintRe.MatchString(result.Message) {
++		c.versionStopped = true
++		previous := c.version
++		c.version = LegacyAPIVersion
++		retried := c.Send(ctx, url, body, c.cfg.Timeout)
++		if !retried.OK {
++			c.version = previous
++		}
++		return retried
++	}
++	return result
++}
++
++// Messages 发一次 /v1/messages。
++func (c *Client) Messages(ctx context.Context, body map[string]any) Result {
++	return c.Call(ctx, c.messages, body)
++}
++
++// CountTokens 发一次 /v1/messages/count_tokens。
++func (c *Client) CountTokens(ctx context.Context, body map[string]any) Result {
++	return c.Call(ctx, c.counts, body)
++}
++
++func (c *Client) roundTrip(ctx context.Context, url string, body any, mode string, timeout time.Duration) Result {
++	payload, err := json.Marshal(body)
++	if err != nil {
++		return Result{Message: "请求体无法序列化", Kind: "network"}
++	}
++	attemptCtx, cancel := context.WithTimeout(ctx, timeout)
++	defer cancel()
++	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, url, bytes.NewReader(payload))
++	if err != nil {
++		return Result{Message: Redact(err.Error(), c.cfg.APIKey), Kind: "network"}
++	}
++	for name, value := range headersFor(mode, c.cfg.APIKey, c.version) {
++		req.Header.Set(name, value)
++	}
++	resp, err := c.doer.Do(req)
++	if err != nil {
++		kind := "network"
++		if errors.Is(err, context.Canceled) {
++			kind = "aborted"
++		}
++		message := err.Error()
++		// CheckRedirect 拒绝跟随：这不是"连不上"，而是上游行为不对。
++		if errors.Is(err, http.ErrUseLastResponse) {
++			message = "目标返回了重定向，探测不跟随"
++		}
++		return Result{Message: Redact(message, c.cfg.APIKey), Kind: kind}
++	}
++	defer resp.Body.Close()
++	return parseResponse(resp, c.cfg.APIKey)
++}
++
++// parseResponse 读入响应并摊平。超过 MaxResponseBytes 直接判失败：中转层
++// 拿一个几百 MB 的页面糊弄探测时，不读到内存里。
++func parseResponse(resp *http.Response, secret string) Result {
++	limited := io.LimitReader(resp.Body, MaxResponseBytes+1)
++	raw, err := io.ReadAll(limited)
++	if err != nil {
++		return Result{Status: resp.StatusCode, Message: Redact("读取响应失败："+err.Error(), secret)}
++	}
++	if len(raw) > MaxResponseBytes {
++		return Result{Status: resp.StatusCode, Message: "响应超过 2 MiB 上限"}
++	}
++	text := string(raw)
++	var parsed map[string]any
++	if strings.TrimSpace(text) != "" {
++		_ = json.Unmarshal(raw, &parsed)
++	}
++	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
++	message := ""
++	if !ok {
++		message = Redact(errorMessage(parsed, text), secret)
++		if len(message) > 600 {
++			message = message[:600]
++		}
++		if message == "" {
++			message = "上游返回空响应"
++		}
++	}
++	requestID := ""
++	if parsed != nil {
++		if id, ok := parsed["request_id"].(string); ok {
++			requestID = id
++		}
++	}
++	return Result{OK: ok, Status: resp.StatusCode, JSON: parsed, Message: message, RequestID: requestID}
++}
++
++// errorMessage 从错误体里挑一句人话：Anthropic 用 {"error":{"message"}}，
++// 有些网关只给 {"message"}，还有直接回 HTML 的。
++func errorMessage(parsed map[string]any, text string) string {
++	if parsed != nil {
++		if e, ok := parsed["error"].(map[string]any); ok {
++			if m, ok := e["message"].(string); ok && strings.TrimSpace(m) != "" {
++				return m
++			}
++		}
++		if m, ok := parsed["message"].(string); ok && strings.TrimSpace(m) != "" {
++			return m
++		}
++	}
++	return strings.TrimSpace(text)
++}
++
++// defaultTransport 给探测一份收敛过的传输：不跟重定向由 Client 管，这里
++// 只管连接复用与整体上限。
++func defaultTransport() *http.Transport {
++	transport := http.DefaultTransport.(*http.Transport).Clone()
++	transport.MaxIdleConns = 8
++	transport.MaxIdleConnsPerHost = 2
++	transport.TLSHandshakeTimeout = 15 * time.Second
++	return transport
++}
++
++func numberOrNil(value any) *float64 {
++	switch v := value.(type) {
++	case float64:
++		out := v
++		return &out
++	case json.Number:
++		if f, err := v.Float64(); err == nil {
++			out := f
++			return &out
++		}
++	}
++	return nil
++}
++
++func intOrNil(value any) *int {
++	number := numberOrNil(value)
++	if number == nil {
++		return nil
++	}
++	out := int(*number)
++	return &out
++}
++
++func stringOrEmpty(value any) string {
++	if s, ok := value.(string); ok {
++		return s
++	}
++	return ""
++}
++
++func fmtStatus(status int) string { return fmt.Sprintf("http_%d", status) }
+diff --git a/internal/relay/config.go b/internal/relay/config.go
+new file mode 100644
+index 0000000..9aba97a
+--- /dev/null
++++ b/internal/relay/config.go
+@@ -0,0 +1,289 @@
++// Package relay 把中转站真伪检测内化进 magpie：页面只发信号，出站请求
++// 一律由 magpie 本体发出（page plugin 的 CSP 是 connect-src 'none'）。
++//
++// 这份实现移植自 Dock 插件 plugins/relay-probe/probe.mjs，判定门槛一字
++// 未改：B1 篡改签名重放、C1 count_tokens 与 usage.input_tokens 对账、
++// C2 跨代 tokenizer 计数对比。任何"更宽松"的改动都会让伪造的中转站拿到
++// 假绿，所以这里只允许等价移植。
++package relay
++
++import (
++	"fmt"
++	"net"
++	"net/url"
++	"regexp"
++	"strings"
++	"time"
++)
++
++// 探针的默认参数，与 Dock 插件里的常量逐字相同。
++const (
++	DefaultModel      = "claude-sonnet-5-5"
++	ComparisonModel   = "claude-sonnet-4-6"
++	DefaultAPIVersion = "2026-10-21"
++	LegacyAPIVersion  = "2023-06-01"
++
++	// MaxResponseBytes 是单个上游响应读入的上限；中转层返回一个巨大的
++	// 错误页时，不读到内存里。
++	MaxResponseBytes = 2 << 20
++
++	// MaxReportBytes 是报告序列化后的上限：报告会被 view/status/存储各带
++	// 一份，撑爆宿主通道就连状态都读不到。
++	MaxReportBytes = 256 << 10
++
++	DefaultTimeout = 45 * time.Second
++	MaxTimeout     = 120 * time.Second
++
++	userAgent = "FISH-Dock-Relay-Probe/1.0"
++
++	// B1Prompt 是一道需要推理的题：thinking 块只有在模型真的思考时才会
++	// 带签名，用于后续的篡改重放。
++	B1Prompt = "Work through this problem carefully before answering. " +
++		"A bat and a ball cost $1.10 total. The bat costs $1.00 more than the ball. " +
++		"How much does the ball cost? Show the steps, and end with exactly one line: FINAL=<number>"
++
++	// TokenText 是中英混排 + 代码 + JSON 的样本，用来让两个 tokenizer 家族
++	// 产生可比较的计数差。
++	TokenText = "Tokenizer probe. 请只回复 OK。\n" +
++		"下面是一段混合中英文、代码和 JSON 的样本：\n" +
++		"函数 f(x) 返回 x 的平方；当 x=17 时结果为 289。\n" +
++		"```js\n" +
++		"const rows = [{\"id\":1,\"name\":\"鲸鱼\",\"ok\":true},{\"id\":2,\"name\":\"猫娘\",\"ok\":false}];\n" +
++		"console.log(rows.filter(row => row.ok).map(row => row.name).join(\",\"));\n" +
++		"```\n" +
++		"JSON: {\"temperature\":0.2,\"tokens\":[\"中文\",\"English\",\"emoji: 🐟\"]}\n" +
++		"不要解释，只回复 OK。"
++)
++
++// AuthModes 是配置可以接受的认证方式。
++var AuthModes = []string{"auto", "x-api-key", "bearer", "both"}
++
++// Error 是探测的输入/配置错误，带一个稳定的 code 供页面分支。
++type Error struct {
++	Code    string
++	Message string
++}
++
++func (e *Error) Error() string { return e.Message }
++
++func newError(code, message string) *Error { return &Error{Code: code, Message: message} }
++
++var (
++	modelPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$`)
++	versionPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
++	schemePattern  = regexp.MustCompile(`(?i)^(https?):$`)
++)
++
++// Config 是一次探测的完整参数。
++type Config struct {
++	BaseURL         string
++	APIKey          string
++	Model           string
++	ComparisonModel string
++	AuthMode        string
++	APIVersion      string
++	Timeout         time.Duration
++}
++
++// NormalizeBaseURL 把用户填的地址收成"协议 + 主机 + 路径"，并拒绝一切
++// 会把凭据或参数带出去的写法。
++//
++// 规矩（与 Dock 插件同一套）：只认 http/https；http 只允许本机回环；
++// 不允许内嵌用户名密码、查询串、# 片段；顺手剥掉用户可能粘进来的
++// /v1/messages、/v1/messages/count_tokens 和结尾的 /v1。
++func NormalizeBaseURL(raw string) (string, error) {
++	raw = strings.TrimSpace(raw)
++	if raw == "" {
++		return "", newError("BASE_URL_REQUIRED", "请填写 Base URL")
++	}
++	u, err := url.Parse(raw)
++	if err != nil {
++		return "", newError("BASE_URL_INVALID", "Base URL 不是有效 URL")
++	}
++	scheme := strings.ToLower(u.Scheme)
++	if scheme != "http" && scheme != "https" {
++		return "", newError("BASE_URL_SCHEME", "Base URL 只支持 HTTPS（本机回环可用 HTTP）")
++	}
++	if u.User != nil {
++		return "", newError("BASE_URL_CREDENTIALS", "Base URL 不能包含用户名或密码")
++	}
++	if u.RawQuery != "" || u.ForceQuery {
++		return "", newError("BASE_URL_QUERY", "Base URL 不能包含查询参数，请只填写协议、主机和路径")
++	}
++	if u.Fragment != "" || strings.Contains(raw, "#") {
++		return "", newError("BASE_URL_HASH", "Base URL 不能包含 # 片段")
++	}
++	host := u.Hostname()
++	if host == "" {
++		return "", newError("BASE_URL_INVALID", "Base URL 缺少主机名")
++	}
++	if scheme == "http" && !loopback(host) {
++		return "", newError("BASE_URL_INSECURE", "非本机地址必须使用 HTTPS")
++	}
++	path := strings.TrimRight(u.EscapedPath(), "/")
++	for _, suffix := range []string{"/v1/messages/count_tokens", "/v1/messages"} {
++		if strings.HasSuffix(path, suffix) {
++			path = strings.TrimSuffix(path, suffix)
++			break
++		}
++	}
++	path = strings.TrimSuffix(path, "/v1")
++	out := scheme + "://" + u.Host + path
++	if strings.HasSuffix(out, "/") {
++		out = strings.TrimSuffix(out, "/")
++	}
++	return out, nil
++}
++
++// loopback 判断主机是否本机回环：只有它们允许明文 http。
++func loopback(host string) bool {
++	switch strings.ToLower(host) {
++	case "localhost", "::1":
++		return true
++	}
++	if ip := net.ParseIP(host); ip != nil {
++		return ip.IsLoopback()
++	}
++	return false
++}
++
++// PublicBaseURL 是报告与页面里显示的地址：失败时给 <invalid>，绝不回显
++// 用户填坏的原文。
++func PublicBaseURL(raw string) string {
++	normalized, err := NormalizeBaseURL(raw)
++	if err != nil {
++		return "<invalid>"
++	}
++	u, err := url.Parse(normalized)
++	if err != nil {
++		return "<invalid>"
++	}
++	if u.Path == "" || u.Path == "/" {
++		return u.Scheme + "://" + u.Host
++	}
++	return u.Scheme + "://" + u.Host + u.Path
++}
++
++// ValidateModel 校验模型 ID：中转站会把模型名原样拼进上游请求，非法字符
++// 只会换来一个看不懂的 400。
++func ValidateModel(value, fallback string) (string, error) {
++	model := strings.TrimSpace(value)
++	if model == "" {
++		model = fallback
++	}
++	if !modelPattern.MatchString(model) {
++		return "", newError("MODEL_INVALID", "模型 ID 格式无效")
++	}
++	return model, nil
++}
++
++// ValidateAPIVersion 只接受 YYYY-MM-DD。
++func ValidateAPIVersion(value string) (string, error) {
++	version := strings.TrimSpace(value)
++	if version == "" {
++		version = DefaultAPIVersion
++	}
++	if !versionPattern.MatchString(version) {
++		return "", newError("API_VERSION_INVALID", "API 版本格式应为 YYYY-MM-DD")
++	}
++	return version, nil
++}
++
++// ValidateAuthMode 只接受 AuthModes 里的值。
++func ValidateAuthMode(mode string) (string, error) {
++	mode = strings.TrimSpace(mode)
++	if mode == "" {
++		return "auto", nil
++	}
++	for _, known := range AuthModes {
++		if mode == known {
++			return mode, nil
++		}
++	}
++	return "", newError("AUTH_MODE_INVALID", "认证方式必须是 auto、x-api-key、bearer 或 both")
++}
++
++// NormalizeTimeout 把毫秒收进 5s–120s：太快测不出 B1 的推理，太慢会让
++// 页面等成僵尸。
++func NormalizeTimeout(ms int) (time.Duration, error) {
++	if ms == 0 {
++		return DefaultTimeout, nil
++	}
++	timeout := time.Duration(ms) * time.Millisecond
++	if timeout < 5*time.Second || timeout > MaxTimeout {
++		return 0, newError("TIMEOUT_INVALID", fmt.Sprintf("超时应在 %d–%d 毫秒之间", 5000, MaxTimeout.Milliseconds()))
++	}
++	return timeout, nil
++}
++
++// NormalizeConfig 校验并补齐一次探测的参数（Key 必填）。
++func NormalizeConfig(in Config) (Config, error) {
++	base, err := NormalizeBaseURL(in.BaseURL)
++	if err != nil {
++		return Config{}, err
++	}
++	key := strings.TrimSpace(in.APIKey)
++	if key == "" {
++		return Config{}, newError("KEY_REQUIRED", "请填写 API Key")
++	}
++	if len(key) > 8192 || strings.ContainsAny(key, "\r\n\x00") {
++		return Config{}, newError("KEY_INVALID", "API Key 格式无效")
++	}
++	model, err := ValidateModel(in.Model, DefaultModel)
++	if err != nil {
++		return Config{}, err
++	}
++	comparison, err := ValidateModel(in.ComparisonModel, ComparisonModel)
++	if err != nil {
++		return Config{}, err
++	}
++	mode, err := ValidateAuthMode(in.AuthMode)
++	if err != nil {
++		return Config{}, err
++	}
++	version, err := ValidateAPIVersion(in.APIVersion)
++	if err != nil {
++		return Config{}, err
++	}
++	timeout := in.Timeout
++	if timeout == 0 {
++		timeout = DefaultTimeout
++	}
++	if timeout < 5*time.Second || timeout > MaxTimeout {
++		return Config{}, newError("TIMEOUT_INVALID", fmt.Sprintf("超时应在 %d–%d 毫秒之间", 5000, MaxTimeout.Milliseconds()))
++	}
++	return Config{
++		BaseURL:         base,
++		APIKey:          key,
++		Model:           model,
++		ComparisonModel: comparison,
++		AuthMode:        mode,
++		APIVersion:      version,
++		Timeout:         timeout,
++	}, nil
++}
++
++// endpoints 是探测用到的两条路径。
++func endpoints(baseURL string) (messages, countTokens string) {
++	return baseURL + "/v1/messages", baseURL + "/v1/messages/count_tokens"
++}
++
++var (
++	keyPattern      = regexp.MustCompile(`\b(sk-[A-Za-z0-9_-]{6,})\b`)
++	bearerPattern   = regexp.MustCompile(`(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}`)
++	versionHintRe   = regexp.MustCompile(`(?i)anthropic-version|api[\s_-]?version|unsupported[\s_-]?version|version[\s_-]header`)
++	signatureHintRe = regexp.MustCompile(`(?i)signature|thinking|verif|tamper|modified`)
++	thinkingErrRe   = regexp.MustCompile(`(?i)thinking|display|budget_tokens`)
++)
++
++// Redact 抹掉文本里的 Key 与 Bearer 头：上游可控的字段（错误信息、content
++// type）会被中转层拿来回显 Key，报告随后进页面、进本地存储。
++func Redact(value, secret string) string {
++	text := value
++	if secret != "" {
++		text = strings.ReplaceAll(text, secret, "<REDACTED>")
++	}
++	text = keyPattern.ReplaceAllString(text, "<REDACTED>")
++	text = bearerPattern.ReplaceAllString(text, "${1}<REDACTED>")
++	return text
++}
+diff --git a/internal/relay/manager.go b/internal/relay/manager.go
+new file mode 100644
+index 0000000..e483590
+--- /dev/null
++++ b/internal/relay/manager.go
+@@ -0,0 +1,146 @@
++package relay
++
++import (
++	"context"
++	"errors"
++	"sync"
++	"time"
++)
++
++// Manager 是一份进程内的探测状态：一次只跑一轮（中转站会按并发计费，
++// 两个页面同时点开始不该各自打一遍），并保留最后一次的状态供页面轮询。
++type Manager struct {
++	mu       sync.Mutex
++	running  bool
++	cancelled bool
++	state    State
++	cancel   context.CancelFunc
++	// probe 可在测试里换成不打网络的实现。
++	probe func(ctx context.Context, cfg Config) (Report, error)
++	now   func() time.Time
++}
++
++// NewManager 造一个空闲的管理器；probe 为 nil 时用真实探测。
++func NewManager() *Manager {
++	return &Manager{
++		state: State{Status: "idle"},
++		probe: func(ctx context.Context, cfg Config) (Report, error) {
++			return Probe(ctx, cfg, nil, time.Now())
++		},
++		now: time.Now,
++	}
++}
++
++// SetProbe 只给测试用：换掉真正发请求的那一步。
++func (m *Manager) SetProbe(fn func(ctx context.Context, cfg Config) (Report, error)) {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++	m.probe = fn
++}
++
++// State 是页面轮询看到的全部状态。Key 永远只有打码后的 hint。
++type State struct {
++	Status    string `json:"status"` // idle / running / done / error / stopped
++	BaseURL   string `json:"baseUrl"`
++	Model     string `json:"model"`
++	KeyHint   string `json:"keyHint"`
++	HasKey    bool   `json:"hasKey"`
++	StartedAt string `json:"startedAt,omitempty"`
++	EndedAt   string `json:"endedAt,omitempty"`
++	Error     string `json:"error,omitempty"`
++	ErrorCode string `json:"errorCode,omitempty"`
++	Report    *Report `json:"report,omitempty"`
++}
++
++// Snapshot 给一份当前状态（拷贝，调用方改不动内部）。
++func (m *Manager) Snapshot() State {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++	state := m.state
++	if state.Report != nil {
++		report := *state.Report
++		state.Report = &report
++	}
++	return state
++}
++
++// Start 起一轮探测。已经在跑时返回 already_running，不排队——用户再点一次
++// 想要的不是第二轮。
++func (m *Manager) Start(cfg Config) error {
++	m.mu.Lock()
++	if m.running {
++		m.mu.Unlock()
++		return newError("ALREADY_RUNNING", "上一轮探测还没结束")
++	}
++	normalized, err := NormalizeConfig(cfg)
++	if err != nil {
++		m.mu.Unlock()
++		return err
++	}
++	ctx, cancel := context.WithCancel(context.Background())
++	m.running = true
++	m.cancelled = false
++	m.cancel = cancel
++	started := m.now()
++	m.state = State{
++		Status:    "running",
++		BaseURL:   PublicBaseURL(normalized.BaseURL),
++		Model:     normalized.Model,
++		KeyHint:   Hint(normalized.APIKey),
++		HasKey:    true,
++		StartedAt: started.Format(time.RFC3339),
++	}
++	probe := m.probe
++	now := m.now
++	m.mu.Unlock()
++
++	go func() {
++		report, err := probe(ctx, normalized)
++		cancel()
++		ended := now().Format(time.RFC3339)
++		m.mu.Lock()
++		defer m.mu.Unlock()
++		m.running = false
++		m.cancel = nil
++		state := m.state
++		state.EndedAt = ended
++		switch {
++		case m.cancelled:
++			state.Status = "stopped"
++		case err != nil:
++			state.Status = "error"
++			state.Error = err.Error()
++			var typed *Error
++			if errors.As(err, &typed) {
++				state.ErrorCode = typed.Code
++			}
++		default:
++			state.Status = "done"
++			state.Report = &report
++		}
++		m.state = state
++	}()
++	return nil
++}
++
++// Stop 取消这一轮。它把状态定成 stopped 之后，本轮迟到的结果不会再回写。
++func (m *Manager) Stop() State {
++	m.mu.Lock()
++	if m.running && m.cancel != nil {
++		m.cancelled = true
++		m.cancel()
++	}
++	state := m.state
++	m.mu.Unlock()
++	return state
++}
++
++// Reset 清掉上一轮的报告，回到 idle（页面换地址时用）。
++func (m *Manager) Reset() {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++	if m.running {
++		return
++	}
++	m.state = State{Status: "idle", BaseURL: m.state.BaseURL, Model: m.state.Model, KeyHint: m.state.KeyHint, HasKey: m.state.HasKey}
++}
+diff --git a/internal/relay/paths.go b/internal/relay/paths.go
+new file mode 100644
+index 0000000..2684883
+--- /dev/null
++++ b/internal/relay/paths.go
+@@ -0,0 +1,7 @@
++package relay
++
++import "github.com/yetone/magpie/internal/appdir"
++
++// configDir 是 relay.json 与按平台密钥材料的落点，与 providers.json 同一个
++// 配置目录（$MAGPIE_CONFIG 优先，便携模式下是程序旁的数据目录）。
++func configDir() string { return appdir.Config() }
+diff --git a/internal/relay/probe.go b/internal/relay/probe.go
+new file mode 100644
+index 0000000..84b7e84
+--- /dev/null
++++ b/internal/relay/probe.go
+@@ -0,0 +1,619 @@
++package relay
++
++import (
++	"context"
++	"encoding/json"
++	"math"
++	"regexp"
++	"strings"
++)
++
++// 三组探针各返回一个 map：字段随 status 变化，摊平成 map 与 Dock 插件的
++// 报告结构一一对应（页面、存储、CLI 都按这套字段读）。
++
++// thinkingFamily 按模型 ID 猜 thinking 参数世代。Claude 3.0/3.5 不支持
++// thinking；3.7/4.0/4.1/4.5 只接受 enabled；4.6 与 5.x 用 adaptive。
++func thinkingFamily(model string) string {
++	id := strings.ToLower(model)
++	switch {
++	case strings.Contains(id, "claude-3-7"):
++		return "enabled"
++	case regexp.MustCompile(`claude-3-5|claude-3-(?:opus|haiku|sonnet)|claude-3(?:\.0)?(?:-|$)`).MatchString(id):
++		return "none"
++	case regexp.MustCompile(`claude-(?:sonnet|opus|haiku)-4-(?:0|1|5)(?:-|$)`).MatchString(id):
++		return "enabled"
++	case strings.Contains(id, "claude-sonnet-4-2025"), strings.Contains(id, "claude-opus-4-2025"), strings.Contains(id, "claude-haiku-4-2025"):
++		return "enabled"
++	case regexp.MustCompile(`claude-(?:sonnet|opus|haiku)-4-6`).MatchString(id):
++		return "adaptive"
++	case regexp.MustCompile(`claude-(?:sonnet|opus|haiku|fable)-5(?:-|$)`).MatchString(id):
++		return "adaptive"
++	}
++	return "unknown"
++}
++
++// thinkingCandidates 是这一轮依次尝试的 thinking 配置：先按世代猜，失败
++// 再逐级回退，避免把日期后缀的 4.x 误发成 adaptive 直接 400。
++func thinkingCandidates(model string) []map[string]any {
++	switch thinkingFamily(model) {
++	case "none":
++		return []map[string]any{nil}
++	case "enabled":
++		return []map[string]any{
++			{"type": "enabled", "budget_tokens": 1024},
++			{"type": "adaptive"},
++		}
++	}
++	return []map[string]any{
++		{"type": "adaptive", "display": "summarized"},
++		{"type": "adaptive"},
++		{"type": "enabled", "budget_tokens": 1024},
++	}
++}
++
++// detectSurface 判断上游实际返回的是 Anthropic Messages 还是 OpenAI
++// 兼容形状：形状不对时，后面的计数对比没有意义。
++func detectSurface(result Result) string {
++	if result.JSON == nil {
++		return "unknown"
++	}
++	if result.JSON["type"] == "message" {
++		if _, ok := result.JSON["content"].([]any); ok {
++			return "anthropic"
++		}
++	}
++	if result.JSON["object"] == "chat.completion" {
++		return "openai"
++	}
++	if _, ok := result.JSON["choices"].([]any); ok {
++		return "openai"
++	}
++	return "unknown"
++}
++
++func classifyFirstError(result Result) string {
++	switch {
++	case result.Kind == "network":
++		return "network_error"
++	case result.Kind == "aborted":
++		return "aborted"
++	case result.Status == 401 || result.Status == 403:
++		return "auth_error"
++	case result.Status == 404:
++		return "endpoint_not_found"
++	case result.Status == 429 || result.Status >= 500:
++		return "transient_error"
++	}
++	return fmtStatus(result.Status)
++}
++
++// classifyReplay 判断一次"重放"的结果。注意 2xx 不等于签名被接受：
++// 空响应、网关 HTML、200 包着的 error JSON 都是 invalid_response。
++func classifyReplay(result Result) string {
++	if result.OK {
++		if detectSurface(result) == "anthropic" {
++			return "accepted"
++		}
++		return "invalid_response"
++	}
++	switch {
++	case result.Kind == "network":
++		return "network_error"
++	case result.Kind == "aborted":
++		return "aborted"
++	case result.Status == 401 || result.Status == 403:
++		return "auth_error"
++	case result.Status == 429 || result.Status >= 500:
++		return "transient_error"
++	case result.Status == 400 || result.Status == 422:
++		// 只有错误明确指向签名/thinking 校验才算"篡改被校验"；
++		// 泛泛的 invalid request 只能是 rejected_other。
++		if signatureHintRe.MatchString(result.Message) {
++			return "rejected"
++		}
++		return "rejected_other"
++	}
++	return fmtStatus(result.Status)
++}
++
++// thinkingDropNote 识别新版 API 的 input_transformations：中转层改写请求
++// 时会告诉我们它把 thinking 丢了。
++func thinkingDropNote(result Result) string {
++	if result.JSON == nil {
++		return ""
++	}
++	raw, ok := result.JSON["input_transformations"].([]any)
++	if !ok {
++		return ""
++	}
++	for _, item := range raw {
++		encoded, err := json.Marshal(item)
++		if err != nil {
++			continue
++		}
++		text := string(encoded)
++		if regexp.MustCompile(`(?i)thinking`).MatchString(text) &&
++			regexp.MustCompile(`(?i)drop|remov|discard`).MatchString(text) {
++			if len(text) > 300 {
++				text = text[:300]
++			}
++			return text
++		}
++	}
++	return ""
++}
++
++// replay 用同一段 thinking 块重放一次；tamper 为真时把签名中间一位改掉。
++func replay(ctx context.Context, client *Client, model string, blocks []any, index int, tamper bool, thinking map[string]any) map[string]any {
++	content := deepCopyBlocks(blocks)
++	if tamper && index >= 0 && index < len(content) {
++		if block, ok := content[index].(map[string]any); ok {
++			field := "signature"
++			if block["type"] == "redacted_thinking" {
++				field = "data"
++			}
++			signature := stringOrEmpty(block[field])
++			if signature != "" {
++				position := len(signature) / 2
++				replacement := "A"
++				if signature[position:position+1] == "A" {
++					replacement = "B"
++				}
++				block[field] = signature[:position] + replacement + signature[position+1:]
++			}
++		}
++	}
++	body := map[string]any{
++		"model":      model,
++		"max_tokens": 2048,
++		"messages": []any{
++			map[string]any{"role": "user", "content": B1Prompt},
++			map[string]any{"role": "assistant", "content": content},
++			map[string]any{"role": "user", "content": "Repeat the final line exactly, with no extra text."},
++		},
++	}
++	if thinking != nil {
++		body["thinking"] = thinking
++	}
++	result := client.Messages(ctx, body)
++	out := map[string]any{
++		"status":     classifyReplay(result),
++		"httpStatus": result.Status,
++		"message":    result.Message,
++	}
++	if usage := usageInputTokens(result); usage != nil {
++		out["usage"] = *usage
++	}
++	if note := thinkingDropNote(result); note != "" {
++		out["dropped"] = note
++	}
++	return out
++}
++
++// replayWithoutThinking 是控制组：整块删掉 thinking 再重放。如果两条"成功"
++// 重放的 usage 与控制组完全相同，说明 thinking 块根本没被计费。
++func replayWithoutThinking(ctx context.Context, client *Client, model string, blocks []any, thinking map[string]any) map[string]any {
++	content := make([]any, 0, len(blocks))
++	for _, block := range blocks {
++		if m, ok := block.(map[string]any); ok {
++			if m["type"] == "thinking" || m["type"] == "redacted_thinking" {
++				continue
++			}
++		}
++		content = append(content, block)
++	}
++	if len(content) == 0 {
++		return nil
++	}
++	body := map[string]any{
++		"model":      model,
++		"max_tokens": 2048,
++		"messages": []any{
++			map[string]any{"role": "user", "content": B1Prompt},
++			map[string]any{"role": "assistant", "content": content},
++			map[string]any{"role": "user", "content": "Repeat the final line exactly, with no extra text."},
++		},
++	}
++	if thinking != nil {
++		body["thinking"] = thinking
++	}
++	result := client.Messages(ctx, body)
++	out := map[string]any{
++		"status":     classifyReplay(result),
++		"httpStatus": result.Status,
++		"message":    result.Message,
++	}
++	if usage := usageInputTokens(result); usage != nil {
++		out["usage"] = *usage
++	}
++	return out
++}
++
++// probeB1 是签名探针：先让模型带 thinking 回答一道题，再把同一段 thinking
++// 块原样重放、篡改签名重放，看第一次成功第二次被拒（原生行为）还是两次
++// 都成功（签名没被校验）。
++func probeB1(ctx context.Context, client *Client, cfg Config) map[string]any {
++	candidates := thinkingCandidates(cfg.Model)
++	var thinking map[string]any
++	var first Result
++	thinkingRejected := false
++	for _, candidate := range candidates {
++		body := map[string]any{
++			"model":      cfg.Model,
++			"max_tokens": 2048,
++			"messages":   []any{map[string]any{"role": "user", "content": B1Prompt}},
++		}
++		if candidate != nil {
++			body["thinking"] = candidate
++		}
++		first = client.Messages(ctx, body)
++		if first.OK {
++			thinking = candidate
++			break
++		}
++		thinkingRejected = first.Status == 400 && thinkingErrRe.MatchString(first.Message)
++		if !thinkingRejected {
++			break
++		}
++	}
++	if !first.OK {
++		message := first.Message
++		if message == "" {
++			message = "首个请求失败"
++		}
++		status := classifyFirstError(first)
++		if thinkingRejected {
++			status = "thinking_unsupported"
++			message = "目标拒绝所有 thinking 配置，无法进行签名重放"
++		}
++		return map[string]any{"id": "B1", "status": status, "surface": "unknown", "httpStatus": first.Status, "message": message}
++	}
++	surface := detectSurface(first)
++	if surface != "anthropic" {
++		message := "目标响应不是 Anthropic Messages 形状"
++		if surface == "openai" {
++			message = "目标返回 OpenAI 兼容形状，不是 Anthropic Messages API"
++		}
++		return map[string]any{"id": "B1", "status": "unsupported_surface", "surface": surface, "httpStatus": first.Status, "message": message}
++	}
++	blocks := contentBlocks(first)
++	index := -1
++	for i, block := range blocks {
++		if m, ok := block.(map[string]any); ok {
++			if m["type"] == "thinking" || m["type"] == "redacted_thinking" {
++				index = i
++				break
++			}
++		}
++	}
++	// 上游可控的 type 必须限长并抹掉 Key：恶意中转站可以把 Key 塞进 type。
++	contentTypes := make([]any, 0, 16)
++	for i, block := range blocks {
++		if i == 16 {
++			break
++		}
++		if m, ok := block.(map[string]any); ok {
++			value := Redact(stringOrEmpty(m["type"]), cfg.APIKey)
++			if len(value) > 64 {
++				value = value[:64]
++			}
++			if value != "" {
++				contentTypes = append(contentTypes, value)
++			}
++		}
++	}
++	if index < 0 {
++		return map[string]any{
++			"id": "B1", "status": "no_thinking", "surface": surface, "httpStatus": first.Status,
++			"contentTypes": contentTypes,
++			"message":      "响应没有 thinking 块；可能是请求未触发，也可能是中转层剥离",
++		}
++	}
++	block, _ := blocks[index].(map[string]any)
++	signatureField := "signature"
++	if block["type"] == "redacted_thinking" {
++		signatureField = "data"
++	}
++	signature := stringOrEmpty(block[signatureField])
++	if signature == "" {
++		return map[string]any{
++			"id": "B1", "status": "signature_missing", "surface": surface, "httpStatus": first.Status,
++			"contentTypes": contentTypes, "signatureLength": 0, "message": "thinking 块没有签名",
++		}
++	}
++	if len(signature) < 16 {
++		return map[string]any{
++			"id": "B1", "status": "signature_short", "surface": surface, "httpStatus": first.Status,
++			"contentTypes": contentTypes, "signatureLength": len(signature), "message": "thinking 签名短于正常长度",
++		}
++	}
++	validReplay := replay(ctx, client, cfg.Model, blocks, index, false, thinking)
++	tamperedReplay := replay(ctx, client, cfg.Model, blocks, index, true, thinking)
++	validStatus, _ := validReplay["status"].(string)
++	tamperedStatus, _ := tamperedReplay["status"].(string)
++	status := "unknown"
++	droppedNote := ""
++	switch {
++	case validStatus == "accepted" && tamperedStatus == "rejected":
++		status = "native_signal"
++	case validStatus == "accepted" && tamperedStatus == "accepted":
++		droppedNote = Redact(pickString(validReplay, "dropped", tamperedReplay), cfg.APIKey)
++		if len(droppedNote) > 300 {
++			droppedNote = droppedNote[:300]
++		}
++		if droppedNote == "" {
++			control := replayWithoutThinking(ctx, client, cfg.Model, blocks, thinking)
++			if control != nil {
++				if usage, ok := control["usage"]; ok && control["status"] == "accepted" {
++					valid, validOK := validReplay["usage"]
++					tampered, tamperedOK := tamperedReplay["usage"]
++					if validOK && tamperedOK && sameNumber(valid, usage) && sameNumber(tampered, usage) {
++						droppedNote = "重放 usage=" + formatNumber(usage) + " 与去掉 thinking 的控制组相同"
++					}
++				}
++			}
++		}
++		if droppedNote != "" {
++			status = "block_dropped"
++		} else {
++			status = "tamper_accepted"
++		}
++	case validStatus == "accepted" && tamperedStatus == "rejected_other":
++		status = "tamper_rejected_unclear"
++	case validStatus != "accepted":
++		status = "replay_" + validStatus
++	}
++	out := map[string]any{
++		"id": "B1", "status": status, "surface": surface, "httpStatus": first.Status,
++		"contentTypes": contentTypes, "signatureLength": len(signature),
++		"validReplay": validReplay, "tamperedReplay": tamperedReplay,
++	}
++	if droppedNote != "" {
++		out["droppedNote"] = droppedNote
++	}
++	switch status {
++	case "native_signal":
++		out["message"] = "有效重放成功，篡改签名后被拒绝"
++	case "tamper_accepted":
++		out["message"] = "篡改 thinking 签名后请求仍然成功"
++	case "block_dropped":
++		message := "重放成功但 thinking 块疑似被丢弃，不能算篡改被接受"
++		if droppedNote != "" {
++			message += "（" + droppedNote + "）"
++		}
++		out["message"] = message
++	case "tamper_rejected_unclear":
++		out["message"] = "篡改后被拒绝，但错误信息未指向签名校验"
++	default:
++		out["message"] = "无法完成有效的签名重放对照"
++	}
++	return out
++}
++
++// probeC1 对账：同一段文本，count_tokens 报一个数，真正生成时 usage 报另
++// 一个数。原生实现应当逐 token 相等（±1 容忍边界版本差异）。
++func probeC1(ctx context.Context, client *Client, cfg Config) map[string]any {
++	counted := countForModel(ctx, client, cfg.Model)
++	if !counted.ok {
++		status := "error"
++		if counted.status == 404 || counted.status == 405 {
++			status = "unsupported"
++		}
++		return map[string]any{"id": "C1", "status": status, "httpStatus": counted.status, "message": counted.message}
++	}
++	if counted.count == nil || *counted.count <= 0 {
++		return map[string]any{"id": "C1", "status": "invalid_count", "httpStatus": counted.status, "message": "count_tokens 没有返回有效计数"}
++	}
++	generated := client.Messages(ctx, map[string]any{
++		"model":      cfg.Model,
++		"max_tokens": 64,
++		"messages":   []any{map[string]any{"role": "user", "content": TokenText}},
++	})
++	if !generated.OK {
++		return map[string]any{
++			"id": "C1", "status": "generation_failed", "httpStatus": generated.Status,
++			"counted": *counted.count, "message": generated.Message,
++		}
++	}
++	used := usageInputTokens(generated)
++	if used == nil || *used <= 0 {
++		return map[string]any{
++			"id": "C1", "status": "usage_missing", "httpStatus": generated.Status,
++			"counted": *counted.count, "message": "生成响应没有可用的 usage.input_tokens",
++		}
++	}
++	diff := *used - *counted.count
++	status := "mismatch"
++	switch {
++	case diff == 0:
++		status = "match"
++	case diff >= -1 && diff <= 1:
++		status = "near_match"
++	}
++	out := map[string]any{
++		"id": "C1", "status": status, "httpStatus": generated.Status,
++		"counted": *counted.count, "used": *used, "diff": diff,
++	}
++	if *counted.count != 0 {
++		out["percent"] = float64(diff) / float64(*counted.count)
++	}
++	return out
++}
++
++// tokenizerFamily 把模型按 tokenizer 世代分组：4.7 及以后（含 5.x、Fable/
++// Mythos 5.x）共用新 tokenizer，4.6 及以前共用旧的。同代计数相同是预期，
++// 不能当伪造证据。
++func tokenizerFamily(model string) string {
++	id := strings.ToLower(model)
++	newFamily := regexp.MustCompile(`claude-(?:sonnet|opus|haiku)-5(?:-|$)`).MatchString(id) ||
++		regexp.MustCompile(`claude-(?:fable|mythos)-5(?:-|$)`).MatchString(id) ||
++		strings.Contains(id, "claude-mythos-preview") ||
++		regexp.MustCompile(`claude-(?:sonnet|opus|haiku)-4-(?:7|8)(?:-|$)`).MatchString(id)
++	if newFamily {
++		return "claude-47-plus"
++	}
++	if regexp.MustCompile(`claude-(?:3|4)(?:-|$)`).MatchString(id) ||
++		regexp.MustCompile(`claude-(?:sonnet|opus|haiku)-4(?:-|$)`).MatchString(id) {
++		return "claude-pre-47"
++	}
++	return "unknown"
++}
++
++// probeC2 比两个不同代模型的 token 计数：同代共用 tokenizer 时相同是正常
++// 的，跨代却完全相同才是可疑信号。
++func probeC2(ctx context.Context, client *Client, cfg Config) map[string]any {
++	if cfg.Model == cfg.ComparisonModel {
++		return map[string]any{"id": "C2", "status": "skipped", "reason": "主模型与对照模型相同"}
++	}
++	primary := countForModel(ctx, client, cfg.Model)
++	comparison := countForModel(ctx, client, cfg.ComparisonModel)
++	if !primary.ok || !comparison.ok {
++		status := "error"
++		if primary.ok {
++			status = "comparison_unavailable"
++		}
++		message := primary.message
++		if primary.ok {
++			message = comparison.message
++		}
++		return map[string]any{
++			"id": "C2", "status": status,
++			"primary":    map[string]any{"ok": primary.ok, "status": primary.status, "count": primary.count},
++			"comparison": map[string]any{"ok": comparison.ok, "status": comparison.status, "count": comparison.count},
++			"message":    message,
++		}
++	}
++	if primary.count == nil || comparison.count == nil || *primary.count <= 0 || *comparison.count <= 0 {
++		return map[string]any{
++			"id": "C2", "status": "invalid_count",
++			"primary":    map[string]any{"count": primary.count},
++			"comparison": map[string]any{"count": comparison.count},
++			"message":    "两个模型没有返回有效计数",
++		}
++	}
++	ratio := float64(*primary.count) / float64(*comparison.count)
++	primaryFamily := tokenizerFamily(cfg.Model)
++	comparisonFamily := tokenizerFamily(cfg.ComparisonModel)
++	sameFamily := primaryFamily != "unknown" && primaryFamily == comparisonFamily
++	bothKnown := primaryFamily != "unknown" && comparisonFamily != "unknown"
++	var status string
++	switch {
++	case sameFamily:
++		// 同代 tokenizer：相同/几乎相同是预期，比例明显异常才记 differ_other。
++		if math.Abs(ratio-1) <= 0.03 {
++			status = "same_tokenizer"
++		} else {
++			status = "differ_other"
++		}
++	case bothKnown:
++		switch {
++		case *primary.count == *comparison.count:
++			status = "identical"
++		case math.Abs(ratio-1) <= 0.03:
++			status = "near_identical"
++		case ratio >= 1.1 && ratio <= 1.6:
++			status = "differ_expected"
++		default:
++			status = "differ_other"
++		}
++	default:
++		// 世代未知时，相同计数也可能只是同代 tokenizer，不能单独下结论。
++		switch {
++		case *primary.count == *comparison.count:
++			status = "identical_unknown"
++		case math.Abs(ratio-1) <= 0.03:
++			status = "near_identical_unknown"
++		case ratio >= 1.1 && ratio <= 1.6:
++			status = "differ_expected"
++		default:
++			status = "differ_other"
++		}
++	}
++	return map[string]any{
++		"id": "C2", "status": status,
++		"primary":    map[string]any{"model": cfg.Model, "count": *primary.count, "family": primaryFamily},
++		"comparison": map[string]any{"model": cfg.ComparisonModel, "count": *comparison.count, "family": comparisonFamily},
++		"ratio":      ratio,
++	}
++}
++
++type counted struct {
++	ok      bool
++	status  int
++	message string
++	count   *int
++}
++
++func countForModel(ctx context.Context, client *Client, model string) counted {
++	result := client.CountTokens(ctx, map[string]any{
++		"model":    model,
++		"messages": []any{map[string]any{"role": "user", "content": TokenText}},
++	})
++	count := usageInputTokens(result)
++	return counted{ok: result.OK, status: result.Status, message: result.Message, count: count}
++}
++
++// usageInputTokens 从响应里取 usage.input_tokens。
++func usageInputTokens(result Result) *int {
++	if result.JSON == nil {
++		return nil
++	}
++	usage, ok := result.JSON["usage"].(map[string]any)
++	if !ok {
++		// count_tokens 的响应把计数放在顶层 input_tokens。
++		if input, ok := result.JSON["input_tokens"]; ok {
++			return intOrNil(input)
++		}
++		return nil
++	}
++	return intOrNil(usage["input_tokens"])
++}
++
++func contentBlocks(result Result) []any {
++	if result.JSON == nil {
++		return nil
++	}
++	blocks, _ := result.JSON["content"].([]any)
++	return blocks
++}
++
++// deepCopyBlocks 复制 content 数组：重放会改签名，不能把原响应当草稿纸。
++func deepCopyBlocks(blocks []any) []any {
++	encoded, err := json.Marshal(blocks)
++	if err != nil {
++		return append([]any{}, blocks...)
++	}
++	var out []any
++	if json.Unmarshal(encoded, &out) != nil {
++		return append([]any{}, blocks...)
++	}
++	return out
++}
++
++func pickString(primary map[string]any, key string, fallback map[string]any) string {
++	if value, ok := primary[key].(string); ok && value != "" {
++		return value
++	}
++	if value, ok := fallback[key].(string); ok {
++		return value
++	}
++	return ""
++}
++
++func sameNumber(a, b any) bool {
++	left, right := numberOrNil(a), numberOrNil(b)
++	return left != nil && right != nil && *left == *right
++}
++
++func formatNumber(value any) string {
++	number := numberOrNil(value)
++	if number == nil {
++		return "?"
++	}
++	return strings.TrimSuffix(strings.TrimSuffix(formatFloat(*number), "0"), ".")
++}
++
++func formatFloat(value float64) string {
++	encoded, _ := json.Marshal(value)
++	return string(encoded)
++}
+diff --git a/internal/relay/probe_test.go b/internal/relay/probe_test.go
+new file mode 100644
+index 0000000..1bb6e61
+--- /dev/null
++++ b/internal/relay/probe_test.go
+@@ -0,0 +1,478 @@
++package relay
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++)
++
++// 这些测试全部用合成的 HTTP 响应：一个字节都不发出去。中转站的真伪检测
++// 本身就是"对不可信响应做判断"，用合成响应测判定门槛，正是要测的东西。
++
++// fakeUpstream 按请求体决定回什么，记录收到的请求，供断言出站规矩。
++type fakeUpstream struct {
++	mu       sync.Mutex
++	requests []recordedRequest
++	respond  func(recordedRequest) *http.Response
++}
++
++type recordedRequest struct {
++	URL    string
++	Header http.Header
++	Body   map[string]any
++}
++
++func (f *fakeUpstream) Do(req *http.Request) (*http.Response, error) {
++	body, _ := io.ReadAll(req.Body)
++	parsed := map[string]any{}
++	if len(body) > 0 {
++		_ = json.Unmarshal(body, &parsed)
++	}
++	record := recordedRequest{URL: req.URL.String(), Header: req.Header.Clone(), Body: parsed}
++	f.mu.Lock()
++	f.requests = append(f.requests, record)
++	f.mu.Unlock()
++	return f.respond(record), nil
++}
++
++func (f *fakeUpstream) seen() []recordedRequest {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	return append([]recordedRequest{}, f.requests...)
++}
++
++// jsonResponse 造一个状态码 + JSON 体的响应。
++func jsonResponse(status int, body any) *http.Response {
++	encoded, _ := json.Marshal(body)
++	return &http.Response{
++		StatusCode: status,
++		Header:     http.Header{"Content-Type": []string{"application/json"}},
++		Body:       io.NopCloser(bytes.NewReader(encoded)),
++	}
++}
++
++// claudeAnswer 是一条"原生"的 Messages 回答：带一个 thinking 块与签名。
++func claudeAnswer(signature string) map[string]any {
++	return map[string]any{
++		"type": "message",
++		"role": "assistant",
++		"content": []any{
++			map[string]any{"type": "thinking", "thinking": "…", "signature": signature},
++			map[string]any{"type": "text", "text": "FINAL=0.05"},
++		},
++		"usage": map[string]any{"input_tokens": 120, "output_tokens": 40},
++	}
++}
++
++// nativeUpstreamResponder 是"原生"上游的行为：篡改签名会被拒，count_tokens
++// 与生成时的 usage 一致。
++func nativeUpstreamResponder(req recordedRequest) *http.Response {
++	if strings.HasSuffix(req.URL, "/count_tokens") {
++		return jsonResponse(200, map[string]any{"input_tokens": 88})
++	}
++	messages, _ := req.Body["messages"].([]any)
++	last := ""
++	if len(messages) > 0 {
++		if row, ok := messages[len(messages)-1].(map[string]any); ok {
++			last, _ = row["content"].(string)
++		}
++	}
++	if strings.Contains(last, "Repeat the final line") {
++		// 重放：看 assistant 块里的签名是不是原样
++		if len(messages) < 2 {
++			return jsonResponse(200, claudeAnswer("sig-ctrl"))
++		}
++		assistant, _ := messages[1].(map[string]any)
++		blocks, _ := assistant["content"].([]any)
++		if len(blocks) == 0 {
++			return jsonResponse(200, claudeAnswer("sig-ctrl"))
++		}
++		block, _ := blocks[0].(map[string]any)
++		signature, _ := block["signature"].(string)
++		if signature != "abcdefghijklmnopqrstuvwxyz012345" {
++			return jsonResponse(400, map[string]any{"error": map[string]string{"message": "thinking block signature is invalid"}})
++		}
++		return jsonResponse(200, claudeAnswer(signature))
++	}
++	if len(messages) == 1 && strings.TrimSpace(last) == TokenText {
++		return jsonResponse(200, map[string]any{
++			"type": "message", "content": []any{map[string]any{"type": "text", "text": "OK"}},
++			"usage": map[string]any{"input_tokens": 88},
++		})
++	}
++	return jsonResponse(200, claudeAnswer("abcdefghijklmnopqrstuvwxyz012345"))
++}
++
++// nativeUpstream 行为完全原生。
++func nativeUpstream() *fakeUpstream {
++	return &fakeUpstream{respond: nativeUpstreamResponder}
++}
++
++func baseConfig() Config {
++	return Config{
++		BaseURL:         "https://relay.example.com",
++		APIKey:          "sk-live-SECRETVALUE123456",
++		Model:           "claude-sonnet-5-5",
++		ComparisonModel: "claude-sonnet-4-6",
++		AuthMode:        "auto",
++		APIVersion:      DefaultAPIVersion,
++		Timeout:         5 * time.Second,
++	}
++}
++
++func TestNormalizeBaseURLRefusesWhatTheRulesRefuse(t *testing.T) {
++	cases := []struct {
++		name string
++		in   string
++		code string
++	}{
++		{"内嵌凭据", "https://user:pass@relay.example.com", "BASE_URL_CREDENTIALS"},
++		{"查询串", "https://relay.example.com/api?key=1", "BASE_URL_QUERY"},
++		{"片段", "https://relay.example.com/api#x", "BASE_URL_HASH"},
++		{"非回环 http", "http://relay.example.com", "BASE_URL_INSECURE"},
++		{"别的协议", "ftp://relay.example.com", "BASE_URL_SCHEME"},
++		{"空", "   ", "BASE_URL_REQUIRED"},
++		{"不是 URL", "://nope", "BASE_URL_INVALID"},
++	}
++	for _, c := range cases {
++		t.Run(c.name, func(t *testing.T) {
++			_, err := NormalizeBaseURL(c.in)
++			if err == nil {
++				t.Fatalf("%q 被接受了", c.in)
++			}
++			typed, ok := err.(*Error)
++			if !ok || typed.Code != c.code {
++				t.Fatalf("error = %v, want code %s", err, c.code)
++			}
++		})
++	}
++}
++
++func TestNormalizeBaseURLStripsWhatUsersPasteAndAllowsLoopbackHTTP(t *testing.T) {
++	cases := map[string]string{
++		"https://relay.example.com/":                          "https://relay.example.com",
++		"https://relay.example.com/v1":                        "https://relay.example.com",
++		"https://relay.example.com/v1/messages":               "https://relay.example.com",
++		"https://relay.example.com/v1/messages/count_tokens":  "https://relay.example.com",
++		"https://relay.example.com/api/v1/messages":           "https://relay.example.com/api",
++		"http://127.0.0.1:8080":                               "http://127.0.0.1:8080",
++		"http://localhost:3000/v1":                            "http://localhost:3000",
++		"  https://relay.example.com/proxy/  ":                "https://relay.example.com/proxy",
++	}
++	for in, want := range cases {
++		got, err := NormalizeBaseURL(in)
++		if err != nil {
++			t.Fatalf("%q: %v", in, err)
++		}
++		if got != want {
++			t.Errorf("%q => %q, want %q", in, got, want)
++		}
++	}
++}
++
++func TestRedactTakesTheKeyOutOfEverythingItTouches(t *testing.T) {
++	secret := "sk-live-SECRETVALUE123456"
++	cases := []string{
++		"bad key " + secret + " rejected",
++		"Authorization: Bearer " + secret,
++		"sk-abcdef123456 leaked",
++	}
++	for _, text := range cases {
++		got := Redact(text, secret)
++		if strings.Contains(got, secret) || strings.Contains(got, "sk-abcdef123456") {
++			t.Errorf("%q 没被抹掉: %q", text, got)
++		}
++	}
++}
++
++// 原生行为：篡改签名被拒 + 计数一致 + 跨代比例正常 => 与原生一致。
++func TestProbeNativeUpstreamIsConsistent(t *testing.T) {
++	upstream := nativeUpstream()
++	// 跨代 tokenizer：对照模型计数应当明显不同（比例落在 1.1–1.6）。
++	upstream.respond = func(req recordedRequest) *http.Response {
++		if strings.HasSuffix(req.URL, "/count_tokens") {
++			model, _ := req.Body["model"].(string)
++			if model == ComparisonModel {
++				return jsonResponse(200, map[string]any{"input_tokens": 60})
++			}
++			return jsonResponse(200, map[string]any{"input_tokens": 88})
++		}
++		return nativeUpstreamResponder(req)
++	}
++	report, err := Probe(context.Background(), baseConfig(), upstream, time.Unix(0, 0))
++	if err != nil {
++		t.Fatalf("Probe: %v", err)
++	}
++	if got := report.B1["status"]; got != "native_signal" {
++		t.Fatalf("B1 = %v, want native_signal (%v)", got, report.B1["message"])
++	}
++	if got := report.C1["status"]; got != "match" {
++		t.Fatalf("C1 = %v, want match", got)
++	}
++	if got := report.C2["status"]; got != "differ_expected" {
++		t.Fatalf("C2 = %v, want differ_expected", got)
++	}
++	if report.Verdict.Code != "native_consistent" {
++		t.Fatalf("verdict = %s (%s)", report.Verdict.Code, report.Verdict.Label)
++	}
++	// Key 绝不能出现在报告里。
++	encoded, _ := json.Marshal(report)
++	if strings.Contains(string(encoded), "SECRETVALUE") {
++		t.Fatal("报告里出现了明文 Key")
++	}
++}
++
++// 伪造行为：篡改签名仍然成功 + 计数对不上 => 极大概率伪造。
++func TestProbeForgedUpstreamIsLikelyForged(t *testing.T) {
++	upstream := &fakeUpstream{respond: func(req recordedRequest) *http.Response {
++		if strings.HasSuffix(req.URL, "/count_tokens") {
++			model, _ := req.Body["model"].(string)
++			if model == ComparisonModel {
++				return jsonResponse(200, map[string]any{"input_tokens": 60})
++			}
++			return jsonResponse(200, map[string]any{"input_tokens": 88})
++		}
++		messages, _ := req.Body["messages"].([]any)
++		last := ""
++		if len(messages) > 0 {
++			if row, ok := messages[len(messages)-1].(map[string]any); ok {
++				last, _ = row["content"].(string)
++			}
++		}
++		if strings.Contains(last, "Repeat the final line") {
++			// 中转层不看签名：篡改过的也照样回一条 message。
++			return jsonResponse(200, claudeAnswer("whatever"))
++		}
++		if len(messages) == 2 && strings.TrimSpace(last) == TokenText {
++			// 生成时的 usage 与 count_tokens 完全对不上。
++			return jsonResponse(200, map[string]any{
++				"type": "message", "content": []any{map[string]any{"type": "text", "text": "OK"}},
++				"usage": map[string]any{"input_tokens": 77},
++			})
++		}
++		return jsonResponse(200, claudeAnswer("abcdefghijklmnopqrstuvwxyz012345"))
++	}}
++	report, err := Probe(context.Background(), baseConfig(), upstream, time.Unix(0, 0))
++	if err != nil {
++		t.Fatalf("Probe: %v", err)
++	}
++	if got := report.B1["status"]; got != "tamper_accepted" {
++		t.Fatalf("B1 = %v, want tamper_accepted", got)
++	}
++	if got := report.C1["status"]; got != "mismatch" {
++		t.Fatalf("C1 = %v, want mismatch", got)
++	}
++	if report.Verdict.Code != "likely_forged" {
++		t.Fatalf("verdict = %s, want likely_forged (%v)", report.Verdict.Code, report.Verdict.Signals)
++	}
++	if report.Verdict.ForgedScore < 7 {
++		t.Fatalf("forgedScore = %v, want >= 7", report.Verdict.ForgedScore)
++	}
++}
++
++// 认证被拒：三组探针里后两组应当跳过，结论是检测失败而不是"证据不足"。
++func TestProbeAuthErrorSkipsTheRest(t *testing.T) {
++	upstream := &fakeUpstream{respond: func(recordedRequest) *http.Response {
++		return jsonResponse(401, map[string]any{"error": map[string]string{"message": "invalid x-api-key"}})
++	}}
++	report, err := Probe(context.Background(), baseConfig(), upstream, time.Unix(0, 0))
++	if err != nil {
++		t.Fatalf("Probe: %v", err)
++	}
++	if got := report.B1["status"]; got != "auth_error" {
++		t.Fatalf("B1 = %v, want auth_error", got)
++	}
++	if got := report.C1["status"]; got != "skipped" {
++		t.Fatalf("C1 = %v, want skipped", got)
++	}
++	if report.Verdict.Code != "auth_error" {
++		t.Fatalf("verdict = %s", report.Verdict.Code)
++	}
++}
++
++// auto 模式：x-api-key 被拒后换 bearer 再试，成功后记住 bearer。
++func TestClientFallsBackToBearerOn401(t *testing.T) {
++	upstream := &fakeUpstream{respond: func(req recordedRequest) *http.Response {
++		if req.Header.Get("x-api-key") != "" {
++			return jsonResponse(401, map[string]any{"error": map[string]string{"message": "no x-api-key here"}})
++		}
++		if req.Header.Get("authorization") != "" {
++			return jsonResponse(200, map[string]any{"type": "message", "content": []any{}})
++		}
++		return jsonResponse(400, map[string]any{"error": map[string]string{"message": "no auth"}})
++	}}
++	client := NewClient(baseConfig(), upstream)
++	result := client.Messages(context.Background(), map[string]any{"model": "m"})
++	if !result.OK {
++		t.Fatalf("result = %+v", result)
++	}
++	if client.AuthMode() != "bearer" {
++		t.Fatalf("authMode = %s, want bearer", client.AuthMode())
++	}
++	seen := upstream.seen()
++	if len(seen) != 2 {
++		t.Fatalf("发了 %d 次请求, want 2", len(seen))
++	}
++}
++
++// 出站规矩：请求头里只有声明的认证方式，且用户代理固定；不跟重定向。
++func TestClientSendsOnlyTheDeclaredHeaders(t *testing.T) {
++	upstream := nativeUpstream()
++	client := NewClient(baseConfig(), upstream)
++	client.Messages(context.Background(), map[string]any{"model": "m"})
++	seen := upstream.seen()
++	if len(seen) == 0 {
++		t.Fatal("没有发出请求")
++	}
++	header := seen[0].Header
++	if header.Get("user-agent") != userAgent {
++		t.Errorf("user-agent = %q", header.Get("user-agent"))
++	}
++	if header.Get("anthropic-version") != DefaultAPIVersion {
++		t.Errorf("anthropic-version = %q", header.Get("anthropic-version"))
++	}
++	if header.Get("x-api-key") == "" && header.Get("authorization") == "" {
++		t.Error("没有任何认证头")
++	}
++}
++
++func TestClientRefusesRedirects(t *testing.T) {
++	redirector := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
++		return http.ErrUseLastResponse
++	}}
++	if redirector.CheckRedirect == nil {
++		t.Fatal("没有装重定向策略")
++	}
++	// 真的走一次：服务端回 302，客户端必须原样带回 302 而不是跟过去。
++	upstream := &fakeUpstream{respond: func(recordedRequest) *http.Response {
++		return &http.Response{
++			StatusCode: 302,
++			Header:     http.Header{"Location": []string{"https://evil.example.com/v1/messages"}},
++			Body:       io.NopCloser(strings.NewReader("")),
++		}
++	}}
++	client := NewClient(baseConfig(), upstream)
++	result := client.Messages(context.Background(), map[string]any{"model": "m"})
++	if result.Status != 302 {
++		t.Fatalf("status = %d, want 302（没有跟随重定向）", result.Status)
++	}
++}
++
++// 响应超过 2 MiB 直接判失败，不读到内存里。
++func TestOversizedResponseIsRefused(t *testing.T) {
++	upstream := &fakeUpstream{respond: func(recordedRequest) *http.Response {
++		return &http.Response{
++			StatusCode: 200,
++			Header:     http.Header{},
++			Body:       io.NopCloser(bytes.NewReader(bytes.Repeat([]byte("a"), MaxResponseBytes+10))),
++		}
++	}}
++	client := NewClient(baseConfig(), upstream)
++	result := client.Messages(context.Background(), map[string]any{"model": "m"})
++	if result.OK {
++		t.Fatal("超大响应被判成功了")
++	}
++	if !strings.Contains(result.Message, "2 MiB") {
++		t.Fatalf("message = %q", result.Message)
++	}
++}
++
++// 报告上限：塞满细节的 B1 被压到 256 KiB 以内，结论必须还在。
++func TestReportIsCompressedUnderTheLimit(t *testing.T) {
++	b1 := map[string]any{
++		"id": "B1", "status": "tamper_accepted", "message": strings.Repeat("长", 400000),
++		"contentTypes": []any{strings.Repeat("x", 50000)},
++	}
++	report := Report{
++		Schema: 1, B1: b1,
++		C1:      map[string]any{"id": "C1", "status": "mismatch"},
++		C2:      map[string]any{"id": "C2", "status": "identical"},
++		Verdict: BuildVerdict(b1, map[string]any{"status": "mismatch"}, map[string]any{"status": "identical"}),
++	}
++	limited := limitReport(report)
++	encoded, _ := json.Marshal(limited)
++	if len(encoded) > MaxReportBytes {
++		t.Fatalf("报告 %d 字节, 上限 %d", len(encoded), MaxReportBytes)
++	}
++	if !limited.ReportTruncated {
++		t.Fatal("没有标记被压缩")
++	}
++	if limited.Verdict.Code == "" {
++		t.Fatal("结论被压掉了")
++	}
++}
++
++// 判定门槛不许放宽：只有 B1 的篡改信号、没有 C1 独立异常时，不能判"极大概率"。
++func TestVerdictNeedsBothB1AndC1ForLikelyForged(t *testing.T) {
++	b1 := map[string]any{"id": "B1", "status": "tamper_accepted"}
++	c1 := map[string]any{"id": "C1", "status": "match", "counted": 88, "used": 88, "diff": 0, "percent": 0}
++	c2 := map[string]any{"id": "C2", "status": "differ_expected", "primary": map[string]any{"count": 88}, "ratio": 1.2}
++	verdict := BuildVerdict(b1, c1, c2)
++	if verdict.Code == "likely_forged" {
++		t.Fatalf("只凭 B1 就判了 likely_forged: %+v", verdict)
++	}
++	if verdict.Code != "suspicious" {
++		t.Fatalf("verdict = %s, want suspicious", verdict.Code)
++	}
++}
++
++// "与原生一致"三项缺一不可。
++func TestVerdictNeedsAllThreeForNativeConsistent(t *testing.T) {
++	b1 := map[string]any{"id": "B1", "status": "native_signal"}
++	c1 := map[string]any{"id": "C1", "status": "near_match", "counted": 88, "used": 89, "diff": 1, "percent": 0.011}
++	c2 := map[string]any{"id": "C2", "status": "differ_expected"}
++	if got := BuildVerdict(b1, c1, c2).Code; got != "inconclusive" {
++		t.Fatalf("verdict = %s, want inconclusive", got)
++	}
++	c1["status"] = "match"
++	c2["status"] = "identical"
++	if got := BuildVerdict(b1, c1, c2).Code; got == "native_consistent" {
++		t.Fatal("C2 有明显伪造信号时仍判了 native_consistent")
++	}
++}
++
++func TestThinkingFamilyAndCandidates(t *testing.T) {
++	cases := map[string]string{
++		"claude-3-5-sonnet-20241022": "none",
++		"claude-3-7-sonnet-20250219": "enabled",
++		"claude-sonnet-4-5":          "enabled",
++		"claude-sonnet-4-6":          "adaptive",
++		"claude-sonnet-5-5":          "adaptive",
++		"some-other-model":           "unknown",
++	}
++	for model, want := range cases {
++		if got := thinkingFamily(model); got != want {
++			t.Errorf("%s => %s, want %s", model, got, want)
++		}
++	}
++	if got := thinkingCandidates("claude-3-5-sonnet-20241022"); len(got) != 1 || got[0] != nil {
++		t.Errorf("3.5 的候选 = %v, want [nil]", got)
++	}
++}
++
++// 同代 tokenizer 的计数相同是预期，不能算伪造证据。
++func TestTokenizerFamilyGroupsByGeneration(t *testing.T) {
++	if tokenizerFamily("claude-sonnet-4-6") == tokenizerFamily("claude-sonnet-5-5") {
++		t.Fatal("4.6 与 5.5 被当成了同代")
++	}
++	if tokenizerFamily("claude-sonnet-4-7") != tokenizerFamily("claude-opus-5-0") {
++		t.Fatal("4.7 与 5.x 应当同代")
++	}
++}
++
++// Key 的落盘与回显：密文不含明文，hint 只留头尾。
++func TestKeySealRoundTripAndHint(t *testing.T) {
++	hint := Hint("sk-live-SECRETVALUE123456")
++	if strings.Contains(hint, "SECRET") {
++		t.Fatalf("hint = %q，泄漏了中间字符", hint)
++	}
++	if Hint("short") != "••••" {
++		t.Fatal("太短的 Key 不该留任何字符")
++	}
++}
+diff --git a/internal/relay/report.go b/internal/relay/report.go
+new file mode 100644
+index 0000000..391124a
+--- /dev/null
++++ b/internal/relay/report.go
+@@ -0,0 +1,110 @@
++package relay
++
++import (
++	"context"
++	"encoding/json"
++	"time"
++)
++
++// Report 是一轮探测的全部结果。字段名与 Dock 插件的 probe.mjs 报告逐字
++// 相同，页面与本地存储都按这套读。
++type Report struct {
++	Schema         int            `json:"schema"`
++	GeneratedAt    time.Time      `json:"generatedAt"`
++	Target         Target         `json:"target"`
++	B1             map[string]any `json:"b1"`
++	C1             map[string]any `json:"c1"`
++	C2             map[string]any `json:"c2"`
++	Verdict        Verdict        `json:"verdict"`
++	ReportTruncated bool          `json:"reportTruncated,omitempty"`
++}
++
++// Target 是这次探测打的地址与参数（地址已脱敏，Key 从不出现）。
++type Target struct {
++	BaseURL         string `json:"baseUrl"`
++	Model           string `json:"model"`
++	ComparisonModel string `json:"comparisonModel"`
++	APIVersion      string `json:"apiVersion"`
++	AuthMode        string `json:"authMode"`
++}
++
++// skipped 表示这组探针没跑：B1 都没建立会话时，后面的对比没有意义。
++func skipped(id, reason string) map[string]any {
++	return map[string]any{"id": id, "status": "skipped", "reason": reason}
++}
++
++// Probe 跑一轮完整探测。doer 只给测试用，生产传 nil。
++func Probe(ctx context.Context, cfg Config, doer HTTPDoer, now time.Time) (Report, error) {
++	normalized, err := NormalizeConfig(cfg)
++	if err != nil {
++		return Report{}, err
++	}
++	client := NewClient(normalized, doer)
++	b1 := probeB1(ctx, client, normalized)
++	var c1, c2 map[string]any
++	switch statusOf(b1) {
++	case "unsupported_surface", "auth_error", "endpoint_not_found", "network_error", "aborted":
++		c1 = skipped("C1", "B1 未建立可用的 Anthropic 会话")
++		c2 = skipped("C2", "B1 未建立可用的 Anthropic 会话")
++	default:
++		c1 = probeC1(ctx, client, normalized)
++		c2 = probeC2(ctx, client, normalized)
++	}
++	report := Report{
++		Schema:      1,
++		GeneratedAt: now,
++		Target: Target{
++			BaseURL:         Redact(PublicBaseURL(normalized.BaseURL), normalized.APIKey),
++			Model:           normalized.Model,
++			ComparisonModel: normalized.ComparisonModel,
++			APIVersion:      client.Version(),
++			AuthMode:        client.AuthMode(),
++		},
++		B1:      b1,
++		C1:      c1,
++		C2:      c2,
++		Verdict: BuildVerdict(b1, c1, c2),
++	}
++	return limitReport(report), nil
++}
++
++// limitReport 把报告压进 MaxReportBytes：先丢可再生的细节（contentTypes、
++// 长消息），保住结论与三组 status。报告会被 view/status/存储各带一份，
++// 撑爆宿主通道连状态都读不到。
++func limitReport(report Report) Report {
++	encoded, err := json.Marshal(report)
++	if err == nil && len(encoded) <= MaxReportBytes {
++		return report
++	}
++	report.ReportTruncated = true
++	if b1 := report.B1; b1 != nil {
++		delete(b1, "contentTypes")
++		b1["truncated"] = true
++		if message, ok := b1["message"].(string); ok && len(message) > 600 {
++			b1["message"] = message[:600]
++		}
++		for _, key := range []string{"validReplay", "tamperedReplay"} {
++			replay, ok := b1[key].(map[string]any)
++			if !ok {
++				continue
++			}
++			if message, ok := replay["message"].(string); ok && len(message) > 200 {
++				replay["message"] = message[:200]
++			}
++		}
++	}
++	encoded, err = json.Marshal(report)
++	if err == nil && len(encoded) <= MaxReportBytes {
++		return report
++	}
++	// 还大就把三组探针的 message 也剪掉：结论与 score 必须留下。
++	for _, probe := range []map[string]any{report.B1, report.C1, report.C2} {
++		if message, ok := probe["message"].(string); ok && len(message) > 200 {
++			probe["message"] = message[:200]
++		}
++	}
++	for _, signal := range report.Verdict.Signals {
++		_ = signal
++	}
++	return report
++}
+diff --git a/internal/relay/seal_other.go b/internal/relay/seal_other.go
+new file mode 100644
+index 0000000..88ae55e
+--- /dev/null
++++ b/internal/relay/seal_other.go
+@@ -0,0 +1,77 @@
++//go:build !windows
++
++package relay
++
++import (
++	"crypto/aes"
++	"crypto/cipher"
++	"crypto/rand"
++	"errors"
++	"os"
++	"path/filepath"
++)
++
++// 非 Windows 没有 DPAPI：用一个本地密钥文件（0600）配 AES-GCM。它挡不住
++// 能读用户目录的人，但挡得住备份、日志、同步盘这类顺手泄漏。
++
++func localKey() ([]byte, error) {
++	path := filepath.Join(configDir(), "relay.key")
++	raw, err := os.ReadFile(path)
++	if err == nil && len(raw) == 32 {
++		return raw, nil
++	}
++	if err != nil && !errors.Is(err, os.ErrNotExist) {
++		return nil, err
++	}
++	key := make([]byte, 32)
++	if _, err := rand.Read(key); err != nil {
++		return nil, err
++	}
++	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
++		return nil, err
++	}
++	if err := os.WriteFile(path, key, 0o600); err != nil {
++		return nil, err
++	}
++	return key, nil
++}
++
++func sealSecret(plain []byte) ([]byte, error) {
++	key, err := localKey()
++	if err != nil {
++		return nil, err
++	}
++	block, err := aes.NewCipher(key)
++	if err != nil {
++		return nil, err
++	}
++	aead, err := cipher.NewGCM(block)
++	if err != nil {
++		return nil, err
++	}
++	nonce := make([]byte, aead.NonceSize())
++	if _, err := rand.Read(nonce); err != nil {
++		return nil, err
++	}
++	return aead.Seal(nonce, nonce, plain, nil), nil
++}
++
++func openSecret(sealed []byte) ([]byte, error) {
++	key, err := localKey()
++	if err != nil {
++		return nil, err
++	}
++	block, err := aes.NewCipher(key)
++	if err != nil {
++		return nil, err
++	}
++	aead, err := cipher.NewGCM(block)
++	if err != nil {
++		return nil, err
++	}
++	if len(sealed) < aead.NonceSize() {
++		return nil, errors.New("relay: 密文过短")
++	}
++	nonce, payload := sealed[:aead.NonceSize()], sealed[aead.NonceSize():]
++	return aead.Open(nil, nonce, payload, nil)
++}
+diff --git a/internal/relay/seal_windows.go b/internal/relay/seal_windows.go
+new file mode 100644
+index 0000000..612e706
+--- /dev/null
++++ b/internal/relay/seal_windows.go
+@@ -0,0 +1,84 @@
++//go:build windows
++
++package relay
++
++import (
++	"errors"
++	"unsafe"
++
++	"golang.org/x/sys/windows"
++)
++
++// Windows 上用 DPAPI：密文只能由同一个 Windows 用户解开。中转站的 Key 值得
++// 这一层——它一旦被复制走，就是把用户的钱包复制走。
++
++var (
++	crypt32            = windows.NewLazySystemDLL("crypt32.dll")
++	procCryptProtect   = crypt32.NewProc("CryptProtectData")
++	procCryptUnprotect = crypt32.NewProc("CryptUnprotectData")
++)
++
++// dataBlob 是 CRYPTOAPI_BLOB。
++type dataBlob struct {
++	size uint32
++	data *byte
++}
++
++func newBlob(payload []byte) (*dataBlob, *byte) {
++	if len(payload) == 0 {
++		return &dataBlob{}, nil
++	}
++	buffer := make([]byte, len(payload))
++	copy(buffer, payload)
++	return &dataBlob{size: uint32(len(buffer)), data: &buffer[0]}, &buffer[0]
++}
++
++func (b *dataBlob) bytes() []byte {
++	if b.data == nil || b.size == 0 {
++		return nil
++	}
++	out := make([]byte, b.size)
++	copy(out, unsafe.Slice(b.data, b.size))
++	return out
++}
++
++// sealSecret 用当前用户的 DPAPI 加密。
++func sealSecret(plain []byte) ([]byte, error) {
++	in, _ := newBlob(plain)
++	var out dataBlob
++	ok, _, err := procCryptProtect.Call(
++		uintptr(unsafe.Pointer(in)),
++		0, // description
++		0, // entropy
++		0, // reserved
++		0, // prompt
++		0, // flags: 当前用户
++		uintptr(unsafe.Pointer(&out)),
++	)
++	if ok == 0 {
++		return nil, err
++	}
++	defer windows.LocalFree(windows.Handle(unsafe.Pointer(out.data)))
++	return out.bytes(), nil
++}
++
++// openSecret 用当前用户的 DPAPI 解密。换用户、换机器都会失败——那时应当
++// 报错让用户重新填 Key，而不是悄悄用旧的。
++func openSecret(sealed []byte) ([]byte, error) {
++	in, _ := newBlob(sealed)
++	var out dataBlob
++	ok, _, err := procCryptUnprotect.Call(
++		uintptr(unsafe.Pointer(in)),
++		0, 0, 0, 0, 0,
++		uintptr(unsafe.Pointer(&out)),
++	)
++	if ok == 0 {
++		return nil, err
++	}
++	defer windows.LocalFree(windows.Handle(unsafe.Pointer(out.data)))
++	plain := out.bytes()
++	if plain == nil {
++		return nil, errors.New("relay: 解出的 Key 为空")
++	}
++	return plain, nil
++}
+diff --git a/internal/relay/store.go b/internal/relay/store.go
+new file mode 100644
+index 0000000..6c2709a
+--- /dev/null
++++ b/internal/relay/store.go
+@@ -0,0 +1,126 @@
++package relay
++
++import (
++	"encoding/base64"
++	"encoding/json"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"time"
++)
++
++// Stored 是落盘的配置。Key 本身只以密文出现（sealedKey），回显用 keyHint：
++// 页面、日志、备份拿到的永远不是明文。
++type Stored struct {
++	BaseURL         string    `json:"baseUrl"`
++	Model           string    `json:"model"`
++	ComparisonModel string    `json:"comparisonModel"`
++	AuthMode        string    `json:"authMode"`
++	APIVersion      string    `json:"apiVersion"`
++	TimeoutMs       int       `json:"timeoutMs"`
++	SealedKey       string    `json:"sealedKey,omitempty"`
++	KeyHint         string    `json:"keyHint,omitempty"`
++	UpdatedAt       time.Time `json:"updatedAt,omitempty"`
++}
++
++// Path 是 relay 配置的位置：与 providers.json 同一个配置目录。
++func Path() string { return filepath.Join(configDir(), "relay.json") }
++
++// Load 读配置；不存在时给一份空配置（不是错误：第一次打开页面就该看到表单）。
++func Load(path string) (Stored, error) {
++	raw, err := os.ReadFile(path)
++	if errors.Is(err, os.ErrNotExist) {
++		return Stored{AuthMode: "auto", Model: DefaultModel, ComparisonModel: ComparisonModel, APIVersion: DefaultAPIVersion, TimeoutMs: int(DefaultTimeout / time.Millisecond)}, nil
++	}
++	if err != nil {
++		return Stored{}, err
++	}
++	var stored Stored
++	if err := json.Unmarshal(raw, &stored); err != nil {
++		return Stored{}, err
++	}
++	if stored.AuthMode == "" {
++		stored.AuthMode = "auto"
++	}
++	return stored, nil
++}
++
++// Save 写配置：先写临时文件、fsync、再 rename，掉电不会留下半个 JSON。
++// 目录和文件都是 0600，因为里面即使只有密文，也不该让别人读到 hint。
++func Save(path string, stored Stored) error {
++	dir := filepath.Dir(path)
++	if err := os.MkdirAll(dir, 0o700); err != nil {
++		return err
++	}
++	stored.UpdatedAt = time.Now()
++	encoded, err := json.MarshalIndent(stored, "", "  ")
++	if err != nil {
++		return err
++	}
++	temporary := path + ".tmp"
++	handle, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
++	if err != nil {
++		return err
++	}
++	if _, err := handle.Write(append(encoded, '\n')); err != nil {
++		handle.Close()
++		return err
++	}
++	if err := handle.Sync(); err != nil {
++		handle.Close()
++		return err
++	}
++	if err := handle.Close(); err != nil {
++		return err
++	}
++	return os.Rename(temporary, path)
++}
++
++// SealKey 把明文 Key 加密成可以落盘的字符串（Windows 是 DPAPI，按当前用户）。
++func SealKey(plain string) (string, error) {
++	if plain == "" {
++		return "", nil
++	}
++	sealed, err := sealSecret([]byte(plain))
++	if err != nil {
++		return "", err
++	}
++	return base64.StdEncoding.EncodeToString(sealed), nil
++}
++
++// OpenKey 解回明文 Key；密文损坏或被换用户读时返回错误，绝不猜。
++func OpenKey(encoded string) (string, error) {
++	if strings.TrimSpace(encoded) == "" {
++		return "", nil
++	}
++	raw, err := base64.StdEncoding.DecodeString(encoded)
++	if err != nil {
++		return "", err
++	}
++	plain, err := openSecret(raw)
++	if err != nil {
++		return "", err
++	}
++	return string(plain), nil
++}
++
++// Hint 是 Key 的回显：只留头尾各 4 个字符。太短的 Key 一个字符都不留。
++func Hint(key string) string {
++	key = strings.TrimSpace(key)
++	if len(key) < 12 {
++		return "••••"
++	}
++	return key[:4] + "…" + key[len(key)-4:]
++}
++
++// Masked 是页面上显示的 Key 状态，永远不含明文。
++func Masked(stored Stored) string {
++	if stored.SealedKey == "" {
++		return ""
++	}
++	if stored.KeyHint == "" {
++		return "••••"
++	}
++	return stored.KeyHint
++}
+diff --git a/internal/relay/verdict.go b/internal/relay/verdict.go
+new file mode 100644
+index 0000000..3b884bc
+--- /dev/null
++++ b/internal/relay/verdict.go
+@@ -0,0 +1,183 @@
++package relay
++
++import (
++	"fmt"
++	"strings"
++)
++
++// Signal 是一条证据：哪组探针、支持伪造还是支持原生、权重、给人看的话。
++type Signal struct {
++	ID     string  `json:"id"`
++	Kind   string  `json:"kind"` // forged / native / info
++	Weight float64 `json:"weight"`
++	Detail string  `json:"detail"`
++}
++
++// Verdict 是最后那句话。门槛与 Dock 插件逐字相同，一条都没有放宽：
++//
++//   - "极大概率伪造"要求 B1 强伪造信号（篡改签名仍被接受）加 C1 独立强异常，
++//     并且 forgedScore 至少比 nativeScore 高 2；
++//   - "与原生一致"要求 B1 验签通过、C1 精确一致、C2 符合预期，三项缺一不可；
++//   - 其余一律"证据不足"，因为单个信号可以被高质量中转层伪造。
++type Verdict struct {
++	Code        string   `json:"code"`
++	Label       string   `json:"label"`
++	Confidence  string   `json:"confidence"`
++	ForgedScore float64  `json:"forgedScore"`
++	NativeScore float64  `json:"nativeScore"`
++	Signals     []Signal `json:"signals"`
++	Caveat      string   `json:"caveat"`
++}
++
++const verdictCaveat = "行为指纹不是身份证明；高质量中转层可以伪造单个信号，结论应结合多项证据。"
++
++// BuildVerdict 把三组探针的结果折成一句结论。
++func BuildVerdict(b1, c1, c2 map[string]any) Verdict {
++	signals := make([]Signal, 0, 8)
++	add := func(id, kind string, weight float64, detail string) {
++		signals = append(signals, Signal{ID: id, Kind: kind, Weight: weight, Detail: detail})
++	}
++	b1Status := statusOf(b1)
++	c1Status := statusOf(c1)
++	c2Status := statusOf(c2)
++	b1Message := messageOf(b1)
++
++	switch b1Status {
++	case "tamper_accepted":
++		add("B1", "forged", 4, "篡改 thinking 签名后仍返回成功")
++	case "signature_missing", "signature_short":
++		detail := b1Message
++		if detail == "" {
++			detail = "thinking 签名不可用"
++		}
++		add("B1", "forged", 2, detail)
++	case "no_thinking":
++		// adaptive thinking 可能选择不思考，不能把"没有块"本身当成伪造证据。
++		add("B1", "info", 0, nonEmpty(b1Message, "响应没有 thinking 块，无法验签"))
++	case "block_dropped":
++		add("B1", "info", 0, nonEmpty(b1Message, "thinking 块疑似被中转层丢弃，无法验签"))
++	case "thinking_unsupported":
++		add("B1", "info", 0, nonEmpty(b1Message, "目标拒绝 thinking 配置，无法验签"))
++	case "native_signal":
++		add("B1", "native", 4, "有效签名重放成功，篡改签名被拒绝")
++	}
++
++	switch c1Status {
++	case "mismatch":
++		add("C1", "forged", 3, fmt.Sprintf("count_tokens=%s，usage.input_tokens=%s，差 %s（%s%%）",
++			formatNumber(c1["counted"]), formatNumber(c1["used"]), formatNumber(c1["diff"]), percentOf(c1)))
++	case "match":
++		add("C1", "native", 1, "count_tokens 与 usage.input_tokens 一致（"+formatNumber(c1["counted"])+"）")
++	}
++
++	switch c2Status {
++	case "identical":
++		add("C2", "forged", 2, "两个不同代模型的 token 计数完全相同（"+formatNumber(primaryCount(c2))+"）")
++	case "near_identical":
++		add("C2", "forged", 1, "两个不同代模型的 token 计数仅差 "+ratioPercent(c2))
++	case "same_tokenizer":
++		add("C2", "info", 0, "两个模型属于同代 tokenizer，计数相同是预期行为（"+formatNumber(primaryCount(c2))+"）")
++	case "identical_unknown", "near_identical_unknown":
++		add("C2", "info", 0, "模型世代未知，计数相同不足以作为伪造证据")
++	}
++
++	var forgedScore, nativeScore float64
++	forgedCount := 0
++	for _, signal := range signals {
++		switch signal.Kind {
++		case "forged":
++			forgedScore += signal.Weight
++			forgedCount++
++		case "native":
++			nativeScore += signal.Weight
++		}
++	}
++
++	verdict := func(code, label, confidence string) Verdict {
++		return Verdict{
++			Code: code, Label: label, Confidence: confidence,
++			ForgedScore: forgedScore, NativeScore: nativeScore,
++			Signals: signals, Caveat: verdictCaveat,
++		}
++	}
++
++	switch b1Status {
++	case "auth_error":
++		return verdict("auth_error", "检测失败：认证被拒绝", "low")
++	case "endpoint_not_found":
++		return verdict("endpoint_not_found", "检测失败：接口路径或模型不存在", "low")
++	case "network_error", "aborted":
++		return verdict("network_error", "检测失败：网络不可达或已中止", "low")
++	case "unsupported_surface":
++		return verdict("unsupported_surface", "无法检测：目标不是 Anthropic Messages API", "low")
++	}
++
++	if b1Status == "tamper_accepted" && c1Status == "mismatch" &&
++		forgedScore >= 7 && forgedCount >= 2 && forgedScore >= nativeScore+2 {
++		confidence := "medium"
++		if forgedScore >= 9 {
++			confidence = "high"
++		}
++		return verdict("likely_forged", "该中转站极大概率伪造了模型", confidence)
++	}
++	if forgedScore >= 3 && forgedScore > nativeScore {
++		return verdict("suspicious", "该中转站疑似非原生或翻译层，但是否伪造模型证据不足", "medium")
++	}
++	if b1Status == "native_signal" && c1Status == "match" &&
++		(c2Status == "differ_expected" || c2Status == "same_tokenizer" || c2Status == "skipped") &&
++		forgedScore == 0 {
++		return verdict("native_consistent", "未发现伪造证据：行为与原生 Claude 一致", "medium")
++	}
++	return verdict("inconclusive", "证据不足，无法判断", "low")
++}
++
++func statusOf(probe map[string]any) string {
++	if probe == nil {
++		return ""
++	}
++	status, _ := probe["status"].(string)
++	return status
++}
++
++func messageOf(probe map[string]any) string {
++	if probe == nil {
++		return ""
++	}
++	message, _ := probe["message"].(string)
++	return message
++}
++
++func nonEmpty(value, fallback string) string {
++	if strings.TrimSpace(value) == "" {
++		return fallback
++	}
++	return value
++}
++
++func primaryCount(c2 map[string]any) any {
++	primary, ok := c2["primary"].(map[string]any)
++	if !ok {
++		return nil
++	}
++	return primary["count"]
++}
++
++func percentOf(c1 map[string]any) string {
++	ratio := numberOrNil(c1["percent"])
++	if ratio == nil {
++		return "0.0"
++	}
++	return fmt.Sprintf("%.1f", *ratio*100)
++}
++
++func ratioPercent(c2 map[string]any) string {
++	ratio := numberOrNil(c2["ratio"])
++	if ratio == nil {
++		return "0.0%"
++	}
++	delta := *ratio - 1
++	if delta < 0 {
++		delta = -delta
++	}
++	return fmt.Sprintf("%.1f%%", delta*100)
++}

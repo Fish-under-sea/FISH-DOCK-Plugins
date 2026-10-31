@@ -45,7 +45,7 @@ test('真实 sandbox 页面：按钮、回车、错误反馈、多订阅落盘�
     const {method,params}=JSON.parse(body);calls.push(method);
     res.setHeader('Content-Type','application/json');
     try{
-     const result=method==='dock.autostart'?{autostart:false}:await service[method.replace(/^clash\./,'')](params);
+     const result=await service[method.replace(/^clash\./,'')](params);
      res.end(JSON.stringify({result}));
     }catch(e){res.end(JSON.stringify({error:e.message}));}
     return;

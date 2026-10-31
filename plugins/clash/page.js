@@ -1,7 +1,7 @@
 (() => {
  const root=document.querySelector('#app');
  // 页面自身版本：用于区分「插件已升级」与「页面仍在跑旧缓存」。
- const UI_VERSION='1.3.1';
+ const UI_VERSION='1.4.0';
  const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],['rules','规则'],['connections','连接']];
  const MODES=[['rule','规则','按规则分流：国内直连，其余走代理'],['global','全局','所有流量都走代理'],
   ['direct','直连','全部不走代理，等价于关闭分流']];
@@ -10,9 +10,10 @@
  let draft={id:'',name:'',url:''},fieldErrors={},configDraft=null,settingsOpen=false,confirmDelete='',confirmTun='';
  // 节点浏览状态只影响渲染，不落盘：搜索、延迟排序、只看可用。
  let nodeQuery='',sortDelay=false,onlyAvailable=false;
- let autostart=null,autostartBusy=false;
  let ip=null,ipBusy=false,ipError='',ipReveal=false,ipAsked=false;
  let sites=null,sitesBusy=false;
+ // 下拉框展开期间被推迟的重绘（见 draw）；焦点离开后补上。
+ let staleDraw=false;
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const updating=()=>view?.subscriptions?.some(s=>s.updating);
  // 后端在运行中拒绝订阅与配置变更，界面必须同步禁用（否则只是把错误延后到 RPC）。
@@ -195,9 +196,7 @@
    ${kv('规则数量',Number.isFinite(view.rulesCount)?`${view.rulesCount} 条`:'—')}`);
  }
  function systemCard() {
-  const auto=autostart===true?'已启用':autostart==='unknown'?'不可用':autostart===false?'未启用':'读取中…';
   return card('系统信息',`${kv('操作系统',esc(view.os||'—'))}
-   ${kv('开机自启',`<span class="tag ${autostart===true?'on':'off'}">${auto}</span> ${button('autostart-toggle',autostart===true?'关闭':'启用','',autostartBusy||autostart===null||autostart==='unknown')}`)}
    ${kv('运行模式',view.tun?.enable?'TUN / 服务模式':'普通模式')}
    ${kv('页面版本',UI_VERSION)}`);
  }
@@ -336,15 +335,6 @@
   return run('save',{kernel:view.kernel,mixedPort:view.mixedPort,controllerPort:view.controllerPort,
    tun:{enable:!(view.tun?.enable===true),stack:view.tun?.stack||'mixed'}});
  }
- async function toggleAutostart() {
-  if(autostartBusy)return;
-  const want=autostart!==true;
-  autostartBusy=true;draw();
-  try{const row=await FishDock.call('dock.autostart',{autostart:want});autostart=row?.autostart===true;
-   say(want?'已开启随 Dock 启动':'已关闭随 Dock 启动','ok')}
-  catch{error='自启动设置未保存，请重试'}
-  finally{autostartBusy=false;draw()}
- }
  async function loadIp(refresh=false) {
   if(ipBusy)return;
   ipBusy=true;ipAsked=true;ipError='';if(refresh)ip=null;draw();
@@ -367,6 +357,11 @@
   form.onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing&&e.target?.tagName==='INPUT'){e.preventDefault();return save()}};
  }
  function draw() {
+  // 内核运行时每 1.2 秒轮询重绘一次，而重绘会整块换掉 DOM。原生 <select> 的展开
+  // 列表挂在这个元素上，元素一换就没了——表现就是「点一下很快消失」，节点根本选
+  // 不了。所以焦点停在下拉框上时先不重绘，等它收起（focusout）再补。
+  if(document.activeElement?.tagName==='SELECT'){staleDraw=true;return}
+  staleDraw=false;
   const active=document.activeElement,focus=active?.id;
   const caret=active&&typeof active.selectionStart==='number'?[active.selectionStart,active.selectionEnd]:null;
   if(!view){root.innerHTML=`<h1>Clash</h1><p role="status">${busy?'正在读取内核状态…':esc(error||'尚未读取状态')}</p>${button('view','重试')}`;bind();return}
@@ -404,9 +399,13 @@
    bindSave(subscriptionForm,saveSubscription);
   }
   const groupPicker=root.querySelector('#group-pick');
-  if(groupPicker)groupPicker.onchange=e=>{group=e.target.value;draw()};
+  if(groupPicker){groupPicker.onchange=e=>{group=e.target.value;draw()};groupPicker.onblur=()=>{if(staleDraw)draw()}}
   const nodePicker=root.querySelector('#node-pick');
-  if(nodePicker)nodePicker.onchange=e=>{const current=currentGroup();if(current)run('select',{group:current.name,name:e.target.value})};
+  if(nodePicker){
+   nodePicker.onchange=e=>{const current=currentGroup();if(current)run('select',{group:current.name,name:e.target.value})};
+   // 下拉收起后，把因展开而推迟的那次重绘补上。
+   nodePicker.onblur=()=>{if(staleDraw)draw()};
+  }
   // 搜索框就地过滤：重建列表会丢输入焦点，所以只收起重建后的焦点与光标。
   const search=root.querySelector('#node-search');
   if(search){
@@ -435,7 +434,6 @@
    if(a==='site-test')return testSites();
    if(a==='ip-refresh')return loadIp(true);
    if(a==='ip-reveal'){ipReveal=!ipReveal;draw();return}
-   if(a==='autostart-toggle')return toggleAutostart();
    if(a==='detail')return run('details',{section});
    if(a==='edit'){const s=view.subscriptions.find(s=>s.id===id);draft={id,name:s.name,url:''};fieldErrors={};draw();return}
    if(a==='cancel-edit'){draft={id:'',name:'',url:''};fieldErrors={};draw();return}
@@ -452,11 +450,7 @@
    if(a==='tun-refresh')return run('tunService');
    run(a);
   });
-  // 自启动与出口 IP 都是一次性读取，加标记避免每次重绘都打一次 RPC。
-  if(autostart===null&&!autostartBusy){autostartBusy=true;void FishDock.call('dock.autostart')
-   .then(row=>{autostart=row?.autostart===true})
-   .catch(()=>{autostart='unknown'})
-   .finally(()=>{autostartBusy=false;draw()})}
+  // 出口 IP 是一次性读取，加标记避免每次重绘都打一次 RPC。
   if(section==='overview'&&view?.running&&!ip&&!ipError&&!ipAsked)void loadIp();
  }
  window.addEventListener('pagehide',()=>clearTimeout(timer));

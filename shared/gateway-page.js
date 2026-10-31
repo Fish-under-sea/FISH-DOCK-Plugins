@@ -40,28 +40,4 @@ $('form').addEventListener('input', () => { dirty = true; });
 for (const action of ['start', 'stop', 'open']) $(action).onclick = () => run(`gateway.${action}`);
 $('settings').onclick = () => { const expanded = $('configuration').hidden; $('configuration').hidden = !expanded; $('settings').setAttribute('aria-expanded', String(expanded)); };
 $('refresh').onclick = () => { opened = ''; void run('gateway.view'); };
-// 自启动：随 Dock 启动就拉起本机服务。关掉它只是不再开机启动，眼下的服务照旧。
-// 宿主（FISH Dock 1.2.1 之前）没有这个接口时把按钮藏起来，不打扰既有操作。
-// 1.2.4 起 Dock 的插件卡上也有同一颗开关，两处写的是注册表里同一个 autostart。
-function setPressed(on) {
- const button = $('autostart');
- if (!button) return;
- button.setAttribute('aria-pressed', String(!!on));
- button.classList.toggle('on', !!on);
-}
-async function autostart(onChange) {
- const button = $('autostart');
- if (!button) return;
- button.disabled = true;
- try {
-  const row = onChange === undefined ? await FishDock.call('dock.autostart') : await FishDock.call('dock.autostart', { autostart: onChange });
-  setPressed(row.autostart === true);
- } catch (error) {
-  if (onChange === undefined) { button.hidden = true; }
-  else { setPressed(!onChange); $('error').textContent = error.message; }
- }
- finally { button.disabled = false; }
-}
-const autostartButton = $('autostart');
-if (autostartButton) autostartButton.onclick = () => { void autostart(autostartButton.getAttribute('aria-pressed') !== 'true'); };
-void autostart();void run('gateway.view');
+void run('gateway.view');

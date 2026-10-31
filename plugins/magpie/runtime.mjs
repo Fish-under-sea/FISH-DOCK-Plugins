@@ -8,6 +8,7 @@ import {magpieEnvironment} from './environment.mjs';
 import {preparePortableRuntime} from './portable-runtime.mjs';
 import {gatewayAddr,gatewayHost,gatewayPortCandidates,readMagpiePrefs} from './network.mjs';
 import {registerSeedPage,syncPageDirectory} from './page-seed.mjs';
+import {preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
 import {serviceError} from '../../shared/errors.mjs';
 
 // lanGatewayPort 挑一个共享时能长期不变的端口：按保存端口、Magpie 端口、默认
@@ -60,6 +61,10 @@ export function createRuntime(context){
     if(seeded)await registerSeedPage({data:portable.data,name,directory:seeded.directory,onPhase,signal});
    }
   }catch(error){if(error.name==='AbortError')throw error;throw serviceError('DATA_MIGRATION_FAILED')}
+  // 出厂预装的社区供应商插件只登记包名（preinstall.mjs）：首次启动由 magpie 自己
+  // 的更新循环按 spec 装进 <data>/plugins。登记失败不拦启动——它是锦上添花，写不
+  // 进去就下次再试，用户的服务照常起来。
+  if(preinstallEnabled())try{await seedPreinstalled({data:portable.data,onPhase,signal})}catch(error){if(error.name==='AbortError')throw error}
   onPhase('start-process');
   const child=await startChild({executable:portable.executable,args:['web','--addr',`127.0.0.1:${upstreamPort}`,'--no-open'],cwd:root,signal,
    env:{...magpieEnvironment({cache,key}),MAGPIE_ADDR:gateway},

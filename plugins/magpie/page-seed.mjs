@@ -107,8 +107,9 @@ export function rewriteSeedSpec({raw,spec,name=seedDirectoryName}){
  return {changed:!hasRaw||next!==text,text:next};
 }
 
-// 先备份再写；备份用 wx，已有旧备份不会被本次覆盖。
-async function writeManifest(file,text,signal){
+// 先备份再写；备份用 wx，已有旧备份不会被本次覆盖。preinstall.mjs 登记供应商
+// 插件时写的是同一个 plugins.json，所以这一份写盘逻辑共用。
+export async function writeManifest(file,text,signal){
  const backup=`${file}.bak`;
  try{await fs.writeFile(backup,await fs.readFile(file,'utf8'),{flag:'wx',mode:0o600})}
  catch(error){

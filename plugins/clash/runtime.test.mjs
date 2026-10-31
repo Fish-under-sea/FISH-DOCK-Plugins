@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createProxyLease, kernelConfig, ensureGeoData, GEO_FILES, proxiedGet} from './runtime.mjs';
+import {createProxyLease, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet} from './runtime.mjs';
 import {createServer} from 'node:http';
 import {mkdtemp,writeFile,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -157,4 +157,14 @@ test('出口 IP 查询把绝对 URI 交给本地代理口，并拒绝异常、�
  } finally {
   await new Promise(resolve=>server.close(resolve));
  }
+});
+// 普通模式起内核前，必须让 TUN 服务把它的内核交出来：两者写同一个控制器端口，
+// 同时跑就成了「TUN 与普通模式只有一个能用」。
+test('TUN 服务还托管着内核时才需要交还，其余状态不误停',()=>{
+ assert.equal(tunHandoverNeeded({installed:true,enabled:true,state:'running'}),true);
+ assert.equal(tunHandoverNeeded({installed:true,enabled:false,state:'running'}),false,'job 已关，服务里没有内核');
+ assert.equal(tunHandoverNeeded({installed:true,enabled:true,state:'stopped'}),false,'服务停着，端口是空的');
+ assert.equal(tunHandoverNeeded({installed:false,enabled:false,state:'absent'}),false);
+ assert.equal(tunHandoverNeeded(null),false);
+ assert.equal(tunHandoverNeeded(undefined),false);
 });
