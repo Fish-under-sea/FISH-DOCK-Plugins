@@ -7,11 +7,12 @@
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/magpie-community/plugins.git", "directory": "packages/checkin" },
   "magpie": {
+    "icon": "page/icon.png",
     "page": {
       "title": "Check-in",
       "titles": { "zh": "自动签到", "zh-TW": "自動簽到" },
       "file": "page/index.html",
-      "icon": "page/icon.png"
+      "icon": "page/icon.svg"
     },
     "permissions": ["checkin:state"],
     "calls": ["checkin:set-provider", "checkin:set-account", "checkin:run", "checkin:refresh", "brand:status", "brand:set"],

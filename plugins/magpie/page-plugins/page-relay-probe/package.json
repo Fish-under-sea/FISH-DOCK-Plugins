@@ -8,14 +8,14 @@
     "test": "node --test page/app.test.mjs"
   },
   "magpie": {
+    "icon": "page/icon.png",
     "page": {
       "title": "中转站探针",
       "titles": {
         "zh": "中转站探针",
         "en": "Relay probe"
       },
-      "file": "page/index.html",
-      "icon": "page/icon.png"
+      "file": "page/index.html"
     },
     "calls": ["relay:view", "relay:save", "relay:start", "relay:status", "relay:stop"]
   }

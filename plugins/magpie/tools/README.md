@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2336`，加上 `patches/magpie-v0.1.2336+fish.7.patch`。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2336`，加上 `patches/magpie-v0.1.2336+fish.8.patch`。
 
 ## 为什么要自己编
 
@@ -18,6 +18,13 @@
 - **素材编在 exe 里，不进插件包**。社区插件一更新，`magpie.icon` 就回到原样——那正是「用户更新完全掉」的成因，所以这层不能挂在插件包上。
 - **开关只是一个标记文件** `<data>/icons/brand/on`（`provider.SetBrand`），删掉立刻回到原版，不删用户任何数据；页面那两颗按钮是 `brand:status` / `brand:set`（`internal/gui/pluginpagecall.go`）。`pruneIcons` 会把已落盘的品牌图标当成「有人用」而留下。
 - **一份素材一个文件，深浅自带**：`<provider id>.svg` 里 `.l` / `.d` 两组用 `@media (prefers-color-scheme: dark)` 切换。窗口本来就跟着系统配色走（`app.js` 问的是同一个媒体查询），所以服务端不必猜主题。**实测过**（Chromium 156 headless + CDP `Emulation.setEmulatedMedia`）：`<img src=x.svg>` 里的媒体查询生效，SVG 里的 `<image href="data:image/png;base64,…">` 也渲染得出——位图两套因此也能塞进同一个文件。
+
+`fish.8` 补上这一层漏掉的两个地方，并把图标画大：
+
+- **「扩展 → 插件 → 已安装」也认这套素材**。它读的是包自己的 `magpie.icon`（`plugin.InstalledIcon`），与上一版接管的四处不是同一条路。列表里一行说的是「包」，一个包可能注册好几家（`trae-cn` 与 `trae-global`），取其中第一个命中素材的（`brandIconsBySpec`）。
+- **包内的相对路径图也读得出来**。`magpie.icon` 写成 `page/icon.png` 时 `InstalledIcon` 不认——它只收 `https://` 与 `data:` 这两种页面自己加载得了的形式。`LocalIcon`（`internal/gui/plugin_icon_local.go`）在窗口这边读文件、按内容存成 `file:` 值再画，于是「自动签到 / 中转站探针」不再是灰书页。越界路径（`../`）与绝对路径一律不读。
+- **图标画大**：列表行 18 → 23px、卡片 20 → 24px、大头图 25 → 30px（`assets/plugins.css`）。缩到 18px 的插画认不出是什么。
+- **两个页面插件的图标各归各位**：2.0.5 把品牌立绘塞进了 `magpie.page.icon`（那是侧边栏的），这一版挪回 `magpie.icon`（包级，只出现在插件列表），`magpie.page.icon` 恢复各自的 `page/icon.svg`。
 
 素材是拿签到页那批已定稿的图合成的，合的是**根 `<svg>` 上的绘图属性也一起搬**（`fill="currentColor"`、`fill="#CF0A2C"` 这类）。只搬 innerHTML 而不搬根属性，图标会一律变黑——`currentColor` 在 `<img>` 里没有父级可继承，本来恒等于黑，浅色组还要把它落成 `#111111`。
 
@@ -39,7 +46,7 @@ git -C ..\upstream-2336 apply patches\magpie-v0.1.2336+fish.7.patch
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
   -UpstreamRoot ..\upstream-2336 `
-  -VersionTag 'v0.1.2336+fish.7' -FileVersion '0.1.2336.7' -ProductName 'magpie fish' `
+  -VersionTag 'v0.1.2336+fish.8' -FileVersion '0.1.2336.8' -ProductName 'magpie fish' `
   -WinresJson ..\upstream-2336\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
@@ -56,8 +63,8 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 | 位置 | 值 |
 |---|---|
-| `magpie version` | `magpie v0.1.2336+fish.7` |
-| FileVersion | `0.1.2336.7`（四段数字，Windows 资源要求） |
+| `magpie version` | `magpie v0.1.2336+fish.8` |
+| FileVersion | `0.1.2336.8`（四段数字，Windows 资源要求） |
 | ProductName | `magpie fish` |
 | FileDescription | `magpie fish (FISH Dock build)` |
 | manifest identity | `ai.usemagpie.magpie.fish` |
