@@ -40,7 +40,18 @@ function labelValue(value) {
     throw Error('请输入 1–80 字的订阅名称，不要包含地址或凭据');
   return name;
 }
-export function createClash({context,runtime,request:injectedRequest,fetch:fetcher=globalThis.fetch,defaultKernel=''}) {
+// 连接详情最多回这么多条：控制器返回的是全量连接，几千条一层层过协议会把页面卡住。
+const CONNECTION_LIMIT=200;
+// 规则一般几百条，上限只是防止异常内核把页面撑爆。
+const RULE_LIMIT=2000;
+// 订阅节点的名字带 `[sub-…] ` 前缀，只用于内核内部区分来源，展示时剥掉。
+const stripPrefix=name=>String(name??'').replace(/^\[sub-[a-f0-9-]{36}\] /,'');
+function cpuLabel() {
+  const list=os.cpus();
+  const model=String(list[0]?.model??'').trim().replace(/\s+/g,' ');
+  return model?`${model} · ${list.length} 核`:`${list.length} 核`;
+}
+export function createClash({context,runtime,request:injectedRequest,fetch:fetcher=globalThis.fetch,defaultKernel='',pluginVersion=''}) {
   let running=null,settings,loading,subscriptions=[],secret='',operation=null,closing=false,operationError='';
   let startedAt=0,ipCache=null;
   // secrets.read 由宿主先解密；这里只标记解密后内容仍不符合订阅地址格式的情况。
@@ -106,7 +117,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     })().catch(error=>{loading=null;throw error});
     await loading;return settings;
   }
-  async function request(path,{method='GET',body}={}) {
+  async function request(path,{method='GET',body,limit=2*1024*1024}={}) {
     if(injectedRequest)return injectedRequest(path,{method,...(body===undefined?{}:{body})});
     const c=await config(),response=await fetcher(`http://127.0.0.1:${c.controllerPort}${path}`,{
       method,headers:{Authorization:`Bearer ${secret}`,'Content-Type':'application/json'},
@@ -115,7 +126,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     if(response.status===204)return {};
     const reader=response.body.getReader();let size=0;const chunks=[];
     try{for(;;){const {done,value}=await reader.read();if(done)break;
-      if((size+=value.byteLength)>2*1024*1024)throw Error('mihomo 响应超过限制');chunks.push(value)}}
+      if((size+=value.byteLength)>limit)throw Error('mihomo 响应超过限制');chunks.push(value)}}
     finally{await reader.cancel().catch(()=>{})}
     return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');
   }
@@ -138,6 +149,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       subscriptions:subscriptions.map(s=>({...s,updating:jobs.has(s.id)})),
       running:alive(),operation:operation?.name??null,tunSwitching:tunBusy,error:operationError,systemProxy:runtime.proxy.active?.()??false,
       os:`${os.platform()==='win32'?'Windows':os.platform()} ${os.release()}`,
+      arch:os.arch(),cpu:cpuLabel(),memoryTotal:os.totalmem(),pluginVersion,
       uptimeMs:alive()&&startedAt?Date.now()-startedAt:null,
       rulesCount:null,groups:[],mode:'rule'};
     if(controller&&state.running)try{
@@ -344,11 +356,35 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function details({section}) {
     if(section==='providers')return (await view({controller:false})).subscriptions;
     if(!alive())throw Error('内核尚未启动');
-    const path={rules:'/rules',connections:'/connections'}[section];if(!path)throw Error('详情类别无效');
-    const result=await request(path);
-    if(section==='connections')return {count:Array.isArray(result.connections)?result.connections.length:0,
-      uploadTotal:result.uploadTotal??0,downloadTotal:result.downloadTotal??0};
-    return {rules:(result.rules||[]).map(r=>({type:r.type,proxy:r.proxy}))};
+    if(section==='rules'){
+      // payload 是规则真正拦/放的域名或网段：只有 type 与 proxy 的话，页面上一行行
+      // 全是「GEOSITE → 🎯 全球直连」，看不出规则在干什么。
+      const result=await request('/rules');
+      const rules=(Array.isArray(result.rules)?result.rules:[]).map(rule=>({type:String(rule?.type??''),
+        payload:String(rule?.payload??''),proxy:String(rule?.proxy??'')}));
+      return {count:rules.length,rules:rules.slice(0,RULE_LIMIT)};
+    }
+    if(section==='connections'){
+      // 只取展示需要的字段：进程路径这类本机信息既不展示也不回传。
+      // 连接列表比一般响应大得多（几百条连接×每条 metadata），单独放宽到 8 MiB。
+      const result=await request('/connections',{limit:8*1024*1024});
+      const list=Array.isArray(result.connections)?result.connections:[];
+      return {count:list.length,
+        uploadTotal:Number.isFinite(result.uploadTotal)?result.uploadTotal:0,
+        downloadTotal:Number.isFinite(result.downloadTotal)?result.downloadTotal:0,
+        connections:list.slice(0,CONNECTION_LIMIT).map(row=>{
+          const meta=row?.metadata??{},port=meta.destinationPort?`:${meta.destinationPort}`:'';
+          return {id:String(row?.id??'').slice(0,80),network:String(meta.network??''),
+            host:String(meta.host??''),destination:meta.destinationIP?`${meta.destinationIP}${port}`:'',
+            source:String(meta.sourceIP??''),
+            chains:Array.isArray(row?.chains)?row.chains.slice(0,8).map(stripPrefix):[],
+            rule:[row?.rule,row?.rulePayload].filter(Boolean).map(String).join(' '),
+            upload:Number.isFinite(row?.upload)?row.upload:0,
+            download:Number.isFinite(row?.download)?row.download:0,
+            start:row?.start??null};
+        })};
+    }
+    throw Error('详情类别无效');
   }
   // 出口 IP 必须经用户配置的代理口查询：直连查询在 TUN 或系统代理下会得到本机出口，
   // 与页面要展示的「当前节点看到的 IP」不一致。结果缓存 60 秒，避免反复打查询接口。

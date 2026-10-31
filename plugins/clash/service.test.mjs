@@ -11,7 +11,7 @@ test('failed proxy restoration still stops the owned core and remains retryable'
  f.runtime.proxy.restore=async()=>{};
  await f.service.stop();assert.equal((await f.service.view()).error,'');
 });
-function fixture(disk=new Map()) {
+function fixture(disk=new Map(),options={}) {
  const requests=[],updates=[];let up=false,starts=0,stops=0,owned,fail=false,blocked=null;
  const context={dataDirectory:'D:/synthetic/.fishplugin-clash',
   storage:{read:async(c,n)=>disk.get(`${c}/${n}`)??null,write:async(c,n,v)=>disk.set(`${c}/${n}`,v)},
@@ -26,8 +26,11 @@ function fixture(disk=new Map()) {
    'Ⓜ️ 微软服务':{now:'DIRECT',all:['DIRECT','🚀 节点选择']},
    DIRECT:{type:'Direct',now:'',all:null},
    ...Object.fromEntries(names.map(name=>[name,{history:[{delay:20}]}]))}}:
-   path==='/configs'?{mode:'rule'}:path==='/connections'?{connections:[{token:'PRIVATE'}],uploadTotal:10}:
-   path==='/rules'?{rules:[{type:'MATCH',proxy:'x'},{type:'GEOSITE',proxy:'x'},{type:'GEOIP',proxy:'x'}]}:
+   path==='/configs'?{mode:'rule'}:path==='/connections'?{connections:[{id:'conn-1',
+    metadata:{network:'tcp',host:'example.test',destinationIP:'203.0.113.9',destinationPort:'443',sourceIP:'127.0.0.1',processPath:'C:/private/PRIVATE.exe'},
+    chains:['🚀 节点选择',`[${owned.subscriptions[0].id}] same`],rule:'DomainSuffix',rulePayload:'test',
+    upload:5,download:7,start:'2026-10-31T09:00:00.000Z',token:'PRIVATE'}],uploadTotal:10,downloadTotal:12,memory:1048576}:
+   path==='/rules'?{rules:[{type:'MATCH',payload:'',proxy:'🐟 漏网之鱼'},{type:'GEOSITE',payload:'cn',proxy:'🎯 全球直连'},{type:'GEOIP',payload:'cn',proxy:'🎯 全球直连'}]}:
    path.includes('/delay?')?{delay:path.includes('youtube')?0:87}:{url:'https://private.test/?token=PRIVATE'};
  };
  const runtime={start:async c=>{starts++;up=true;owned=c;return {alive:()=>up,stop:async()=>{stops++;up=false}}},
@@ -39,7 +42,7 @@ function fixture(disk=new Map()) {
    enable:async()=>true,disable:async()=>true},
   tunStop:async()=>{}};
  let tunInstalled=false,tunKernel='';
- const service=createClash({context,runtime,request});
+ const service=createClash({context,runtime,request,...options});
  return {service,disk,requests,updates,runtime,context,stats:()=>({starts,stops,up,owned}),fail:()=>{fail=true},
   block:()=>{let release;blocked=new Promise(r=>release=r);return release}};
 }
@@ -111,7 +114,19 @@ test('refresh failure retains success time and count, updates only one provider 
  assert.deepEqual(damaged.subscriptions[0].userInfo,{upload:1,download:2,total:10,used:3,expire:1767225600});
  assert.ok(!JSON.stringify(after).includes('PRIVATE'));
  assert.ok(!JSON.stringify(await f.service.details({section:'providers'})).includes('PRIVATE'));
- assert.deepEqual(await f.service.details({section:'connections'}),{count:1,uploadTotal:10,downloadTotal:0});
+ // 规则详情要带 payload：只有类型和策略，页面看不出这条规则到底拦了什么。
+ const rules=await f.service.details({section:'rules'});
+ assert.equal(rules.count,3);
+ assert.deepEqual(rules.rules[1],{type:'GEOSITE',payload:'cn',proxy:'🎯 全球直连'});
+ // 连接详情要带列表：只给数量的话「连接」页永远是空的。
+ const connections=await f.service.details({section:'connections'});
+ assert.equal(connections.count,1);assert.equal(connections.uploadTotal,10);assert.equal(connections.downloadTotal,12);
+ assert.equal(connections.connections[0].host,'example.test');
+ assert.equal(connections.connections[0].destination,'203.0.113.9:443');
+ assert.deepEqual(connections.connections[0].chains,['🚀 节点选择','same'],'链路里的订阅前缀要剥掉');
+ assert.equal(connections.connections[0].rule,'DomainSuffix test');
+ assert.equal(connections.connections[0].download,7);
+ assert.ok(!JSON.stringify(connections).includes('PRIVATE'),'连接详情不透传原始字段与进程路径');
  await f.service.stop();
 });
 test('single subscription migration is idempotent and preserves legacy cache availability',async()=>{
@@ -313,5 +328,28 @@ test('TUN 服务没装时拒绝切换，且不动正在跑的内核',async()=>{
  assert.equal(f.stats().stops,before.stops,'拒绝时不该停内核');
  assert.equal(f.stats().up,true);
  assert.equal((await f.service.view({controller:false})).tun.enable,false);
+});
+// 系统信息卡过去只有「操作系统 / 运行模式 / 页面版本」三行，用户看到的就是「读取不完整」。
+test('系统信息补齐架构、处理器、内存与插件版本',async()=>{
+ const f=fixture();
+ const state=await f.service.view({controller:false});
+ assert.ok(typeof state.os==='string'&&state.os.length>0);
+ assert.ok(typeof state.arch==='string'&&state.arch.length>0,'架构');
+ assert.ok(typeof state.cpu==='string'&&state.cpu.length>0,'处理器');
+ assert.ok(Number.isFinite(state.memoryTotal)&&state.memoryTotal>0,'内存总量');
+ assert.equal(state.pluginVersion,'','未注入时留空由页面兜底');
+ const stamped=fixture(new Map(),{pluginVersion:'2.0.3'});
+ assert.equal((await stamped.service.view({controller:false})).pluginVersion,'2.0.3');
+});
+// 「当前运行时不支持查询出口 IP」只该在能力真的缺失时出现；代理本身不通要说代理不通。
+test('出口 IP：运行时缺能力才报不支持，代理不通报查询失败',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ f.runtime.proxiedGet=undefined;
+ const missing=await f.service.ipInfo({refresh:true});
+ assert.equal(missing.available,false);assert.match(missing.reason,/不支持/);
+ f.runtime.proxiedGet=async()=>{throw Error('offline')};
+ const broken=await f.service.ipInfo({refresh:true});
+ assert.equal(broken.available,false);assert.match(broken.reason,/无响应/);
+ await f.service.stop();
 });
 
