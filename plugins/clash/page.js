@@ -1,7 +1,7 @@
 (() => {
  const root=document.querySelector('#app');
  // 页面自身版本：用于区分「插件已升级」与「页面仍在跑旧缓存」。
- const UI_VERSION='1.4.0';
+ const UI_VERSION='1.4.1';
  const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],['rules','规则'],['connections','连接']];
  const MODES=[['rule','规则','按规则分流：国内直连，其余走代理'],['global','全局','所有流量都走代理'],
   ['direct','直连','全部不走代理，等价于关闭分流']];
@@ -66,7 +66,7 @@
  }
  function schedule() {
   clearTimeout(timer);
-  if(view&&(view.running||updating()||view.operation))timer=setTimeout(poll,1200);
+  if(view&&(view.running||updating()||view.operation||view.tunSwitching))timer=setTimeout(poll,1200);
  }
  async function poll() {
   if(busy||polling){schedule();return}
@@ -141,13 +141,13 @@
   const status=tun?'TUN 模式已启用：应用通过虚拟网卡访问网络。'
    :system?`系统代理已接管：浏览器等应用走 127.0.0.1:${view.mixedPort}。`
    :'未接管系统网络：只有内置代理端口可用，其他应用需要自行配置。';
-  const tunNote=!view.tunService?.installed?' · 需先安装 TUN 服务':view.running&&!tun?' · 先停止内核再修改':'';
+  const tunNote=!view.tunService?.installed?' · 需先安装 TUN 服务':view.running?' · 切换会重启内核':'';
   return card('网络设置',`<div class="switch-row"><div><strong>系统代理</strong>
     <p class="small muted">${system?'已写入系统代理设置':'由 Dock 写入，停止内核时还原'}</p></div>
     ${button('proxy',system?'关闭':'开启',`role="switch" aria-checked="${system}"`,busy||(!view.running&&!system))}</div>
    <div class="switch-row"><div><strong>TUN 虚拟网卡</strong>
     <p class="small muted">${tun?'已启用':'未启用'}${tunNote}</p></div>
-    ${button('tun-toggle',tun?'关闭':'开启',`role="switch" aria-checked="${tun}"`,busy||view.running||!view.configured)}</div>
+    ${button('tun-toggle',view.tunSwitching?'切换中…':tun?'关闭':'开启',`role="switch" aria-checked="${tun}"`,busy||view.tunSwitching||!view.configured||!view.tunService?.installed)}</div>
    <p class="status-line">${esc(status)}</p>`);
  }
  function modeCard() {
@@ -331,9 +331,11 @@
    controllerPort:Number(data.get('controllerPort')),tun:{enable:tunEnable?.checked===true,stack:String(data.get('tunStack')||'mixed')}});
  }
  function toggleTun() {
-  if(locked())return false;
-  return run('save',{kernel:view.kernel,mixedPort:view.mixedPort,controllerPort:view.controllerPort,
-   tun:{enable:!(view.tun?.enable===true),stack:view.tun?.stack||'mixed'}});
+  // 运行中也能切：后端把内核停掉、写配置、再按新设置拉起来（TUN 由 SYSTEM 服务托管，
+  // 普通模式由插件自己 spawn，两者抢同一个控制器端口，必须重启内核才能换）。整段在后端
+  // 后台跑，这里只负责发出去，进度靠 view.tunSwitching 轮询回来。
+  if(busy||view.operation||view.tunSwitching)return false;
+  return run('tunSwitch',{enable:!(view.tun?.enable===true)});
  }
  async function loadIp(refresh=false) {
   if(ipBusy)return;
@@ -364,6 +366,10 @@
   staleDraw=false;
   const active=document.activeElement,focus=active?.id;
   const caret=active&&typeof active.selectionStart==='number'?[active.selectionStart,active.selectionEnd]:null;
+  // 重绘同样会把节点列表与分组条滚回原点：轮询一次用户就往上跳一格，滚不动。
+  // 记下两个容器的滚动位置，重建后放回去。
+  const scrolled=root.querySelector('#node-list'),groupStrip=root.querySelector('.group-strip');
+  const keepScroll={nodeTop:scrolled?.scrollTop??0,groupLeft:groupStrip?.scrollLeft??0};
   if(!view){root.innerHTML=`<h1>Clash</h1><p role="status">${busy?'正在读取内核状态…':esc(error||'尚未读取状态')}</p>${button('view','重试')}`;bind();return}
   if(!groups().some(g=>g.name===group))group=groups()[0]?.name||'';
   const double=view.layout==='double',cfg=configDraft||view;
@@ -413,6 +419,10 @@
    search.oncompositionend=()=>draw();
   }
   if(focus){const next=root.querySelector(`#${focus}`);next?.focus();if(caret&&next?.setSelectionRange)next.setSelectionRange(...caret)}
+  // 滚动位置在重建后放回去；重建后内容可能变短，浏览器自己会夹到合法范围。
+  const listNow=root.querySelector('#node-list'),stripNow=root.querySelector('.group-strip');
+  if(listNow&&keepScroll.nodeTop)listNow.scrollTop=keepScroll.nodeTop;
+  if(stripNow&&keepScroll.groupLeft)stripNow.scrollLeft=keepScroll.groupLeft;
  }
  function bind() {
   root.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{

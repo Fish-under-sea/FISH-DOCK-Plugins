@@ -21,8 +21,9 @@ function fixture() {
   get innerHTML(){return html},
   set innerHTML(value){
    html=value;elements={};buttons=[];
-   for(const m of value.matchAll(/<(?:input|form|details|select)\b[^>]*>/g)){
-    const a=attrs(m[0]);if(a.id)elements[a.id]={...a,tagName:(/^<(\w+)/.exec(m[0])?.[1]??'').toUpperCase(),value:a.value??'',open:m[0].includes(' open'),disabled:m[0].includes('disabled'),focus(){}};
+   // div 也收：节点列表的滚动容器就是带 id 的 div，重绘后要能拿回它的 scrollTop。
+   for(const m of value.matchAll(/<(?:input|form|details|select|div)\b[^>]*>/g)){
+    const a=attrs(m[0]);if(a.id)elements[a.id]={...a,tagName:(/^<(\w+)/.exec(m[0])?.[1]??'').toUpperCase(),value:a.value??'',open:m[0].includes(' open'),disabled:m[0].includes('disabled'),scrollTop:0,scrollLeft:0,focus(){}};
    }
    for(const m of value.matchAll(/<button\b[^>]*>/g)){
     const a=attrs(m[0]);if(a['data-action'])buttons.push({dataset:{action:a['data-action'],id:a['data-id'],node:a['data-node'],group:a['data-group'],mode:a['data-mode']},disabled:m[0].includes('disabled')});
@@ -293,4 +294,29 @@ test('节点下拉展开期间不重绘，收起后补一次',async()=>{
  f.setActive(null);
  picker.onblur();
  assert.notEqual(f.element('node-pick'),picker,'收起后补一次重绘，数据不积压');
+});
+// 同一个重绘的另一个副作用：节点列表会滚回顶部，用户往下滑一格轮询一次就被弹回去。
+test('轮询重绘不把节点列表滚回原点',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ f.click('view');await flush();
+ f.click('section-nodes');
+ const list=f.element('node-list');
+ assert.ok(list,'节点页应有滚动容器');
+ assert.equal(list.tagName,'DIV');
+ list.scrollTop=260;
+ const pollers=[...f.timers.values()];
+ assert.ok(pollers.length>=1,'running 时应排了轮询');
+ await pollers.at(-1)();await flush();
+ assert.equal(f.element('node-list').scrollTop,260,'重绘后滚动位置要放回去');
+});
+// 运行中也能切 TUN：按钮不能因为内核在跑就禁用（后端会重启内核来换）。
+test('内核运行时 TUN 开关仍可点',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ f.row.tun={enable:false,stack:'mixed'};
+ f.row.tunService={installed:true,state:'running',canElevate:true};
+ f.click('view');await flush();
+ const button=f.buttons().find(b=>b.dataset.action==='tun-toggle');
+ assert.ok(button,'概览的网络设置卡应有 TUN 开关');
+ assert.equal(button.disabled,false,'运行中要能直接切 TUN');
+ assert.ok(f.root.innerHTML.includes('切换会重启内核'),'要告诉用户这一下会重启内核');
 });

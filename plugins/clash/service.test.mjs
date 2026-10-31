@@ -275,3 +275,43 @@ test('网站测试经当前叶子节点测速，超时与无延迟都归零',asy
  assert.match(f.requests.at(-1).path,/\/proxies\/.*\/delay\?url=/);
 });
 
+// TUN 由 SYSTEM 服务托管、普通模式由本进程 spawn，两者抢同一个控制器端口：切 TUN
+// 必须重启内核，否则就是「只有一个能用」。
+async function settledTun(service){
+ for(let i=0;i<200;i++){const state=await service.view({controller:false});if(!state.tunSwitching)return state;await tick()}
+ throw Error('tun switch did not finish');
+}
+test('运行中切 TUN：先停内核、写配置、再按新设置起来',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ await f.runtime.tun.install({kernel:kernel.kernel});
+ const before=f.stats();
+ await f.service.tunSwitch({enable:true});
+ const state=await settledTun(f.service);
+ const after=f.stats();
+ assert.ok(after.stops>=before.stops+1,'切 TUN 前要把普通内核停掉');
+ assert.ok(after.starts>=before.starts+1,'切完要按新设置把内核拉起来');
+ assert.equal(state.tun.enable,true);
+ assert.equal(state.tunSwitching,false);
+ assert.equal(state.error,'');
+ // 配置真的落盘了，不是只改了内存。
+ assert.equal(JSON.parse(f.disk.get('config/clash.json')).tun.enable,true);
+});
+test('内核本来停着时切 TUN 只写配置，不顺手拉起内核',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ await f.runtime.tun.install({kernel:kernel.kernel});
+ const before=f.stats();
+ await f.service.tunSwitch({enable:true});
+ const state=await settledTun(f.service);
+ assert.equal(f.stats().starts,before.starts,'本来没跑就不该起');
+ assert.equal(state.running,false);
+ assert.equal(state.tun.enable,true);
+});
+test('TUN 服务没装时拒绝切换，且不动正在跑的内核',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const before=f.stats();
+ await assert.rejects(f.service.tunSwitch({enable:true}),/请先在设置里安装 TUN 服务/);
+ assert.equal(f.stats().stops,before.stops,'拒绝时不该停内核');
+ assert.equal(f.stats().up,true);
+ assert.equal((await f.service.view({controller:false})).tun.enable,false);
+});
+

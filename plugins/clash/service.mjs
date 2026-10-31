@@ -46,6 +46,9 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   // secrets.read 由宿主先解密；这里只标记解密后内容仍不符合订阅地址格式的情况。
   let legacyPending=false;
   let queue=Promise.resolve();
+  // 切 TUN 要重启内核，耗时可能超过一次 RPC 的超时，所以它跑在后台：RPC 立刻返回，
+  // 前端靠轮询 tunSwitching 看进度。这个标记不进 operation，免得和启动/停止互相覆盖。
+  let tunBusy=false;
   const jobs=new Map(),alive=()=>!!running&&running.alive();
   const exclusive=fn=>{const result=queue.then(fn);queue=result.catch(()=>{});return result};
   async function persist(rows) {
@@ -133,7 +136,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     const c=await config(),state={...c,configured:!!c.kernel,subscriptionConfigured:subscriptions.length>0,
       legacyPending,
       subscriptions:subscriptions.map(s=>({...s,updating:jobs.has(s.id)})),
-      running:alive(),operation:operation?.name??null,error:operationError,systemProxy:runtime.proxy.active?.()??false,
+      running:alive(),operation:operation?.name??null,tunSwitching:tunBusy,error:operationError,systemProxy:runtime.proxy.active?.()??false,
       os:`${os.platform()==='win32'?'Windows':os.platform()} ${os.release()}`,
       uptimeMs:alive()&&startedAt?Date.now()-startedAt:null,
       rulesCount:null,groups:[],mode:'rule'};
@@ -388,6 +391,31 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     }));
     return {node:leaf,sites};
   }
-  return {view,save,subscriptionSave,subscriptionToggle,subscriptionRemove,layout,start,stop,shutdown,select,mode,reload,proxy,details,
+  // 运行中切换 TUN 必须重启内核：TUN 由 SYSTEM 服务托管，普通模式由本进程 spawn，
+  // 两者写同一个控制器端口，不能并存。整段「停 → 写配置 → 按新设置起」放到后台跑，
+  // RPC 立刻返回：一次 TUN 启动要等 SYSTEM 服务拉起内核，很容易超过单次 RPC 的 15 秒。
+  async function tunSwitch({enable}={}) {
+    if(typeof enable!=='boolean')throw Error('TUN 开关无效');
+    if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+    if(tunBusy)return view({controller:false});
+    const old=await config();
+    if(enable){
+      const info=await runtime.tun.status();
+      if(!info.installed)throw Error('请先在设置里安装 TUN 服务');
+    }
+    const wasRunning=alive();
+    tunBusy=true;operationError='';
+    void (async()=>{
+      try{
+        if(wasRunning)await stop();
+        await save({kernel:old.kernel,mixedPort:old.mixedPort,controllerPort:old.controllerPort,
+          tun:{enable,stack:old.tun?.stack??defaultTun.stack}});
+        if(wasRunning)await start();
+      }catch(error){operationError=error?.message||'切换 TUN 失败，请检查内核与服务状态'}
+      finally{tunBusy=false}
+    })();
+    return view({controller:false});
+  }
+  return {view,save,tunSwitch,subscriptionSave,subscriptionToggle,subscriptionRemove,layout,start,stop,shutdown,select,mode,reload,proxy,details,
     tunService,installTunService,uninstallTunService,ipInfo,siteTest};
 }
