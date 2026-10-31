@@ -197,10 +197,20 @@ test('stopping cancels an in-progress start and never launches a second core',as
  await tick();const stopping=f.service.stop();await stopping;await rejected;
  assert.equal(seenSignal.aborted,true);assert.equal((await f.service.view()).operation,null);
 });
-test('layout persists and does not start a core',async()=>{
- const f=fixture();await f.service.layout({layout:'double'});
- assert.equal((await fixture(f.disk).service.view()).layout,'double');
- assert.equal(f.stats().starts,0);await assert.rejects(f.service.layout({layout:'grid'}));
+test('节点测速对当前组逐条打 delay 接口，按节点名回结果',async()=>{
+ const f=fixture();await f.service.save(kernel);const a=await add(f);
+ await f.service.reload();await settled(f.service);await f.service.start();
+ const result=await f.service.nodeTest({group:'🚀 节点选择'});
+ assert.equal(result.group,'🚀 节点选择');
+ assert.equal(result.tested,result.delays.length);
+ assert.ok(result.tested>0);
+ const leaf=result.delays.find(row=>row.name===`[${a.id}] same`);
+ assert.ok(leaf,'订阅节点要参与测速');
+ assert.equal(leaf.delay,87);
+ assert.ok(result.delays.every(row=>typeof row.name==='string'),'每条都带节点名');
+ assert.ok(f.requests.some(row=>/\/proxies\/.*\/delay\?url=/.test(row.path)),'走控制器的 delay 接口');
+ await f.service.stop();
+ await assert.rejects(f.service.nodeTest({group:'🚀 节点选择'}),/内核尚未启动/);
 });
 test('TUN 服务：未安装→安装→卸载，安装后 TUN 开关持久化且栈值受控',async()=>{
  const f=fixture();await f.service.save(kernel);

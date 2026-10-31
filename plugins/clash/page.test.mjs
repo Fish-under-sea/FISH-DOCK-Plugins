@@ -24,7 +24,7 @@ function fixture() {
    html=value;elements={};buttons=[];cards=[];
    // div 也收：节点列表的滚动容器就是带 id 的 div，重绘后要能拿回它的 scrollTop。
    // article 也收：订阅卡整张可点，靠 data-sub 找到它。
-   for(const m of value.matchAll(/<(?:input|form|details|select|div|article)\b[^>]*>/g)){
+   for(const m of value.matchAll(/<(?:input|form|details|select|div|article|section)\b[^>]*>/g)){
     const a=attrs(m[0]);
     if(a.id)elements[a.id]={...a,tagName:(/^<(\w+)/.exec(m[0])?.[1]??'').toUpperCase(),value:a.value??'',open:m[0].includes(' open'),disabled:m[0].includes('disabled'),scrollTop:0,scrollLeft:0,focus(){}};
     if(a['data-sub'])cards.push({dataset:{sub:a['data-sub']},enabled:a['aria-checked']==='true',onclick:null,onkeydown:null});
@@ -55,6 +55,8 @@ function fixture() {
        chains:['🚀 节点选择','香港节点'],rule:'DomainSuffix test',upload:1024,download:2048,start:'2026-10-31T09:00:00.000Z'},
       {id:'c2',network:'tcp',host:'google.com',destination:'142.250.0.1:443',source:'127.0.0.1',
        chains:['🚀 节点选择','DIRECT'],rule:'GEOSITE google',upload:0,download:0,start:'2026-10-31T09:05:00.000Z'}]};
+   if(method==='clash.nodeTest')return {group:params.group??'',tested:2,delays:[
+    {name:'[sub-00000000-0000-0000-0000-000000000001] 香港节点',delay:42},{name:'DIRECT',delay:null}]};
    if(method==='clash.siteTest')return {node:'[sub-00000000-0000-0000-0000-000000000001] 香港节点',sites:[
     {key:'apple',label:'Apple',url:'https://www.apple.com/library/test/success.html',delay:128,ok:true},
     {key:'github',label:'GitHub',url:'https://github.com/favicon.ico',delay:null,ok:false},
@@ -90,7 +92,7 @@ test('sandbox 页面点击保存订阅直接调用 RPC，并读取实时输入�
  release();await flush();
 });
 test('sandbox 页面内核设置保存按钮直接调用 RPC',async()=>{
- const f=fixture();await flush();
+ const f=fixture();await flush();f.click('section-settings');
  f.element('kernel').value='D:/new/mihomo.exe';
  f.element('mixedPort').value='7897';
  f.click('save-config');await flush();
@@ -242,6 +244,21 @@ test('节点页提供「只显示可用节点」过滤，未测速与超时节�
  f.click('only-available');
  assert.deepEqual(nodeNames(f.root.innerHTML),['[sub-00000000-0000-0000-0000-000000000001] 香港节点']);
 });
+// 手动测速：结果立刻覆盖列表里的旧延迟，并且参与「按延迟」排序。
+test('节点测速按钮把结果写回列表并参与排序',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ f.click('view');await flush();
+ f.click('section-nodes');
+ assert.ok(f.root.innerHTML.includes('20 ms'),'视图里原有的延迟');
+ f.click('node-test');await flush();
+ const call=f.calls.find(c=>c.method==='clash.nodeTest');
+ assert.ok(call,'点测速发 RPC');
+ assert.equal(call.params.group,'🚀 节点选择','测的是当前组');
+ assert.ok(f.root.innerHTML.includes('42 ms'),'测速结果覆盖列表显示');
+ f.click('sort-delay');
+ assert.deepEqual(nodeNames(f.root.innerHTML),[
+  '[sub-00000000-0000-0000-0000-000000000001] 香港节点','♻️ 自动选择','DIRECT']);
+});
 test('内核运行时订阅区不再沉默禁用：给出先停止内核的说明与入口',async()=>{
  const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
  f.click('section-providers');
@@ -312,19 +329,28 @@ test('节点下拉展开期间不重绘，收起后补一次',async()=>{
  picker.onblur();
  assert.notEqual(f.element('node-pick'),picker,'收起后补一次重绘，数据不积压');
 });
-// 同一个重绘的另一个副作用：节点列表会滚回顶部，用户往下滑一格轮询一次就被弹回去。
-test('轮询重绘不把节点列表滚回原点',async()=>{
+// 同一个重绘的另一个副作用：内容区会滚回顶部，用户往下滑一格轮询一次就被弹回去。
+test('轮询重绘不把内容区滚回原点',async()=>{
  const f=fixture();await flush();f.row.running=true;
  f.click('view');await flush();
  f.click('section-nodes');
- const list=f.element('node-list');
- assert.ok(list,'节点页应有滚动容器');
- assert.equal(list.tagName,'DIV');
- list.scrollTop=260;
+ const pane=f.element('pane');
+ assert.ok(pane,'内容区应有统一滚动容器');
+ pane.scrollTop=260;
  const pollers=[...f.timers.values()];
  assert.ok(pollers.length>=1,'running 时应排了轮询');
  await pollers.at(-1)();await flush();
- assert.equal(f.element('node-list').scrollTop,260,'重绘后滚动位置要放回去');
+ assert.equal(f.element('pane').scrollTop,260,'重绘后滚动位置要放回去');
+});
+// 更糟的一种：用户还在滚，整块 DOM 被换掉，滚动条直接归零——表现就是「一滑就被拉回」。
+test('用户滚动期间不重绘 DOM',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ f.click('view');await flush();
+ const pane=f.element('pane');
+ pane.onscroll();
+ const pollers=[...f.timers.values()];
+ await pollers.at(-1)();await flush();
+ assert.equal(f.element('pane'),pane,'滚动刚结束时不重建 DOM，滚动不被打断');
 });
 // 运行中也能切 TUN：按钮不能因为内核在跑就禁用（后端会重启内核来换）。
 test('内核运行时 TUN 开关仍可点',async()=>{
@@ -366,31 +392,17 @@ test('订阅页点卡片即切换启用，启用中的卡片高亮',async()=>{
  assert.equal(call.params.id,first);
  assert.equal(call.params.enabled,false,'当前启用，点一下变停用');
 });
-// 规则页以前只有一个「读取详情」加一段 JSON：用户看到的是「规则什么都没有」。
-test('规则页进页自动读取，按类型/内容/策略三列渲染并支持搜索',async()=>{
- const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
- f.click('section-rules');await flush();await flush();
- const html=f.root.innerHTML;
- assert.ok(f.calls.some(c=>c.method==='clash.details'&&c.params.section==='rules'),'进页自动读取规则');
- assert.ok(html.includes('GEOSITE'),'规则类型');
- assert.ok(html.includes('192.168.0.0/16'),'规则内容');
- assert.ok(html.includes('🐟 漏网之鱼'),'规则策略');
- assert.ok(html.includes('3 条'),'规则总数');
- f.element('rule-search').oninput({target:{value:'192.168'},isComposing:false});
- assert.ok(f.root.innerHTML.includes('192.168.0.0/16'),'命中项保留');
- assert.equal(f.root.innerHTML.includes('GEOSITE'),false,'不匹配的规则被过滤');
- assert.ok(f.root.innerHTML.includes('显示 1 / 3 条'));
-});
-test('连接页进页自动读取，显示上下行汇总与逐条连接',async()=>{
- const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
- f.click('section-connections');await flush();await flush();
- const html=f.root.innerHTML;
- assert.ok(f.calls.some(c=>c.method==='clash.details'&&c.params.section==='connections'),'进页自动读取连接');
- assert.ok(html.includes('example.test')&&html.includes('google.com'),'逐条连接');
- assert.ok(html.includes('DomainSuffix test'),'命中的规则');
- assert.ok(html.includes('香港节点'),'链路末节点');
- assert.ok(html.includes('↑ 2 KB')&&html.includes('↓ 4 KB'),'上下行汇总');
- assert.ok(html.includes('2 条'),'连接数');
+// 内核设置从「每页最底下的折叠条」变成独立页签：不再把面板顶长，也不再每页都拖着它。
+test('内核设置是独立页签，概览页不再拖着那坨输入框',async()=>{
+ const f=fixture();await flush();
+ assert.equal(f.element('kernel'),undefined,'概览页不该有内核输入框');
+ assert.ok(f.buttons().some(b=>b.dataset.action==='section-settings'),'页签里有内核设置');
+ assert.equal(f.buttons().some(b=>b.dataset.action==='section-rules'),false,'规则页签已移除');
+ assert.equal(f.buttons().some(b=>b.dataset.action==='section-connections'),false,'连接页签已移除');
+ f.click('section-settings');
+ assert.ok(f.element('kernel'),'切过去才渲染内核输入');
+ assert.ok(f.root.innerHTML.includes('TUN 模式'),'TUN 段跟着走');
+ assert.ok(f.element('pane'),'内容区是统一的内滚容器');
 });
 test('页面版本跟随插件版本，单双栏切换与顶部工具条一并去掉',async()=>{
  const f=fixture();await flush();
@@ -399,9 +411,10 @@ test('页面版本跟随插件版本，单双栏切换与顶部工具条一并�
  assert.equal(html.includes('页面 v'),false,'不再有独立的页面版本号');
  assert.equal(/data-action="double"/.test(html),false,'没有双栏按钮');
  assert.equal(/data-action="single"/.test(html),false,'没有单栏按钮');
- const tabs=html.indexOf('data-action="section-overview"'),start=html.indexOf('data-action="start"');
- assert.ok(tabs>0&&start>tabs,`启停与刷新要挪到标签页之后（tabs=${tabs} start=${start}）`);
- assert.ok(html.includes('overview-scroll'),'概览有独立滚动容器，不把整页顶长');
+ const head=html.indexOf('id="headbar"'),tabs=html.indexOf('data-action="section-overview"'),start=html.indexOf('data-action="start"');
+ assert.ok(head>0&&tabs>head&&start>tabs,'页签与启停、刷新在同一个头部行里');
+ assert.equal((html.match(/class="toolbar/g)||[]).length,1,'只有一行工具条，不折成上下两行');
+ assert.ok(html.includes('id="pane"'),'内容区是统一的内滚容器，不把面板顶长');
  assert.equal(f.calls.some(c=>c.method==='clash.layout'),false,'不再发 layout RPC');
 });
 test('系统信息补齐处理器、内存、内核来源与插件版本',async()=>{

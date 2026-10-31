@@ -2,22 +2,21 @@
  const root=document.querySelector('#app');
  // 版本号不再单独维护：后端读包内 plugin.json 并把 version 放进 view.pluginVersion，
  // 页面直接显示插件版本，跟着发行版本走。
- const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],['rules','规则'],['connections','连接']];
+ // 四个页签 + 启停/刷新共用顶部一行（#headbar）。内核设置不再挤在页面最底部当折叠条。
+const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],['settings','内核设置']];
  const MODES=[['rule','规则','按规则分流：国内直连，其余走代理'],['global','全局','所有流量都走代理'],
   ['direct','直连','全部不走代理，等价于关闭分流']];
  let view=null,busy=false,polling=false,error='',notice='',noticeKind='info';
  let group='',section='overview',timer=null,revision=0;
- let draft={id:'',name:'',url:''},fieldErrors={},configDraft=null,settingsOpen=false,confirmDelete='',confirmTun='';
+ let draft={id:'',name:'',url:''},fieldErrors={},configDraft=null,confirmDelete='',confirmTun='';
  // 节点浏览状态只影响渲染，不落盘：搜索、延迟排序、只看可用。
  let nodeQuery='',sortDelay=false,onlyAvailable=false;
+ // 手动测速的结果按节点名缓存：视图里的 delay 要等内核自己测，页面这层先显示新值。
+ let nodeDelays={},nodeTesting=false;
  let ip=null,ipBusy=false,ipError='',ipReveal=false,ipAsked=false;
  let sites=null,sitesBusy=false;
- // 规则与连接是内核侧的实时数据：进页自动读一次，读过的靠「重新读取」刷新，
- // 不跟着 1.2 秒轮询重绘一起炸一次 RPC。
- let details={rules:null,connections:null},detailAsked={rules:false,connections:false};
- let detailBusy={rules:false,connections:false},detailQuery={rules:'',connections:''};
- // 下拉框展开期间被推迟的重绘（见 draw）；焦点离开后补上。
- let staleDraw=false;
+ // 下拉框展开期间、以及用户正在滚动时被推迟的重绘（见 draw）；停下来后补上。
+ let staleDraw=false,scrollAt=0,scrollTimer=null;
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const updating=()=>view?.subscriptions?.some(s=>s.updating);
  // 后端在运行中拒绝订阅与配置变更，界面必须同步禁用（否则只是把错误延后到 RPC）。
@@ -42,7 +41,7 @@
  function methodLabel(method){
   return {view:'读取状态',save:'保存设置',subscriptionSave:'保存订阅',subscriptionToggle:'切换启用',
    subscriptionRemove:'删除订阅',reload:'更新订阅',start:'启动内核',stop:'停止内核',select:'切换节点',
-   mode:'切换模式',proxy:'系统代理',layout:'切换布局',details:'读取详情',tunService:'读取 TUN 状态',
+   mode:'切换模式',proxy:'系统代理',details:'读取详情',tunService:'读取 TUN 状态',nodeTest:'节点测速',
    installTunService:'安装 TUN 服务',uninstallTunService:'卸载 TUN 服务',ipInfo:'查询出口 IP',siteTest:'网站测试'}[method]??'操作';
  }
  async function run(method,params={}) {
@@ -60,7 +59,7 @@
    if(method==='uninstallTunService')say('TUN 服务已卸载','ok');
    if(method==='select')sites=null;
    // 内核重启后出口 IP 会变，缓存不能沿用。
-   if(method==='start'||method==='stop'){ip=null;ipAsked=false;ipError='';sites=null;details={rules:null,connections:null};detailAsked={rules:false,connections:false}}
+   if(method==='start'||method==='stop'){ip=null;ipAsked=false;ipError='';sites=null;nodeDelays={}}
    return true;
   }catch(e){error=`${methodLabel(method)}失败：${reason(e)}`;return false}
   finally{busy=false;draw();schedule();}
@@ -141,12 +140,14 @@
   const current=currentGroup();
   const groupPicker=`<label>代理组<select id="group-pick" ${busy?'disabled':''}>${list.map(g=>
    `<option value="${esc(g.name)}" ${g.name===current.name?'selected':''}>${esc(g.name)}</option>`).join('')}</select></label>`;
-  const nodePicker=`<label>节点<select id="node-pick" ${busy||!view.running?'disabled':''}>${(current?.nodes??[]).map(n=>
-   `<option value="${esc(n.name)}" ${n.name===current.selected?'selected':''}>${esc(n.label??n.name)}${Number.isFinite(n.delay)?` · ${n.delay} ms`:''}</option>`).join('')}</select></label>`;
-  const now=(current?.nodes??[]).find(n=>n.name===current.selected);
+  const nodePicker=`<label>节点<select id="node-pick" ${busy||!view.running?'disabled':''}>${(current?.nodes??[]).map(n=>{
+   const delay=delayOf(n);
+   return `<option value="${esc(n.name)}" ${n.name===current.selected?'selected':''}>${esc(n.label??n.name)}${Number.isFinite(delay)?` · ${delay} ms`:''}</option>`;
+  }).join('')}</select></label>`;
+  const now=(current?.nodes??[]).find(n=>n.name===current.selected),nowDelay=now?delayOf(now):null;
   // 跨满整行：宽窗口下两个选择器并排，窄窗口自动回落到上下排列。
   return card('当前节点',`<div class="split">${groupPicker}${nodePicker}</div>
-   <p class="status-line">延迟 <span class="n-delay ${delayClass(now?.delay)}">${now&&now.type==='group'?'代理组':delayText(now?.delay)}</span></p>`,
+   <p class="status-line">延迟 <span class="n-delay ${delayClass(nowDelay)}">${now&&now.type==='group'?'代理组':delayText(nowDelay)}</span></p>`,
    {wide:true,footer:button('goto-nodes','节点列表','',false)});
  }
  function networkCard() {
@@ -219,25 +220,32 @@
   return card('系统信息',rows.map(([key,value])=>kv(key,value)).join(''));
  }
  function overviewSection() {
-  // 概览卡片多，但不该把整屏顶走：容器内滚，工具条和标签页始终留在视野里。
-  return `<div class="overview-scroll"><div class="cards">${subscriptionCard()}${currentNodeCard()}${networkCard()}${modeCard()}
-   ${siteCard()}${ipCard()}${clashCard()}${systemCard()}</div></div>`;
+  return `<div class="cards">${subscriptionCard()}${currentNodeCard()}${networkCard()}${modeCard()}
+   ${siteCard()}${ipCard()}${clashCard()}${systemCard()}</div>`;
  }
- // ── 节点：搜索 / 延迟排序 / 只看可用，列表内部滚动，工具栏常驻 ──
+ // 手动测速过的节点优先用页面上的值：内核自己测速要等它下一轮健康检查。
+ const delayOf=node=>Object.hasOwn(nodeDelays,node.name)?nodeDelays[node.name]:node.delay;
+ // ── 节点：搜索 / 延迟排序 / 只看可用 / 手动测速 ──
  function visibleNodes(nodes) {
   const query=nodeQuery.trim().toLowerCase();
   let list=nodes.filter(n=>!query
    ||String(n.label??n.name).toLowerCase().includes(query)
    ||String(n.source??'').toLowerCase().includes(query));
-  if(onlyAvailable)list=list.filter(n=>Number.isFinite(n.delay));
-  if(sortDelay)list=[...list].sort((a,b)=>(Number.isFinite(a.delay)?a.delay:Infinity)-(Number.isFinite(b.delay)?b.delay:Infinity));
+  if(onlyAvailable)list=list.filter(n=>Number.isFinite(delayOf(n)));
+  if(sortDelay){
+   const value=n=>Number.isFinite(delayOf(n))?delayOf(n):Infinity;
+   list=[...list].sort((a,b)=>value(a)-value(b));
+  }
   return list;
  }
  function nodeItems(current) {
-  return visibleNodes(current?.nodes??[]).map(n=>button('node',
-   `<span class="n-label"><span class="n-name">${esc(n.label??n.name)}</span>${n.source?`<small class="source">${esc(n.source)}</small>`:''}</span>
-    <span class="n-delay ${delayClass(n.delay)}">${n.type==='group'?'代理组':delayText(n.delay)}</span>`,
-   `class="node" data-node="${esc(n.name)}" aria-current="${n.name===current.selected}"`,false)).join('');
+  return visibleNodes(current?.nodes??[]).map(n=>{
+   const delay=delayOf(n);
+   return button('node',
+    `<span class="n-label"><span class="n-name">${esc(n.label??n.name)}</span>${n.source?`<small class="source">${esc(n.source)}</small>`:''}</span>
+     <span class="n-delay ${delayClass(delay)}">${n.type==='group'?'代理组':delayText(delay)}</span>`,
+    `class="node" data-node="${esc(n.name)}" aria-current="${n.name===current.selected}"`,false);
+  }).join('');
  }
  function nodesSection() {
   if(!groups().length)return `<h2>代理组</h2><p>尚无代理节点。请在订阅页添加并更新订阅，然后启动内核。</p>`;
@@ -249,6 +257,7 @@
   return `<h2>代理组</h2><div class="group-strip" role="tablist">${chips}</div>
    <div class="nodes-head"><h2 class="nodes-title">${esc(current?.name??'')}
     <span class="muted"> · 当前 ${esc(current?.selected??'—')}</span></h2>
+    ${button('node-test',nodeTesting?'测速中…':'测速',`aria-busy="${nodeTesting}"`,busy||nodeTesting||!view.running)}
     ${button('sort-delay',sortDelay?'按延迟 ✓':'按延迟',`aria-pressed="${sortDelay}"`,false)}
     ${button('only-available',onlyAvailable?'只看可用 ✓':'只看可用',`aria-pressed="${onlyAvailable}"`,false)}</div>
    <label class="search">搜索节点<input id="node-search" type="search" autocomplete="off"
@@ -301,6 +310,21 @@
    ${svc.installed?button('tun-uninstall','卸载服务','',locked()):''}
    ${button('tun-refresh','刷新状态')}</div></div>`;
  }
+ // ── 内核设置：独立页签，不再当每页最底下的折叠条 ──
+ function settingsSection() {
+  const cfg=configDraft||view;
+  return `<h2>内核设置</h2><form id="config">
+   <label>mihomo 可执行文件<input id="kernel" name="kernel" value="${esc(cfg.kernel)}" required ${locked()?'disabled':''}></label>
+   <div class="columns"><label>混合代理端口<input id="mixedPort" name="mixedPort" type="number" min="1024" max="65535" value="${esc(cfg.mixedPort)}" required ${locked()?'disabled':''}></label>
+   <label>控制器端口<input id="controllerPort" name="controllerPort" type="number" min="1024" max="65535" value="${esc(cfg.controllerPort)}" required ${locked()?'disabled':''}></label></div>
+   <fieldset class="tun-box"><legend>TUN 模式</legend>
+   <label class="check"><input id="tunEnable" name="tunEnable" type="checkbox" ${cfg.tun?.enable?'checked':''} ${locked()?'disabled':''}> 启用 TUN（由 SYSTEM 服务托管，普通权限即可用）</label>
+   <label>栈<select id="tunStack" name="tunStack" ${locked()?'disabled':''}>${['mixed','gvisor','system'].map(s=>`<option value="${s}" ${(cfg.tun?.stack||'mixed')===s?'selected':''}>${s}</option>`).join('')}</select></label>
+   ${cfg.tun?.enable&&!view.tunService?.installed?'<p class="bad" role="alert">TUN 已勾选但服务未安装，启动内核会被拒绝。请先安装 TUN 服务。</p>':''}
+   ${tunServiceBlock()}
+   </fieldset>
+   <div class="save-bar">${button('save-config','保存内核配置','',locked())}</div></form>`;
+ }
  function feedbackBlock() {
   const parts=[];
   if(busy)parts.push('<p class="banner" role="status">正在执行…</p>');
@@ -309,45 +333,6 @@
   if(view.legacyPending&&!view.subscriptions?.length)
    parts.push('<p class="banner" role="status">检测到格式未识别的旧版单订阅资料。原数据已保留；可在下方重新添加订阅地址。</p>');
   return parts.join('');
- }
- // ── 规则 / 连接：内核侧的实时数据，进页自动读一次，之后按需重读 ──
- const detailLabel=name=>name==='rules'?'规则':'连接';
- function detailPlaceholder(name) {
-  const label=detailLabel(name);
-  if(!view.running)return `<h2>${label}</h2><p class="muted">内核运行后${name==='rules'?'显示当前生效的分流规则。':'显示进行中的连接。'}</p>`;
-  return `<h2>${label}</h2><p class="muted">${detailBusy[name]?`正在读取${label}…`:'还没有读取到数据。'}</p>
-   ${button('detail-refresh',`读取${label}`,`data-section="${name}"`,detailBusy[name])}`;
- }
- function rulesSection() {
-  const data=details.rules;
-  if(!data)return detailPlaceholder('rules');
-  const query=detailQuery.rules.trim().toLowerCase(),all=data.rules??[];
-  const rows=all.filter(rule=>!query||`${rule.type} ${rule.payload} ${rule.proxy}`.toLowerCase().includes(query));
-  return `<h2>规则 <span class="muted">· ${data.count} 条</span></h2>
-   <label class="search">搜索规则<input id="rule-search" type="search" autocomplete="off" placeholder="按类型、内容或策略筛选" value="${esc(detailQuery.rules)}"></label>
-   <div class="list-scroll"><div class="rule-list">${rows.length?rows.map(rule=>`<div class="rule-row">
-    <span class="rule-type">${esc(rule.type||'—')}</span>
-    <span class="rule-payload">${esc(rule.payload||'—')}</span>
-    <span class="rule-proxy">${esc(rule.proxy||'—')}</span></div>`).join(''):'<p class="muted">没有匹配的规则。</p>'}</div></div>
-   <p class="muted small">显示 ${rows.length} / ${data.count} 条${data.count>all.length?`（只取前 ${all.length} 条）`:''}</p>
-   ${button('detail-refresh','重新读取','data-section="rules"',detailBusy.rules)}`;
- }
- function connectionsSection() {
-  const data=details.connections;
-  if(!data)return detailPlaceholder('connections');
-  const query=detailQuery.connections.trim().toLowerCase(),all=data.connections??[];
-  const rows=all.filter(row=>!query
-   ||`${row.host} ${row.destination} ${row.rule} ${row.chains.join(' ')}`.toLowerCase().includes(query));
-  return `<h2>连接 <span class="muted">· ${data.count} 条</span></h2>
-   <p class="status-line">↑ ${fmtBytes(data.uploadTotal)} · ↓ ${fmtBytes(data.downloadTotal)}</p>
-   <label class="search">搜索连接<input id="conn-search" type="search" autocomplete="off" placeholder="按域名、地址或规则筛选" value="${esc(detailQuery.connections)}"></label>
-   <div class="list-scroll"><div class="conn-list">${rows.length?rows.map(row=>`<div class="conn-row">
-    <div class="conn-main"><span class="conn-host">${esc(row.host||row.destination||'—')}</span>
-     <span class="conn-tail">↑ ${fmtBytes(row.upload)} · ↓ ${fmtBytes(row.download)}</span></div>
-    <div class="conn-meta"><span>${esc(row.rule||row.network||'—')}</span>
-     <span>${esc(row.chains.at(-1)??'—')}</span></div></div>`).join(''):'<p class="muted">没有匹配的连接。</p>'}</div></div>
-   <p class="muted small">显示 ${rows.length} / ${data.count} 条${data.count>all.length?`（只取前 ${all.length} 条）`:''}</p>
-   ${button('detail-refresh','重新读取','data-section="connections"',detailBusy.connections)}`;
  }
  // 与后端一致的就地校验：文案复用后端固定提示，避免两套说法。
  function validateSubscription(values) {
@@ -390,12 +375,15 @@
   if(busy||view.operation||view.tunSwitching)return false;
   return run('tunSwitch',{enable:!(view.tun?.enable===true)});
  }
- async function loadDetails(name) {
-  if(detailBusy[name])return;
-  detailBusy[name]=true;detailAsked[name]=true;draw();
-  try{details[name]=await FishDock.call('clash.details',{section:name})}
-  catch(e){details[name]=null;error=`${detailLabel(name)}读取失败：${reason(e)}`}
-  finally{detailBusy[name]=false;draw()}
+ async function testNodes() {
+  // 手动测速：只测当前组，结果按节点名合并进 nodeDelays，页面立即按新值排序/着色。
+  if(nodeTesting||busy||!view.running)return;
+  nodeTesting=true;draw();
+  try{
+   const result=await FishDock.call('clash.nodeTest',{group:currentGroup()?.name??''});
+   for(const row of result?.delays??[])nodeDelays[row.name]=row.delay;
+  }catch(e){error=`节点测速失败：${reason(e)}`}
+  finally{nodeTesting=false;draw()}
  }
  async function loadIp(refresh=false) {
   if(ipBusy)return;
@@ -422,42 +410,35 @@
   // 列表挂在这个元素上，元素一换就没了——表现就是「点一下很快消失」，节点根本选
   // 不了。所以焦点停在下拉框上时先不重绘，等它收起（focusout）再补。
   if(document.activeElement?.tagName==='SELECT'){staleDraw=true;return}
+  // 用户滚到一半时不重绘：轮询重绘会整块换掉 DOM，滚动直接被打断。
+  if(scrollAt&&Date.now()-scrollAt<1200){staleDraw=true;return}
   staleDraw=false;
   const active=document.activeElement,focus=active?.id;
   const caret=active&&typeof active.selectionStart==='number'?[active.selectionStart,active.selectionEnd]:null;
-  // 重绘同样会把节点列表与分组条滚回原点：轮询一次用户就往上跳一格，滚不动。
-  // 记下两个容器的滚动位置，重建后放回去。
-  const scrolled=root.querySelector('#node-list'),groupStrip=root.querySelector('.group-strip');
-  const keepScroll={nodeTop:scrolled?.scrollTop??0,groupLeft:groupStrip?.scrollLeft??0};
+  // 内容区与顶部按钮行同样是「重建后要放回滚动位置」的容器。
+  const pane=root.querySelector('#pane'),bar=root.querySelector('#headbar');
+  const keepScroll={paneTop:pane?.scrollTop??0,barLeft:bar?.scrollLeft??0};
   if(!view){root.innerHTML=`<h1>Clash</h1><p role="status">${busy?'正在读取内核状态…':esc(error||'尚未读取状态')}</p>${button('view','重试')}`;bind();return}
   if(!groups().some(g=>g.name===group))group=groups()[0]?.name||'';
-  const cfg=configDraft||view;
   const nav=SECTIONS.map(([key,label])=>button(`section-${key}`,label,`aria-pressed="${section===key}"`,false)).join('');
   const body=section==='overview'?overviewSection():section==='nodes'?nodesSection()
-   :section==='providers'?providersSection():section==='rules'?rulesSection():connectionsSection();
-  // 单栏到底：宿主里这页是窄面板，双栏只是把卡片挤成两列，切换按钮没有实际收益。
-  // 内核启停与刷新从标题栏挪到标签页下面，贴着它们要作用的内容。
+   :section==='providers'?providersSection():settingsSection();
+  // 页签、启停、刷新挤在同一行（窄了就横向滚，不折到第二行）；
+  // 内容区统一一个内滚高度，四个页签的高度一致，不会把宿主面板顶长。
+  const toggle=button(view.running||view.operation==='starting'||updating()?'stop':'start',
+   view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',
+   busy||view.operation==='stopping');
   root.innerHTML=`<header><div><h1>Clash</h1><span class="muted">${view.running?'内核运行中':'内核已停止'}${view.version?' · 内核 '+esc(view.version):''}${view.pluginVersion?' · 插件 v'+esc(view.pluginVersion):''}</span></div></header>
    ${feedbackBlock()}
-   <div class="toolbar tabs" aria-label="页面分区">${nav}</div>
-   <div class="toolbar">${button(view.running||view.operation==='starting'||updating()?'stop':'start',view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',busy||view.operation==='stopping')}${button('view','刷新')}</div>
-   <section class="${section==='overview'?'plain':''}">${body}</section>
-   <details id="settings" class="spaced" ${settingsOpen?'open':''}><summary>内核设置</summary><form id="config">
-   <label>mihomo 可执行文件<input id="kernel" name="kernel" value="${esc(cfg.kernel)}" required ${locked()?'disabled':''}></label>
-   <div class="columns"><label>混合代理端口<input id="mixedPort" name="mixedPort" type="number" min="1024" max="65535" value="${esc(cfg.mixedPort)}" required ${locked()?'disabled':''}></label>
-   <label>控制器端口<input id="controllerPort" name="controllerPort" type="number" min="1024" max="65535" value="${esc(cfg.controllerPort)}" required ${locked()?'disabled':''}></label></div>
-   <fieldset class="tun-box"><legend>TUN 模式</legend>
-   <label class="check"><input id="tunEnable" name="tunEnable" type="checkbox" ${cfg.tun?.enable?'checked':''} ${locked()?'disabled':''}> 启用 TUN（由 SYSTEM 服务托管，普通权限即可用）</label>
-   <label>栈<select id="tunStack" name="tunStack" ${locked()?'disabled':''}>${['mixed','gvisor','system'].map(s=>`<option value="${s}" ${(cfg.tun?.stack||'mixed')===s?'selected':''}>${s}</option>`).join('')}</select></label>
-   ${cfg.tun?.enable&&!view.tunService?.installed?'<p class="bad" role="alert">TUN 已勾选但服务未安装，启动内核会被拒绝。请先安装 TUN 服务。</p>':''}
-   ${tunServiceBlock()}
-   </fieldset>
-   ${button('save-config','保存内核配置','',locked())}</form></details>`;
+   <div class="toolbar headbar" id="headbar" aria-label="页面分区与内核操作">${nav}${toggle}${button('view','刷新')}</div>
+   <section class="pane${section==='overview'?' plain':''}" id="pane">${body}</section>`;
   bind();
+  // 内核设置只在它自己的页签里存在；表单草稿仍跨页保留。
   const form=root.querySelector('#config');
-  form.oninput=()=>{const data=new FormData(form);configDraft={kernel:data.get('kernel'),mixedPort:data.get('mixedPort'),controllerPort:data.get('controllerPort'),tun:{enable:data.has('tunEnable'),stack:String(data.get('tunStack')||'mixed')}}};
-  bindSave(form,saveConfig);
-  root.querySelector('#settings').ontoggle=e=>{settingsOpen=e.target.open};
+  if(form){
+   form.oninput=()=>{const data=new FormData(form);configDraft={kernel:data.get('kernel'),mixedPort:data.get('mixedPort'),controllerPort:data.get('controllerPort'),tun:{enable:data.has('tunEnable'),stack:String(data.get('tunStack')||'mixed')}}};
+   bindSave(form,saveConfig);
+  }
   const subscriptionForm=root.querySelector('#subscription-form');
   if(subscriptionForm){
    subscriptionForm.oninput=()=>{const data=new FormData(subscriptionForm);draft={...draft,name:data.get('name'),url:data.get('url')};fieldErrors={}};
@@ -479,9 +460,15 @@
   }
   if(focus){const next=root.querySelector(`#${focus}`);next?.focus();if(caret&&next?.setSelectionRange)next.setSelectionRange(...caret)}
   // 滚动位置在重建后放回去；重建后内容可能变短，浏览器自己会夹到合法范围。
-  const listNow=root.querySelector('#node-list'),stripNow=root.querySelector('.group-strip');
-  if(listNow&&keepScroll.nodeTop)listNow.scrollTop=keepScroll.nodeTop;
-  if(stripNow&&keepScroll.groupLeft)stripNow.scrollLeft=keepScroll.groupLeft;
+  const paneNow=root.querySelector('#pane'),barNow=root.querySelector('#headbar');
+  if(paneNow&&keepScroll.paneTop)paneNow.scrollTop=keepScroll.paneTop;
+  if(barNow&&keepScroll.barLeft)barNow.scrollLeft=keepScroll.barLeft;
+  // 用户滚动期间不重绘，停下来 1.2 秒后补一次：整块换 DOM 会把手感打断成「一滑就被拉回」。
+  if(paneNow)paneNow.onscroll=()=>{
+   scrollAt=Date.now();
+   clearTimeout(scrollTimer);
+   scrollTimer=setTimeout(()=>{if(staleDraw)draw()},1200);
+  };
  }
  function bind() {
   root.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{
@@ -495,6 +482,7 @@
    if(a==='goto-nodes'||a==='goto-providers'){section=a.slice(5);draw();return}
    if(a==='sort-delay'){sortDelay=!sortDelay;draw();return}
    if(a==='only-available'){onlyAvailable=!onlyAvailable;draw();return}
+   if(a==='node-test')return testNodes();
    if(a==='stop-inline')return run('stop');
    if(a==='proxy')return run('proxy',{enabled:!view.systemProxy});
    if(a==='tun-toggle')return toggleTun();
@@ -502,7 +490,6 @@
    if(a==='site-test')return testSites();
    if(a==='ip-refresh')return loadIp(true);
    if(a==='ip-reveal'){ipReveal=!ipReveal;draw();return}
-   if(a==='detail-refresh'){details[b.dataset.section]=null;detailAsked[b.dataset.section]=false;return loadDetails(b.dataset.section)}
    if(a==='edit'){const s=view.subscriptions.find(s=>s.id===id);draft={id,name:s.name,url:''};fieldErrors={};draw();return}
    if(a==='cancel-edit'){draft={id:'',name:'',url:''};fieldErrors={};draw();return}
    if(a==='delete'){confirmDelete=id;draw();return}
@@ -532,17 +519,8 @@
     return card.onclick(event);
    };
   });
-  // 规则与连接的搜索同样就地过滤，重建后把焦点与光标放回去。
-  for(const [id,name] of [['rule-search','rules'],['conn-search','connections']]){
-   const input=root.querySelector(`#${id}`);
-   if(!input)continue;
-   input.oninput=event=>{detailQuery[name]=String(event.target.value??'');if(!event.isComposing)draw()};
-   input.oncompositionend=()=>draw();
-  }
   // 出口 IP 是一次性读取，加标记避免每次重绘都打一次 RPC。
   if(section==='overview'&&view?.running&&!ip&&!ipError&&!ipAsked)void loadIp();
-  // 规则与连接进页自动读一次；读失败或内核重启后由「重新读取」手动补。
-  if((section==='rules'||section==='connections')&&view?.running&&!details[section]&&!detailAsked[section]&&!detailBusy[section])void loadDetails(section);
  }
  window.addEventListener('pagehide',()=>clearTimeout(timer));
  run('view');

@@ -106,8 +106,8 @@ test('真实 sandbox 页面：按钮、回车、错误反馈、多订阅落盘�
   assert.equal(await frame.locator('#subscription-name').inputValue(),'token=synthetic-invalid-name');
   assert.equal(await frame.locator('.subscription').count(),2);
   assert.ok(!(await frame.locator('[role="alert"]').first().textContent()).includes('synthetic'));
-  // 内核配置同样在 allow-scripts 环境内保存，不要求放开 allow-forms。
-  await frame.locator('#settings summary').click();
+  // 内核配置现在在自己的页签里（不再是页面底部的折叠条）。
+  await frame.locator('[data-action="section-settings"]').click();
   await frame.locator('#mixedPort').fill('7897');
   await frame.locator('[data-action="save-config"]').click();
   await frame.locator('.banner[role="status"]').filter({hasText:'内核设置已保存'}).waitFor();

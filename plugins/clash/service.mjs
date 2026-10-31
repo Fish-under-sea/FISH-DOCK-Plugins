@@ -2,7 +2,7 @@ import {randomBytes, randomUUID} from 'node:crypto';
 import os from 'node:os';
 import {publicUpdateError,updateMessages} from './subscriptions.mjs';
 
-const defaults={kernel:'',mixedPort:7895,controllerPort:9099,layout:'single'};
+const defaults={kernel:'',mixedPort:7895,controllerPort:9099};
 const tunStacks=['mixed','gvisor','system'];
 const defaultTun={enable:false,stack:'mixed'};
 // 网站测试与 IP 查询的目标：全部经当前选中节点发起，避免「直连测自己」。
@@ -72,7 +72,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const legacy=/\/packages\/fish\.clash\/\d+\.\d+\.\d+\/[a-f0-9]{64}\/service\/mihomo\.exe$/i;
       const bundled=saved.bundled===true||legacy.test(String(saved.kernel).replaceAll('\\','/'));
       settings={kernel:saved.kernel??defaultKernel,mixedPort:saved.mixedPort??defaults.mixedPort,
-        controllerPort:saved.controllerPort??defaults.controllerPort,layout:saved.layout??defaults.layout,bundled,
+        controllerPort:saved.controllerPort??defaults.controllerPort,bundled,
         tun:{enable:saved.tun?.enable===true,stack:tunStacks.includes(saved.tun?.stack)?saved.tun.stack:defaultTun.stack}};
       if(bundled)settings.kernel=defaultKernel;
       const raw=await context.storage.read('config','subscriptions.json');
@@ -264,13 +264,6 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       return view({controller:false});
     });
   }
-  async function layout({layout}) {
-    return exclusive(async()=>{
-      if(!['single','double'].includes(layout))throw Error('布局值无效');
-      const next={...await config(),layout};
-      await context.storage.write('config','clash.json',JSON.stringify(next));settings=next;return view();
-    });
-  }
   // TUN 服务：安装/卸载各需要一次 UAC；装好后普通权限即可开关 TUN。
   async function tunService() {
     if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
@@ -427,6 +420,30 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     }));
     return {node:leaf,sites};
   }
+  // 节点测速：对当前组的每个节点打一次控制器的 delay 接口，结果按节点名回给页面。
+  // 并发 6：几百个节点同时打会把控制器压住，单条失败只影响它自己。
+  const delayUrl='https://www.gstatic.com/generate_204';
+  async function nodeTest({group:groupName}={}) {
+    if(!alive())throw Error('内核尚未启动');
+    const state=await view();
+    const target=groupName?state.groups.find(row=>row.name===groupName):state.groups[0];
+    if(!target)throw Error('没有可用的代理节点，请先选择节点');
+    const names=target.nodes.filter(node=>node.type!=='group').slice(0,200).map(node=>node.name);
+    const delays=[];
+    let cursor=0;
+    const worker=async()=>{
+      for(;;){
+        const index=cursor++;if(index>=names.length)return;
+        const name=names[index];
+        try{
+          const result=await request(`/proxies/${encodeURIComponent(name)}/delay?url=${encodeURIComponent(delayUrl)}&timeout=5000`);
+          delays.push({name,delay:Number.isFinite(result?.delay)&&result.delay>0?result.delay:null});
+        }catch{delays.push({name,delay:null})}
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(6,names.length)},worker));
+    return {group:target.name,tested:delays.length,delays};
+  }
   // 运行中切换 TUN 必须重启内核：TUN 由 SYSTEM 服务托管，普通模式由本进程 spawn，
   // 两者写同一个控制器端口，不能并存。整段「停 → 写配置 → 按新设置起」放到后台跑，
   // RPC 立刻返回：一次 TUN 启动要等 SYSTEM 服务拉起内核，很容易超过单次 RPC 的 15 秒。
@@ -452,6 +469,6 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     })();
     return view({controller:false});
   }
-  return {view,save,tunSwitch,subscriptionSave,subscriptionToggle,subscriptionRemove,layout,start,stop,shutdown,select,mode,reload,proxy,details,
+  return {view,save,tunSwitch,subscriptionSave,subscriptionToggle,subscriptionRemove,start,stop,shutdown,select,mode,reload,proxy,details,nodeTest,
     tunService,installTunService,uninstallTunService,ipInfo,siteTest};
 }

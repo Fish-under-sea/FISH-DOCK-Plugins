@@ -25,7 +25,7 @@ createPlugin({id:'fish.clash',activate:async context=>{
  // 只补「已经有内核、此刻又没在跑」这一种；未配置时留给用户自己选内核。
  if(process.env.FISH_PLUGIN_AUTOSTART==='1')void service.view().then(view=>{if(view.configured&&!view.running)void service.start().catch(()=>{})}).catch(()=>{});
 },deactivate:async()=>{if(service)await service.shutdown();service=null},commands:{
- ...Object.fromEntries(['view','save','tunSwitch','subscriptionSave','subscriptionToggle','subscriptionRemove','layout','select','mode','reload','proxy','details',
+ ...Object.fromEntries(['view','save','tunSwitch','subscriptionSave','subscriptionToggle','subscriptionRemove','select','mode','reload','proxy','details','nodeTest',
   'tunService','installTunService','uninstallTunService','ipInfo','siteTest'].map(name=>[`clash.${name}`,params=>service[name](params)])),
  'clash.start':()=>{void service.start().catch(()=>{});return service.view({controller:false})},
  'clash.stop':()=>{void service.stop().catch(()=>{});return service.view({controller:false})}
