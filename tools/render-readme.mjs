@@ -36,7 +36,7 @@ try {
     assert.ok(await evaluate("document.querySelector('h1').scrollWidth<=document.querySelector('h1').clientWidth"),'标题溢出')
     assert.ok(await evaluate("[...document.querySelectorAll('.pane')].every(p=>p.getBoundingClientRect().bottom<=document.querySelector('.window').getBoundingClientRect().bottom-15)"),'内容面板越过外框留白')
     assert.ok(await evaluate("[...document.querySelectorAll('.metric-value')].every(p=>{const r=p.getBoundingClientRect(),n=p.querySelector('.number').getBoundingClientRect(),l=p.querySelector('.metric-label').getBoundingClientRect();return n.right<r.right&&l.right<r.right&&l.bottom<r.bottom&&n.bottom<=l.top+1})"),'状态块内容溢出或重叠')
-    for(const id of ['hero','stat-version','stat-desktop','stat-mail','stat-channels']){
+    for(const id of ['hero','stat-version','stat-desktop','stat-mail','stat-channels','key-start']){
       if(lang==='en'&&['key-zh','key-en'].includes(id))continue
       const clip=await evaluate(`(()=>{const r=document.getElementById('${id}').getBoundingClientRect();return {x:Math.max(0,r.x-4),y:Math.max(0,r.y-4),width:r.width+8,height:r.height+15,scale:1}})()`)
       const image=await call('Page.captureScreenshot',{format:'png',clip,captureBeyondViewport:true})
