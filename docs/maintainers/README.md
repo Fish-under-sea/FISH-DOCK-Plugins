@@ -1,6 +1,8 @@
 # 插件维护者指南
 
-2.0.0 把四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉，OFM 带暂停维护标注。Magpie 随包原生服务固定为官方 0.1.1709。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+2.0.0 把四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉，OFM 带暂停维护标注。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线 `v0.1.2336` 加我们自己的补丁，当前 `v0.1.2336+fish.8`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md)。
+
+**当前版本**：飞书 **2.1.0**、Clash **2.1.0**、Magpie **2.1.1**、OFM **2.0.1**（暂停维护）。发行走 `v2.1.x` 之类的总 tag，一个 release 里放当次要发的包——不必四个一起发。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
 
 ## 身份表
 
@@ -27,7 +29,7 @@
 
 | 资源 | 当前开发验证来源 | 处理方式 |
 | --- | --- | --- |
-| Magpie | `yetone/magpie`，0.1.2336 / commit `847f0c4`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/magpie-v0.1.2336+fish.3.patch` 自行构建 | 独立进程；逐文件摘要记录于插件清单 |
+| Magpie | `yetone/magpie`，0.1.2336 / commit `847f0c4`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/magpie-v0.1.2336+fish.8.patch` 自行构建（版本标识 `v0.1.2336+fish.8` / FileVersion `0.1.2336.8`） | 独立进程；逐文件摘要记录于插件清单 |
 | mihomo | v1.19.15，`mihomo-windows-amd64-compatible-v1.19.15.zip` | 校验下载后暂存可执行文件，首次按需启动 |
 | OFM | 本机明确指定的 `dsh-our-free-model` 源码目录 | 按所需运行文件暂存，保留自身管理页及渠道逻辑 |
 | Node SDK | 同版 Dock 仓的 `sdk/node/plugin.mjs` | 复制到各插件，与宿主 API 1 联调 |
@@ -81,7 +83,7 @@ Webhook 测试、系统代理切换、Windhawk 系统安装与应用均为实际
 6. 资源实际可下载后再更新商店索引；索引失败时宿主保留已安装插件的管理能力。
 7. 桌面安装包在 Dock 仓单独制作与发布；npm 为四个插件分别生成单包，进入各输出目录使用 `npm pack --dry-run` 检查后运行 `npm publish --access public`。
 
-正式打包使用 `tools/build-release.mjs` 生成四个 `.fish-plugin`，再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-2.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。`relay-probe` 是开发探针，不在这四个发行物中。
+正式打包使用 `tools/build-release.mjs` 生成 `.fish-plugin`（`--only <key>` 只打一个，不动其他包的版本），再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-2.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。`relay-probe` 是开发探针，不在这四个发行物中。
 
 两个构建工具均要求新的输出目录，不再清空已有目录；正式构建必须提供所选插件需要的运行时。构建后执行 `node tools/verify-release.mjs --dist <绝对 dist 目录> --npm <绝对 npm 输出目录>`，核对归档资源、页面依赖、清单摘要和 npm 字节一致性。此检查不访问远端下载地址，也不替代安装与实机验收。仅准备本地实验材料可使用 `tools/prepare-local-handoff.ps1`，该脚本不会上传资源或发布 npm。
 

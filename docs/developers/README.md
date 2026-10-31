@@ -1,6 +1,6 @@
 # 插件开发者指南
 
-当前协议为 v1，四个已发布官方插件为 2.0.0（作者用数组、不再有维护者字段）；`plugins/relay-probe` 是开发中的中转站行为探针，尚未进入发行目录。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1。已发布的四个：飞书 **2.1.0**、Clash **2.1.0**、Magpie **2.1.1**（exe `v0.1.2336+fish.8`）、OFM **2.0.1**（暂停维护）；作者用数组、不再有维护者字段。`plugins/relay-probe` 是开发中的中转站行为探针，尚未进入发行目录；`plugins/magpie/page-plugins/` 下的页面插件随 Magpie 包分发，也不单独发行。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
@@ -92,6 +92,24 @@ const view=await window.FishDock.call('weather.view');
 宿主用票据绑定插件 ID、活动版本与启用状态。业务页面运行在独立来源的 sandbox iframe；来源和发送窗口需要同时匹配，页面不能指定其他插件身份。停用、卸载与版本切换撤销旧票据。页面需要显示加载、空状态、错误与重试，保留键盘焦点和可访问名称。
 
 Magpie、OFM 的 `gateway.open` 是宿主提供的特定管理页入口，地址只接收当前服务的回环端口。普通插件不借用该入口。网关页面按需加载，其原生账号与用量仍由各自服务处理。
+
+## Magpie 的页面插件
+
+`plugins/magpie/page-plugins/` 下是随 Magpie 包一起分发、首启装进 magpie 插件清单的页面插件（`page-checkin`、`page-relay-probe`）。它们不是本仓的发行单元，但代码在这里维护。
+
+页面跑在 magpie 的沙箱帧里（CSP `connect-src 'none'`，一条请求都发不出去），所以页面想做的每件事都要回到宿主，靠 `package.json` 的两个字段声明：
+
+| 字段 | 作用 | 注意 |
+| --- | --- | --- |
+| `magpie.permissions` | 可**读**的名字（`checkin:state`） | 不在 magpie 的 `PageReads` 里会被丢掉 |
+| `magpie.calls` | 可**调用**的名字（`checkin:*`、`relay:*`、`brand:*`） | 还要出现在 magpie 的 `PageCalls` 里，否则 `callsKeeping` 会**静默**丢掉，页面那边只表现为「调用失败」 |
+
+两个 `icon` 字段极易写混，写错的表现完全不同：
+
+- `magpie.page.icon` —— **侧边栏那个页面入口**的图标，写包内的相对路径（如 `page/icon.svg`）；
+- `magpie.icon` —— **插件列表那一行**的图标，写 `data:image/…`、`https://…`，或者包内相对路径（后者由 magpie 的 `LocalIcon` 读出来存成图标）。
+
+预装厂商在插件页、供应商页、侧边栏、路由与用量卡片上的图标由 magpie 侧接管，不在插件包里：素材编进 exe（`internal/provider/brandicons/`，21 份，覆盖 13 个插件注册的 21 个 provider id），开关是数据目录下 `icons/brand/on` 一个标记文件，页面那两颗按钮是 `brand:status` / `brand:set`。之所以不放插件包，是因为社区插件一升级 `magpie.icon` 就回原样——那正是「更新完图标就掉」的成因。改素材要重编 exe，步骤见 [自编译 Magpie](../../plugins/magpie/tools/README.md)。
 
 ## 事件与数据
 
