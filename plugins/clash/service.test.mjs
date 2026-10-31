@@ -53,20 +53,31 @@ async function settled(service) {
  for(let i=0;i<200;i++){const state=await service.view({controller:false});if(!state.subscriptions.some(s=>s.updating))return state;await tick()}
  throw Error('jobs failed to finish');
 }
-test('multiple subscriptions have stable independent IDs and coexist in one runtime',async()=>{
+test('multiple subscriptions keep independent IDs but only one runs at a time',async()=>{
  const f=fixture();await f.service.save(kernel);const a=await add(f),b=await add(f,'B','https://example.test/b');
  assert.notEqual(a.id,b.id);
+ assert.equal(a.enabled,true,'第一条默认启用');
+ assert.equal(b.enabled,false,'之后再新增的默认停用');
+ // 单选：启用 B 会把 A 关掉，存储里也只留一条启用。
+ const switched=await f.service.subscriptionToggle({id:b.id,enabled:true});
+ assert.deepEqual(switched.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,false],[b.id,true]]);
+ assert.equal(JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions.filter(s=>s.enabled).length,1);
+ // 停用 B 之后一条也不启用。
+ const off=await f.service.subscriptionToggle({id:b.id,enabled:false});
+ assert.equal(off.subscriptions.some(s=>s.enabled),false);
+ await f.service.subscriptionToggle({id:a.id,enabled:true});
  await f.service.subscriptionSave({id:a.id,name:'Renamed',url:''});
  await f.service.reload();await settled(f.service);await f.service.start();
  const state=await f.service.view();
- assert.equal(state.subscriptions.length,2);assert.equal(f.stats().owned.subscriptions.length,2);
+ assert.equal(state.subscriptions.length,2);
+ assert.deepEqual(f.stats().owned.subscriptions.map(s=>s.id),[a.id],'内核只吃启用那一条');
  // view 只暴露代理组（GLOBAL/DIRECT 不算组），主组节点含订阅来源前缀。
  assert.ok(state.groups.every(g=>g.name!=='GLOBAL'&&g.name!=='DIRECT'));
  const main=state.groups.find(g=>g.name==='🚀 节点选择');
  assert.ok(main);assert.equal(main.selected,'♻️ 自动选择');
  const sourceNodes=main.nodes.filter(n=>n.sourceId);
- assert.deepEqual(sourceNodes.map(n=>n.label),['same','same']);
- assert.deepEqual(sourceNodes.map(n=>n.source),['Renamed','B']);
+ assert.deepEqual(sourceNodes.map(n=>n.label),['same']);
+ assert.deepEqual(sourceNodes.map(n=>n.source),['Renamed']);
  assert.ok(main.nodes.some(n=>n.name==='♻️ 自动选择'&&n.sourceId===null));
  // 自动选择组只含订阅节点。
  const auto=state.groups.find(g=>g.name==='♻️ 自动选择');
@@ -74,12 +85,12 @@ test('multiple subscriptions have stable independent IDs and coexist in one runt
  // 默认直连的分类组：DIRECT 排第一。
  const ms=state.groups.find(g=>g.name==='Ⓜ️ 微软服务');
  assert.equal(ms.nodes[0].label,'DIRECT');
- await f.service.select({group:'🚀 节点选择',name:sourceNodes[1].name});
- assert.ok(f.requests.some(r=>r.method==='PUT'&&r.body?.name===`[${b.id}] same`));
+ await f.service.select({group:'🚀 节点选择',name:sourceNodes[0].name});
+ assert.ok(f.requests.some(r=>r.method==='PUT'&&r.body?.name===`[${a.id}] same`));
  assert.ok(!JSON.stringify(state).includes('PRIVATE'));assert.ok(!f.disk.get('config/subscriptions.json').includes('https:'));
  await assert.rejects(f.service.subscriptionToggle({id:a.id,enabled:false}),/停止/);
- await f.service.stop();await f.service.subscriptionToggle({id:a.id,enabled:false});
- await f.service.start();assert.deepEqual(f.stats().owned.subscriptions.map(s=>s.id),[b.id]);
+ await f.service.stop();await f.service.subscriptionToggle({id:a.id,enabled:true});
+ await f.service.start();assert.deepEqual(f.stats().owned.subscriptions.map(s=>s.id),[a.id]);
  await f.service.stop();await f.service.subscriptionRemove({id:a.id});
  assert.deepEqual((await f.service.view()).subscriptions.map(s=>s.id),[b.id]);
  assert.equal(f.disk.get(`secret/credentials/${a.id}.json`),'');
@@ -103,7 +114,7 @@ test('refresh failure retains success time and count, updates only one provider 
  assert.deepEqual(f.requests.filter(r=>r.method==='PUT').map(r=>r.path),[`/providers/proxies/${a.id}`]);
  f.fail();await f.service.reload({id:a.id});const after=await settled(f.service);
  assert.equal(after.subscriptions[0].status,'error');assert.equal(after.subscriptions[0].hasCache,true);
- assert.equal(after.subscriptions[0].nodeCount,2);assert.equal(after.subscriptions[1].status,'ready');
+ assert.equal(after.subscriptions[0].nodeCount,2);assert.equal(after.subscriptions[1].status,'pending','没启用的订阅不参与刷新');
  assert.ok(after.subscriptions[0].lastSuccess>=before.subscriptions[0].lastSuccess);
  // 流量额度随更新落库并持久化：损坏结构不覆盖旧值。
  assert.deepEqual(after.subscriptions[0].userInfo,{upload:1,download:2,total:10,used:3,expire:1767225600});

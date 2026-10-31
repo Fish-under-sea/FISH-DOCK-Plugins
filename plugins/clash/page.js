@@ -2,15 +2,13 @@
  const root=document.querySelector('#app');
  // 版本号不再单独维护：后端读包内 plugin.json 并把 version 放进 view.pluginVersion，
  // 页面直接显示插件版本，跟着发行版本走。
- // 四个页签 + 启停/刷新共用顶部一行（#headbar）。内核设置不再挤在页面最底部当折叠条。
-const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],['settings','内核设置']];
+ // 页签 + 启停/刷新共用顶部一行（#headbar）。内核设置是独立页签，不再当每页底部的折叠条。
+ const SECTIONS=[['overview','概览'],['providers','订阅'],['settings','内核设置']];
  const MODES=[['rule','规则','按规则分流：国内直连，其余走代理'],['global','全局','所有流量都走代理'],
   ['direct','直连','全部不走代理，等价于关闭分流']];
  let view=null,busy=false,polling=false,error='',notice='',noticeKind='info';
  let group='',section='overview',timer=null,revision=0;
  let draft={id:'',name:'',url:''},fieldErrors={},configDraft=null,confirmDelete='',confirmTun='';
- // 节点浏览状态只影响渲染，不落盘：搜索、延迟排序、只看可用。
- let nodeQuery='',sortDelay=false,onlyAvailable=false;
  // 手动测速的结果按节点名缓存：视图里的 delay 要等内核自己测，页面这层先显示新值。
  let nodeDelays={},nodeTesting=false;
  let ip=null,ipBusy=false,ipError='',ipReveal=false,ipAsked=false;
@@ -86,10 +84,18 @@ const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],
   if(hours)return `${hours} 小时 ${rest} 分`;
   return `${rest} 分`;
  }
- const delayClass=d=>Number.isFinite(d)?(d<150?'good':d<400?'warm':'bad'):'neutral';
- const delayText=d=>Number.isFinite(d)?`${d} ms`:'未测速';
+ // 延迟三种状态：测出数值、测过但超时、还没测过。
+ // 超时的值在 mihomo 里是 0 或 null，直接显示「0 ms」会让人以为节点很快——标红写「已超时」。
  const groups=()=>view?.groups??[];
- const currentGroup=()=>groups().find(g=>g.name===group)??groups()[0]??null;
+ // 代理组默认落在「自动选择」上：多数人不想手挑节点，让它按延迟自动跑。
+ const autoGroup=()=>groups().find(g=>/自动选择/.test(g.name))??groups()[0]??null;
+ const currentGroup=()=>groups().find(g=>g.name===group)??autoGroup();
+ function delayInfo(node) {
+  const known=Object.hasOwn(nodeDelays,node.name),value=known?nodeDelays[node.name]:node.delay;
+  if(value===0||(value===null&&known))return {kind:'bad',text:'已超时'};
+  if(Number.isFinite(value))return {kind:value<150?'good':value<400?'warm':'bad',text:`${value} ms`};
+  return {kind:'neutral',text:'未测速'};
+ }
  function usageBlock(s) {
   const u=s.userInfo;
   if(!u||!Number.isFinite(u.total)||!Number.isFinite(u.used)||u.total<=0)return '';
@@ -135,20 +141,21 @@ const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],
  }
  function currentNodeCard() {
   const list=groups();
-  if(!list.length)return card('当前节点','<p class="muted">内核运行后显示代理组与可选节点。</p>',
-   {wide:true,footer:button('goto-nodes','打开节点列表','',false)});
+  if(!list.length)return card('当前节点','<p class="muted">内核运行后显示代理组与可选节点。</p>',{wide:true});
   const current=currentGroup();
   const groupPicker=`<label>代理组<select id="group-pick" ${busy?'disabled':''}>${list.map(g=>
-   `<option value="${esc(g.name)}" ${g.name===current.name?'selected':''}>${esc(g.name)}</option>`).join('')}</select></label>`;
+   `<option value="${esc(g.name)}" ${g.name===current?.name?'selected':''}>${esc(g.name)}</option>`).join('')}</select></label>`;
   const nodePicker=`<label>节点<select id="node-pick" ${busy||!view.running?'disabled':''}>${(current?.nodes??[]).map(n=>{
-   const delay=delayOf(n);
-   return `<option value="${esc(n.name)}" ${n.name===current.selected?'selected':''}>${esc(n.label??n.name)}${Number.isFinite(delay)?` · ${delay} ms`:''}</option>`;
+   const info=delayInfo(n);
+   return `<option value="${esc(n.name)}" ${n.name===current.selected?'selected':''}>${esc(n.label??n.name)}${info.kind==='neutral'?'':` · ${info.text}`}</option>`;
   }).join('')}</select></label>`;
-  const now=(current?.nodes??[]).find(n=>n.name===current.selected),nowDelay=now?delayOf(now):null;
+  const now=(current?.nodes??[]).find(n=>n.name===current.selected),info=now?delayInfo(now):{kind:'neutral',text:'—'};
   // 跨满整行：宽窗口下两个选择器并排，窄窗口自动回落到上下排列。
+  // 测速放这里：节点页去掉之后，主界面就是唯一挑节点的地方。
   return card('当前节点',`<div class="split">${groupPicker}${nodePicker}</div>
-   <p class="status-line">延迟 <span class="n-delay ${delayClass(nowDelay)}">${now&&now.type==='group'?'代理组':delayText(nowDelay)}</span></p>`,
-   {wide:true,footer:button('goto-nodes','节点列表','',false)});
+   <p class="status-line">延迟 <span class="n-delay ${now&&now.type==='group'?'neutral':info.kind}">${now&&now.type==='group'?'代理组':info.text}</span></p>`,
+   {wide:true,footer:button('node-test',nodeTesting?'测速中…':'测速',`aria-busy="${nodeTesting}"`,
+    busy||nodeTesting||!view.running)});
  }
  function networkCard() {
   const system=view.systemProxy===true,tun=view.tun?.enable===true;
@@ -224,47 +231,7 @@ const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],
    ${siteCard()}${ipCard()}${clashCard()}${systemCard()}</div>`;
  }
  // 手动测速过的节点优先用页面上的值：内核自己测速要等它下一轮健康检查。
- const delayOf=node=>Object.hasOwn(nodeDelays,node.name)?nodeDelays[node.name]:node.delay;
- // ── 节点：搜索 / 延迟排序 / 只看可用 / 手动测速 ──
- function visibleNodes(nodes) {
-  const query=nodeQuery.trim().toLowerCase();
-  let list=nodes.filter(n=>!query
-   ||String(n.label??n.name).toLowerCase().includes(query)
-   ||String(n.source??'').toLowerCase().includes(query));
-  if(onlyAvailable)list=list.filter(n=>Number.isFinite(delayOf(n)));
-  if(sortDelay){
-   const value=n=>Number.isFinite(delayOf(n))?delayOf(n):Infinity;
-   list=[...list].sort((a,b)=>value(a)-value(b));
-  }
-  return list;
- }
- function nodeItems(current) {
-  return visibleNodes(current?.nodes??[]).map(n=>{
-   const delay=delayOf(n);
-   return button('node',
-    `<span class="n-label"><span class="n-name">${esc(n.label??n.name)}</span>${n.source?`<small class="source">${esc(n.source)}</small>`:''}</span>
-     <span class="n-delay ${delayClass(delay)}">${n.type==='group'?'代理组':delayText(delay)}</span>`,
-    `class="node" data-node="${esc(n.name)}" aria-current="${n.name===current.selected}"`,false);
-  }).join('');
- }
- function nodesSection() {
-  if(!groups().length)return `<h2>代理组</h2><p>尚无代理节点。请在订阅页添加并更新订阅，然后启动内核。</p>`;
-  const current=currentGroup();
-  const chips=groups().map(g=>button('group-card',
-   `<span class="g-name">${esc(g.name)}</span><span class="g-count">${g.nodes.length} 项</span>`,
-   `class="group-card" data-group="${esc(g.name)}" aria-current="${g.name===group}"`,false)).join('');
-  const shown=visibleNodes(current?.nodes??[]).length,total=current?.nodes?.length??0;
-  return `<h2>代理组</h2><div class="group-strip" role="tablist">${chips}</div>
-   <div class="nodes-head"><h2 class="nodes-title">${esc(current?.name??'')}
-    <span class="muted"> · 当前 ${esc(current?.selected??'—')}</span></h2>
-    ${button('node-test',nodeTesting?'测速中…':'测速',`aria-busy="${nodeTesting}"`,busy||nodeTesting||!view.running)}
-    ${button('sort-delay',sortDelay?'按延迟 ✓':'按延迟',`aria-pressed="${sortDelay}"`,false)}
-    ${button('only-available',onlyAvailable?'只看可用 ✓':'只看可用',`aria-pressed="${onlyAvailable}"`,false)}</div>
-   <label class="search">搜索节点<input id="node-search" type="search" autocomplete="off"
-    placeholder="按节点名或订阅名筛选" value="${esc(nodeQuery)}"></label>
-   <div class="node-scroll" id="node-list"><div class="nodes">${nodeItems(current)}</div></div>
-   <p class="muted small" id="node-count">显示 ${shown} / ${total} 个节点</p>`;
- }
+ 
  // ── 订阅管理：运行中不再沉默禁用，而是说明原因并给出停止入口 ──
  function providersSection() {
   const rows=view.subscriptions??[],running=!!view.running;
@@ -419,12 +386,11 @@ const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],
   const pane=root.querySelector('#pane'),bar=root.querySelector('#headbar');
   const keepScroll={paneTop:pane?.scrollTop??0,barLeft:bar?.scrollLeft??0};
   if(!view){root.innerHTML=`<h1>Clash</h1><p role="status">${busy?'正在读取内核状态…':esc(error||'尚未读取状态')}</p>${button('view','重试')}`;bind();return}
-  if(!groups().some(g=>g.name===group))group=groups()[0]?.name||'';
+  if(!groups().some(g=>g.name===group))group=autoGroup()?.name??'';
   const nav=SECTIONS.map(([key,label])=>button(`section-${key}`,label,`aria-pressed="${section===key}"`,false)).join('');
-  const body=section==='overview'?overviewSection():section==='nodes'?nodesSection()
-   :section==='providers'?providersSection():settingsSection();
+  const body=section==='overview'?overviewSection():section==='providers'?providersSection():settingsSection();
   // 页签、启停、刷新挤在同一行（窄了就横向滚，不折到第二行）；
-  // 内容区统一一个内滚高度，四个页签的高度一致，不会把宿主面板顶长。
+  // 内容区统一一个内滚高度，各页签的高度一致，不会把宿主面板顶长。
   const toggle=button(view.running||view.operation==='starting'||updating()?'stop':'start',
    view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',
    busy||view.operation==='stopping');
@@ -452,12 +418,6 @@ const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],
    // 下拉收起后，把因展开而推迟的那次重绘补上。
    nodePicker.onblur=()=>{if(staleDraw)draw()};
   }
-  // 搜索框就地过滤：重建列表会丢输入焦点，所以只收起重建后的焦点与光标。
-  const search=root.querySelector('#node-search');
-  if(search){
-   search.oninput=e=>{nodeQuery=String(e.target.value??'');if(!e.isComposing)draw()};
-   search.oncompositionend=()=>draw();
-  }
   if(focus){const next=root.querySelector(`#${focus}`);next?.focus();if(caret&&next?.setSelectionRange)next.setSelectionRange(...caret)}
   // 滚动位置在重建后放回去；重建后内容可能变短，浏览器自己会夹到合法范围。
   const paneNow=root.querySelector('#pane'),barNow=root.querySelector('#headbar');
@@ -476,12 +436,7 @@ const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],
    if(a==='save-subscription')return saveSubscription();
    if(a==='save-config')return saveConfig();
    if(a.startsWith('section-')){section=a.slice(8);draw();return}
-   // 点击组卡切换当前组（纯前端状态，不发 RPC）；节点点击才走 select。
-   if(a==='group-card'){group=b.dataset.group;draw();return}
-   if(a==='node')return run('select',{group, name:b.dataset.node});
-   if(a==='goto-nodes'||a==='goto-providers'){section=a.slice(5);draw();return}
-   if(a==='sort-delay'){sortDelay=!sortDelay;draw();return}
-   if(a==='only-available'){onlyAvailable=!onlyAvailable;draw();return}
+   if(a==='goto-providers'){section='providers';draw();return}
    if(a==='node-test')return testNodes();
    if(a==='stop-inline')return run('stop');
    if(a==='proxy')return run('proxy',{enabled:!view.systemProxy});

@@ -95,6 +95,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
           errorCode:s.status==='updating'?'CANCELLED':Object.hasOwn(updateMessages,s.errorCode)?s.errorCode:null,
           error:s.status==='updating'?'上次更新被中断，旧缓存仍保留':s.status==='error'?(updateMessages[s.errorCode]??updateMessages.UNKNOWN):''
         }));
+        // 旧数据里可能有多条启用；内存里只留第一条，界面与内核看到的是同一个状态，
+        // 用户下次点卡片时再写回盘。
+        const firstEnabled=subscriptions.find(row=>row.enabled);
+        if(firstEnabled)subscriptions=subscriptions.map(row=>({...row,enabled:row.id===firstEnabled.id}));
       } else {
         // 宿主已解密旧版单订阅凭据；格式正常就迁移，格式无效则提示并保留原值。
         const old=await context.secrets.read('credentials','subscription.json');
@@ -204,7 +208,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         return view({controller:false});
       if(!old&&subscriptions.length>=32)throw Error('最多保存 32 个订阅');
       const id=old?.id??`sub-${randomUUID()}`;
-      const row={id,name,enabled:old?.enabled??true,status:old?.status??'pending',
+      const row={id,name,enabled:old?.enabled??subscriptions.length===0,status:old?.status??'pending',
         lastAttempt:old?.lastAttempt??null,lastSuccess:old?.lastSuccess??null,
         nodeCount:old?.nodeCount??0,hasCache:old?.hasCache??false,userInfo:old?.userInfo??null,error:'',errorCode:null};
       if(url!==previous)row.status='pending';
@@ -214,11 +218,14 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       return view({controller:false});
     });
   }
+  // 订阅是单选的：同时只能启用一条。多条一起启用等于把几家机场的节点混进同一个
+// 组树，出问题时也说不清是谁的节点——所以启用一条就把其余的关掉。
   async function subscriptionToggle({id,enabled}) {
     return exclusive(async()=>{
       await config();editable();rowFor(id);
       if(typeof enabled!=='boolean')throw Error('订阅启用状态无效');
-      await persist(subscriptions.map(s=>s.id===id?{...s,enabled}:s));return view({controller:false});
+      await persist(subscriptions.map(s=>s.id===id?{...s,enabled}:(enabled?{...s,enabled:false}:s)));
+      return view({controller:false});
     });
   }
   async function subscriptionRemove({id}) {

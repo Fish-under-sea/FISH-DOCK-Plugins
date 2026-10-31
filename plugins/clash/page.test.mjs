@@ -4,8 +4,8 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const flush=()=>new Promise(r=>setImmediate(r));
 // Minimal DOM adapter for testing actual page event handlers; visual/WebView QA remains separate.
-function fixture() {
- const calls=[],timers=new Map();let serial=0,html='',elements={},buttons=[],cards=[],blocked=null,fail=false,ipReply=null;
+function fixture(prepare) {
+ const calls=[],timers=new Map();let serial=0,html='',elements={},buttons=[],cards=[],blocked=null,fail=false,ipReply=null,nodeTestReply=null;
  const row={kernel:'D:/mihomo.exe',mixedPort:7895,controllerPort:9099,configured:true,running:false,
   version:'v1.19.0',rulesCount:11,uptimeMs:3723000,os:'Windows 10.0.26200',
   arch:'x64',cpu:'Synthetic CPU · 16 核',memoryTotal:64*1024**3,pluginVersion:'2.0.3',bundled:true,
@@ -55,7 +55,7 @@ function fixture() {
        chains:['🚀 节点选择','香港节点'],rule:'DomainSuffix test',upload:1024,download:2048,start:'2026-10-31T09:00:00.000Z'},
       {id:'c2',network:'tcp',host:'google.com',destination:'142.250.0.1:443',source:'127.0.0.1',
        chains:['🚀 节点选择','DIRECT'],rule:'GEOSITE google',upload:0,download:0,start:'2026-10-31T09:05:00.000Z'}]};
-   if(method==='clash.nodeTest')return {group:params.group??'',tested:2,delays:[
+   if(method==='clash.nodeTest')return nodeTestReply??{group:params.group??'',tested:2,delays:[
     {name:'[sub-00000000-0000-0000-0000-000000000001] 香港节点',delay:42},{name:'DIRECT',delay:null}]};
    if(method==='clash.siteTest')return {node:'[sub-00000000-0000-0000-0000-000000000001] 香港节点',sites:[
     {key:'apple',label:'Apple',url:'https://www.apple.com/library/test/success.html',delay:128,ok:true},
@@ -64,6 +64,7 @@ function fixture() {
     {key:'youtube',label:'YouTube',url:'https://www.youtube.com/favicon.ico',delay:null,ok:false}]};
    return structuredClone(row);
   }}};
+ prepare?.(row);
  vm.runInNewContext(readFileSync(new URL('./page.js',import.meta.url),'utf8'),context);
  return {calls,row,timers,root,element:id=>elements[id],buttons:()=>buttons,cards:()=>cards,
   // 页面用 document.activeElement 判断「下拉是否展开」，夹具照真实 DOM 的最小面提供。
@@ -73,11 +74,9 @@ function fixture() {
   // 订阅卡整张可点：卡内按钮不算（真实 DOM 用 closest 判断，夹具传 null 表示点在卡片本身）。
   cardClick:id=>{const card=cards.find(c=>c.dataset.sub===id);assert.ok(card,`订阅卡 ${id}`);return card.onclick({target:{closest:()=>null}})},
   setIpReply:value=>{ipReply=value},
+  setNodeTest:value=>{nodeTestReply=value},
   block:()=>{let release;blocked=new Promise(r=>release=r);return release},fail:()=>{fail=true}};
 }
-// 从渲染结果里按出现顺序取节点原始名：验证过滤与排序只靠 DOM 顺序，不靠后端。
-const nodeNames=html=>[...html.matchAll(/<button\b[^>]*>/g)].map(m=>m[0])
- .filter(tag=>/data-action="node"/.test(tag)).map(tag=>/data-node="([^"]*)"/.exec(tag)?.[1]??'');
 test('sandbox 页面点击保存订阅直接调用 RPC，并读取实时输入而非依赖 oninput',async()=>{
  const f=fixture();await flush();f.click('section-providers');
  f.element('subscription-name').value='Click save';
@@ -128,7 +127,7 @@ test('background updating polls without blocking navigation; deletion needs inli
  f.row.subscriptions[0].updating=true;f.click('update');await flush();
  assert.ok(f.timers.size);assert.ok(f.root.innerHTML.includes('更新中'));
  assert.ok(f.root.innerHTML.includes('取消更新'));
- f.click('section-nodes');assert.ok(f.root.innerHTML.includes('代理组'));
+ f.click('section-settings');assert.ok(f.root.innerHTML.includes('内核设置'));
  f.row.subscriptions[0].updating=false;f.row.subscriptions[0].status='error';
  await [...f.timers.values()].at(-1)();f.click('section-providers');
  assert.ok(f.root.innerHTML.includes('更新失败'));
@@ -166,37 +165,54 @@ test('空订阅列表给出下一步指引，保存成功后提示更新并显�
  assert.ok(f.root.innerHTML.includes('9YUN'));
  assert.ok(f.root.innerHTML.includes('还没下载过节点'));
 });
-test('节点页渲染组卡网格：组名、当前选中、节点标签与来源、延迟与选中态',async()=>{
- const f=fixture();await flush();
- f.click('section-nodes');
- const html=f.root.innerHTML;
- assert.ok(html.includes('🚀 节点选择'),'组卡标题');
- assert.ok(html.includes('♻️ 自动选择'),'组内成员/当前选中');
- assert.ok(html.includes('香港节点'),'订阅节点标签去前缀');
- assert.ok(html.includes('One'),'来源订阅名');
- assert.ok(html.includes('20 ms'),'延迟显示');
- assert.ok(/aria-current="true"/.test(html),'当前选中节点高亮');
- assert.ok(html.includes('group-card'),'组卡容器');
- // 点击节点触发 select RPC，参数是带前缀的原始名（香港节点是最后一个 node 按钮）。
- f.row.running=true;f.click('view');await flush();
- const node=f.buttons().filter(b=>b.dataset.action==='node').at(-1);
- assert.ok(node,'存在订阅节点按钮');
- node.onclick();
+// 概览默认落在「自动选择」组上：多数人不想手挑节点。
+test('默认代理组是自动选择，没有自动选择组时才落到第一个',async()=>{
+ const f=fixture(row=>row.groups.unshift({name:'♻️ 自动选择',selected:'DIRECT',nodes:[
+  {name:'DIRECT',label:'DIRECT',sourceId:null,source:null,type:'Direct',delay:null}]}));
+ await flush();f.row.running=true;f.click('view');await flush();
+ const select=/<select id="group-pick"[\s\S]*?<\/select>/.exec(f.root.innerHTML)?.[0]??'';
+ assert.ok(select.includes('♻️ 自动选择'),'下拉里有自动选择组');
+ const picked=/<option value="([^"]*)" selected>/.exec(select);
+ assert.equal(picked?.[1],'♻️ 自动选择','默认选中自动选择');
+});
+// 节点页去掉之后，主界面的「当前节点」卡就是唯一的切节点入口。
+test('主界面「当前节点」卡承载组与节点下拉，切换走 select',async()=>{
+ const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+ assert.ok(f.element('group-pick'),'代理组下拉');
+ assert.ok(f.element('node-pick'),'节点下拉');
+ assert.ok(f.root.innerHTML.includes('香港节点'),'订阅节点显示去掉前缀的名字');
+ assert.ok(f.root.innerHTML.includes('20 ms'),'节点下拉里带延迟');
+ assert.equal(f.buttons().some(b=>b.dataset.action==='section-nodes'),false,'节点页签已移除');
+ f.element('node-pick').onchange({target:{value:'[sub-00000000-0000-0000-0000-000000000001] 香港节点'}});
  const call=f.calls.find(c=>c.method==='clash.select');
- assert.ok(call);
+ assert.ok(call,'换节点发 select');
  assert.equal(call.params.group,'🚀 节点选择');
  assert.equal(call.params.name,'[sub-00000000-0000-0000-0000-000000000001] 香港节点');
 });
-test('点击组卡切换当前组，节点网格随之更新且不发 select',async()=>{
- const f=fixture();await flush();
- f.row.groups.push({name:'🎯 全球直连',selected:'DIRECT',nodes:[
-  {name:'DIRECT',label:'DIRECT',sourceId:null,source:null,type:'Direct',delay:null},
-  {name:'🚀 节点选择',label:'🚀 节点选择',sourceId:null,source:null,type:'group',delay:null}]});
+// 手动测速：结果立刻覆盖下拉与延迟行里的旧值。
+test('主界面测速按钮把结果写回节点下拉',async()=>{
+ const f=fixture();await flush();f.row.running=true;
  f.click('view');await flush();
- f.click('section-nodes');
- f.click('group-card');
- assert.ok(!f.calls.some(c=>c.method==='clash.select'),'切换组卡不发 select');
- assert.ok(f.root.innerHTML.includes('全球直连'),'节点网格切到新组');
+ assert.ok(f.root.innerHTML.includes('20 ms'),'视图里原有的延迟');
+ f.click('node-test');await flush();
+ const call=f.calls.find(c=>c.method==='clash.nodeTest');
+ assert.ok(call,'点测速发 RPC');
+ assert.equal(call.params.group,'🚀 节点选择','测的是当前组');
+ assert.ok(f.root.innerHTML.includes('42 ms'),'测速结果覆盖显示');
+ assert.equal(f.root.innerHTML.includes('20 ms'),false,'旧值让位给新值');
+});
+// 超时不能显示成「0 ms」——那看着像最快的节点。
+test('测速超时的节点显示「已超时」并标红，不显示 0 ms',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ const leaf='[sub-00000000-0000-0000-0000-000000000001] 香港节点';
+ f.row.groups[0].selected=leaf;
+ f.setNodeTest({group:'🚀 节点选择',tested:1,delays:[{name:leaf,delay:0}]});
+ f.click('view');await flush();
+ f.click('node-test');await flush();
+ const html=f.root.innerHTML;
+ assert.equal(html.includes('0 ms'),false,'不显示 0 ms');
+ assert.ok(html.includes(' · 已超时'),'下拉里写明已超时');
+ assert.ok(/n-delay bad">已超时/.test(html),'延迟行标红写已超时');
 });
 test('订阅卡显示流量额度条；服务器没给额度时不渲染',async()=>{
  const f=fixture();await flush();f.click('section-providers');
@@ -224,40 +240,6 @@ test('概览页默认渲染 Verge 式信息卡：订阅、当前节点、网络�
  assert.ok(html.includes('127.0.0.1:7895'),'系统代理地址');
  assert.ok(html.includes('Windows 10.0.26200'),'操作系统');
  assert.ok(html.includes('1 小时 2 分'),'运行时间');
-});
-test('节点页支持搜索过滤与按延迟排序，过滤结果只保留匹配项',async()=>{
- const f=fixture();await flush();f.click('section-nodes');
- assert.deepEqual(nodeNames(f.root.innerHTML),[
-  '♻️ 自动选择','DIRECT','[sub-00000000-0000-0000-0000-000000000001] 香港节点']);
- f.element('node-search').value='香港';
- f.element('node-search').oninput({target:{value:'香港'},isComposing:false});
- assert.deepEqual(nodeNames(f.root.innerHTML),['[sub-00000000-0000-0000-0000-000000000001] 香港节点']);
- f.element('node-search').oninput({target:{value:''},isComposing:false});
- f.click('sort-delay');
- assert.deepEqual(nodeNames(f.root.innerHTML),[
-  '[sub-00000000-0000-0000-0000-000000000001] 香港节点','♻️ 自动选择','DIRECT']);
- const sorted=f.root.innerHTML;
- assert.ok(/data-action="sort-delay"[^>]*aria-pressed="true"/.test(sorted),'排序按钮进入选中态');
-});
-test('节点页提供「只显示可用节点」过滤，未测速与超时节点被隐藏',async()=>{
- const f=fixture();await flush();f.click('section-nodes');
- f.click('only-available');
- assert.deepEqual(nodeNames(f.root.innerHTML),['[sub-00000000-0000-0000-0000-000000000001] 香港节点']);
-});
-// 手动测速：结果立刻覆盖列表里的旧延迟，并且参与「按延迟」排序。
-test('节点测速按钮把结果写回列表并参与排序',async()=>{
- const f=fixture();await flush();f.row.running=true;
- f.click('view');await flush();
- f.click('section-nodes');
- assert.ok(f.root.innerHTML.includes('20 ms'),'视图里原有的延迟');
- f.click('node-test');await flush();
- const call=f.calls.find(c=>c.method==='clash.nodeTest');
- assert.ok(call,'点测速发 RPC');
- assert.equal(call.params.group,'🚀 节点选择','测的是当前组');
- assert.ok(f.root.innerHTML.includes('42 ms'),'测速结果覆盖列表显示');
- f.click('sort-delay');
- assert.deepEqual(nodeNames(f.root.innerHTML),[
-  '[sub-00000000-0000-0000-0000-000000000001] 香港节点','♻️ 自动选择','DIRECT']);
 });
 test('内核运行时订阅区不再沉默禁用：给出先停止内核的说明与入口',async()=>{
  const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
@@ -333,7 +315,6 @@ test('节点下拉展开期间不重绘，收起后补一次',async()=>{
 test('轮询重绘不把内容区滚回原点',async()=>{
  const f=fixture();await flush();f.row.running=true;
  f.click('view');await flush();
- f.click('section-nodes');
  const pane=f.element('pane');
  assert.ok(pane,'内容区应有统一滚动容器');
  pane.scrollTop=260;

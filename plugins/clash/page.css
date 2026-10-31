@@ -1,62 +1,66 @@
-/* Clash 保留单栏/双栏工作流，外观与 Dock 设置保持一致。
-   布局分三层：概览卡片网格（Verge 式信息卡）、节点浏览（工具栏常驻 + 列表内滚）、订阅管理（表单 + 卡片）。
-   所有颜色走 dock.css 的 token，避免与宿主主题脱节。 */
-.subscriptions{display:grid;gap:12px;margin:12px 0}.subscription{border:1px solid var(--dock-line);border-radius:12px;padding:16px;min-width:0;overflow-wrap:anywhere;cursor:pointer;transition:border-color .12s ease,background .12s ease}.subscription[aria-checked=true]{border-color:#0a84ff;background:rgba(10,132,255,.10)}.subscription[aria-checked=false]{opacity:.8}.subscription[tabindex="-1"]{cursor:default}.subscription:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px}.sub-hint{margin:8px 0 0;font-size:12px;color:var(--dock-muted)}.subscription-title{display:flex;justify-content:space-between;gap:12px}.subscription .toolbar{margin:0;flex-wrap:wrap}.source{display:block;color:var(--dock-muted);font-size:12px;margin-top:4px;overflow-wrap:anywhere}#subscription-form{margin-top:16px}
-header>div:first-child{display:flex;align-items:center;gap:10px}.toolbar>label{display:flex;align-items:center;gap:8px;margin:0}.toolbar>label select{width:auto}.toolbar{margin:0 8px 12px}
-/* 页签 + 启停 + 刷新同处一行：不换行，窄了就横向滚，永远只占一行高度。 */
+/* Clash 页面：概览（信息卡网格）、订阅（卡片列表 + 表单）、内核设置（表单）。
+   字号只有三档——标题 13px、正文 12.5px、次要 12px——同一类文本永远用同一档，
+   不做 12/12.5/13 之外的微调。所有颜色走 dock.css 的 token，避免与宿主主题脱节。 */
+
+/* ── 顶部按钮行：页签 + 启停 + 刷新同处一行，不换行，窄了横向滚 ── */
+header>div:first-child{display:flex;align-items:center;gap:10px}
+.toolbar>label{display:flex;align-items:center;gap:8px;margin:0}
+.toolbar>label select{width:auto}
+.toolbar{margin:0 8px 12px}
 .headbar{flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;padding-bottom:2px;scrollbar-width:thin}
 .headbar button{flex:0 0 auto}
 .headbar button[aria-pressed=true]{background:var(--dock-line);border-color:var(--dock-line);color:var(--dock-text)}
-.nodes{display:grid;gap:8px}.node{display:flex;align-items:center;justify-content:space-between;text-align:left;gap:8px;overflow-wrap:anywhere;border-radius:12px;padding:8px 12px;min-height:40px;min-width:0;font-weight:400}.node span:first-child{min-width:0}.node span:last-child{font-weight:400}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;font:12px/1.6 "Cascadia Mono",Consolas,monospace}.columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.spaced{margin-top:12px}.narrow-note{margin:0 8px 12px;font-size:12px}@media(max-width:650px){.columns{grid-template-columns:1fr}header>div:first-child{display:block}}
-/* TUN 服务模式：沿用 Dock 卡片与胶囊，日志与确认条走页内异步反馈。
-   dock.css 把 legend 设为 float:left + width:100%，会把字段集的内容挤成一大块空白，
-   这里收回默认流，字段从上往下排。 */
-.tun-box{border:1px solid var(--dock-line);border-radius:14px;padding:12px 16px;margin:12px 0;background:var(--dock-card)}
-.tun-box legend{float:none;width:auto;padding:0 8px 0 0;margin:0 0 6px;color:var(--dock-muted);font-size:12px}
-.tun-box label{margin:8px 0}
-.tun-service{margin-top:8px;padding-top:8px;border-top:1px solid var(--dock-line)}
-.svc-log{margin:8px 0;max-height:120px;font-size:12px;color:var(--dock-muted)}
-.confirm-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;border:1px solid var(--dock-line);border-radius:12px;padding:8px 12px;margin:8px 0;font-size:12px}.confirm-bar p{margin:0;font-size:12px}
-/* 订阅状态与反馈：成功用绿色、失败用红色，空状态给下一步指引。 */
-.good{color:#30d158}.bad{color:#ff453a}.small{font-size:12px}
-.empty-card{border:1px dashed var(--dock-line);border-radius:12px;padding:16px;margin:12px 0}.empty-card p{margin:0 0 6px}.empty-card p:last-child{margin:0}
+
+/* ── 内容区：各页签共用一个内滚高度 ──
+   上限 560px，同时不超过面板可视高度（iframe 是 100% 面板，减掉标题与按钮行），
+   于是任何面板尺寸下都只在这里滚，不会多出一层宿主滚动。
+   内边距沿用 dock.css 给 section 的 16px，只有概览（.plain）自己清零。 */
+.pane{max-height:min(560px,calc(100vh - 120px));overflow:auto;overscroll-behavior:contain;padding-right:4px}
+.pane.plain{background:transparent;padding:0 4px 4px 0;border-radius:0}
+
+/* ── 订阅：整张卡可点，启用态高亮 ── */
+.subscriptions{display:grid;gap:12px;margin:12px 0}
+.subscription{border:1px solid var(--dock-line);border-radius:12px;padding:16px;min-width:0;overflow-wrap:anywhere;
+ cursor:pointer;transition:border-color .12s ease,background .12s ease}
+.subscription[aria-checked=true]{border-color:#0a84ff;background:rgba(10,132,255,.10)}
+.subscription[aria-checked=false]{opacity:.8}
+.subscription[tabindex="-1"]{cursor:default}
+.subscription:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px}
+.subscription-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.subscription .toolbar{margin:0;flex-wrap:wrap}
+.sub-hint{margin:8px 0 0;font-size:12px;color:var(--dock-muted)}
 .sub-state{margin:6px 0;font-size:12.5px;font-weight:600}
-.tag{font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap}
-.tag.on{background:rgba(48,209,88,.16);color:#30d158}.tag.off{background:var(--dock-card);color:var(--dock-muted);border:1px solid var(--dock-line)}
-.subscription-title{align-items:center}
+.sub-row{display:grid;gap:4px;min-width:0}
+.sub-row>button{justify-self:start}
+.sub-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+#subscription-form{margin-top:16px}
 #subscription-form h3{margin:0 0 8px;font-size:13px}
-/* 字段级校验：错误贴在该字段下方，而不是只闪一条全局状态。 */
-.field-error{margin:4px 0 0;font-size:12px;color:#ff6b7a}
+.tag{font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.tag.on{background:rgba(48,209,88,.16);color:#30d158}
+.tag.off{background:var(--dock-card);color:var(--dock-muted);border:1px solid var(--dock-line)}
+.empty-card{border:1px dashed var(--dock-line);border-radius:12px;padding:16px;margin:12px 0}
+.empty-card p{margin:0 0 6px}
+.empty-card p:last-child{margin:0}
+
+/* ── 反馈条：成功绿、失败红，一律 12.5px ── */
 .banner{margin:8px 8px 12px;padding:9px 12px;border-radius:12px;border:1px solid var(--dock-line);background:var(--dock-card);font-size:12.5px}
 .banner p{margin:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .banner.bad{border-color:rgba(255,69,58,.55);background:rgba(255,69,58,.12);color:#ff8a80}
 .banner.good{border-color:rgba(48,209,88,.5);background:rgba(48,209,88,.10)}
-/* 概览：Verge 式信息卡网格，固定单栏（宿主面板本来就窄，双栏只会把卡片挤扁）。
-   容器必须去掉 dock.css 给 section 的卡片底色，否则八张卡片会糊成一整块灰面板。
-   整块卡片区自己滚动：概览信息多，但不该把下面的设置与标签页顶出屏幕。 */
-section.plain{background:transparent;padding:0;border-radius:0}
-/* 四个页签共用一个内滚高度：上限 560px，同时不超出面板可视高度（iframe 是 100% 面板，
-   这里减掉标题与按钮行），于是任何面板尺寸下都只在这里滚，不会多出一层宿主滚动。
-   概览是卡片网格，去掉 dock.css 给 section 的底色，否则卡片会糊成一整块灰面板。 */
-.pane{max-height:min(560px,calc(100vh - 120px));overflow:auto;overscroll-behavior:contain;padding:0 4px 4px 0}
-.pane.plain{background:transparent;padding:0;border-radius:0}
-/* 内核设置的最后一步是保存：吸底，滚到哪儿都能按到。 */
-.save-bar{position:sticky;bottom:0;display:flex;justify-content:flex-end;padding:10px 0 6px;
- background:linear-gradient(transparent,var(--dock-card) 45%)}
-/* 列宽 268 起：620 宽度出两列（省滚动），更窄才退回单列。
-   同一行的卡片等高（stretch），底部操作区 margin-top:auto 压到底 → 按钮在一行里横向对齐。 */
+.field-error{margin:4px 0 0;font-size:12px;color:#ff6b7a}
+.good{color:#30d158}
+.bad{color:#ff453a}
+.small{font-size:12px}
+
+/* ── 概览：信息卡网格。列宽 268 起，620 宽度出两列，更窄才退回单列。
+   同一行卡片等高（stretch），底部操作区 margin-top:auto 压到底 → 按钮横向对齐。 ── */
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:12px;align-items:stretch;margin:0}
 .cards>.card{margin:0;display:flex;flex-direction:column;gap:8px;height:100%;min-width:0}
-/* 主卡跨满一行：单栏 620 时它们独占整宽，双栏 960 时同样整宽，
-   副卡才两两并排 —— 这样两种布局下的信息层级一致，只是每行卡片数量不同。 */
 .cards>.card.wide{grid-column:1/-1}
-/* 卡内并排：宽了就并排，窄了自动上下堆叠，不靠断点硬编码。 */
-.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0 24px}
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 20px}
 .split>label{margin:8px 0}
-/* 标题固定 19px 行高：跨卡片的正文起始线因此对齐。 */
 .card-title{margin:0;font-size:13px;line-height:19px;min-height:19px;display:flex;align-items:center;gap:8px}
 .card-foot{margin-top:auto;padding-top:4px;display:flex;flex-wrap:wrap;gap:8px}
-/* 键值行统一 22px、开关行统一 44px：不同卡片的内容落在同一条节奏上。 */
 .kv{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:22px;font-size:12.5px;min-width:0}
 .kv>.k{color:var(--dock-muted);white-space:nowrap}
 .kv>.v{display:flex;align-items:center;justify-content:flex-end;gap:6px;text-align:right;overflow-wrap:anywhere}
@@ -69,43 +73,39 @@ section.plain{background:transparent;padding:0;border-radius:0}
 .segmented button{flex:1;border:0;background:transparent}
 .segmented button[aria-pressed=true]{background:var(--dock-line);color:var(--dock-text)}
 .site-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:22px;font-size:12.5px}
-/* 订阅块：标题/额度占满，操作按钮保持胶囊尺寸，避免出现一条贯穿整卡的巨型按钮。 */
-.sub-row{display:grid;gap:4px;min-width:0}
-.sub-row>button{justify-self:start}
-.sub-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
-/* 节点页：组卡横排常驻，搜索/排序/过滤固定在列表上方，只有列表内部滚动。 */
-.group-strip{display:flex;gap:8px;overflow-x:auto;padding:2px 0 8px}
-.group-card{flex:0 0 auto;display:grid;gap:3px;text-align:left;padding:9px 12px;min-width:136px;border-radius:14px}
-.group-card .g-name{font-weight:600;overflow-wrap:anywhere}
-.group-card .g-now{color:var(--dock-muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.group-card .g-count{color:var(--dock-muted);font-size:12px}
-.group-card[aria-current="true"]{border-color:#0a84ff;background:rgba(10,132,255,.12)}
-.nodes-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}
-.nodes-head .nodes-title{margin:0;font-size:14px}
-.search{display:flex;align-items:center;gap:10px;margin:8px 0}
-.search input{flex:1}
-.node-scroll{padding-right:0}
-.node-scroll .nodes{grid-template-columns:repeat(auto-fill,minmax(200px,1fr));align-items:start}
-.node .n-label{min-width:0;display:grid;gap:2px}
-.node .n-name{overflow-wrap:anywhere;font-weight:500}
-.node .n-delay{white-space:nowrap;font-size:12px}
-.n-delay.good{color:#30d158}.n-delay.warm{color:#ffd60a}.n-delay.bad{color:#ff453a}.n-delay.neutral{color:var(--dock-muted)}
-/* 订阅卡流量额度条：服务器在 subscription-userinfo 回报时显示。 */
+/* 延迟三态：正常绿/黄/红，「已超时」红，「未测速」灰。 */
+.n-delay{white-space:nowrap;font-size:12px}
+.n-delay.good{color:#30d158}
+.n-delay.warm{color:#ffd60a}
+.n-delay.bad{color:#ff453a}
+.n-delay.neutral{color:var(--dock-muted)}
+
+/* ── 订阅卡流量额度条：服务器在 subscription-userinfo 回报时显示 ── */
 .usage{margin:8px 0 2px}
-.usage-bar{/* 进度条：固定高度 + 裁切是有意的，不承载文本。 */height:6px;border-radius:999px;background:var(--dock-card);border:1px solid var(--dock-line);overflow:hidden}
+.usage-bar{height:6px;border-radius:999px;background:var(--dock-card);border:1px solid var(--dock-line);overflow:hidden}
 .usage-fill{display:block;height:100%;background:#0a84ff;border-radius:999px}
 .usage-fill.warm{background:#ffd60a}
 .usage-fill.hot{background:#ff453a}
 .usage-text{margin:4px 0 0;font-size:12px;color:var(--dock-muted)}
-/* 更窄的窗口（宿主缩到 560 以下）才退回单列，620 的单栏布局保持两列。 */
-@media(max-width:560px){.cards{grid-template-columns:1fr}}
-@media(max-width:650px){.group-card{min-width:120px}.node-scroll .nodes{grid-template-columns:1fr}}
 
+/* ── 内核设置：表单 + TUN 段 + 吸底保存 ──
+   dock.css 把 legend 设为 float:left + width:100%，会把字段集的内容挤成一大块空白，
+   这里收回默认流，字段从上往下排。 */
+.columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tun-box{border:1px solid var(--dock-line);border-radius:14px;padding:12px 16px;margin:12px 0;background:var(--dock-card)}
+.tun-box legend{float:none;width:auto;padding:0 8px 0 0;margin:0 0 6px;color:var(--dock-muted);font-size:12px}
+.tun-box label{margin:8px 0}
+.tun-service{margin-top:8px;padding-top:8px;border-top:1px solid var(--dock-line)}
+.svc-log{margin:8px 0;max-height:120px;font-size:12px;color:var(--dock-muted)}
+.confirm-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+ border:1px solid var(--dock-line);border-radius:12px;padding:8px 12px;margin:8px 0;font-size:12px}
+.confirm-bar p{margin:0;font-size:12px}
+.save-bar{position:sticky;bottom:0;display:flex;justify-content:flex-end;padding:10px 0 6px;
+ background:linear-gradient(transparent,var(--dock-card) 45%)}
 
+@media(max-width:650px){.columns{grid-template-columns:1fr}header>div:first-child{display:block}}
+/* 更窄的窗口（宿主缩到 560 以下）才退回单列，620 的布局保持两列。 */
+@media(max-width:560px){.cards{grid-template-columns:1fr}.split{grid-template-columns:1fr}}
 
 /* 桌面 WebView 里没有 300ms 点击延迟，但显式声明可避免宿主启用触控模拟时退化。 */
 button,input,select,summary,a{touch-action:manipulation}
-
-
-
-

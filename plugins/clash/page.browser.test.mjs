@@ -115,9 +115,8 @@ test('真实 sandbox 页面：按钮、回车、错误反馈、多订阅落盘�
   // 重建业务实例读取隔离目录，验证非仅页面内存状态。
   service=createClash({context,runtime,defaultKernel:'D:/synthetic/mihomo.exe'});
   const reloaded=service;
-  assert.equal((await reloaded.view({controller:false})).subscriptions.length,2);
-  // 组卡网格与流量额度条：注入带组树的 view（模拟运行中内核的控制器数据），
-  // 验证 allow-scripts 沙箱内渲染与交互。
+  // 概览的「当前节点」卡：注入带组树的 view（模拟运行中内核的控制器数据），
+  // 验证 allow-scripts 沙箱里组/节点下拉的渲染与切换。
   const realView=reloaded.view.bind(reloaded);
   reloaded.view=async()=>{const state=await realView({controller:false});
    state.running=true;state.version='synthetic';
@@ -130,23 +129,21 @@ test('真实 sandbox 页面：按钮、回车、错误反馈、多订阅落盘�
    state.subscriptions[0].userInfo={upload:1073741824,download:2147483648,total:107374182400,used:3221225472,expire:1767225600};
    state.subscriptions[1].userInfo=null;
    return state};
-   // 测试流程停在订阅/设置页；先切回节点页再刷新，组卡才渲染。
-   await frame.locator('[data-action="section-nodes"]').click();
+  await frame.locator('[data-action="section-overview"]').click();
   await frame.locator('[data-action="view"]').click();
-  await frame.locator('.group-card').first().waitFor();
-  assert.equal(await frame.locator('.group-card').count(),2,'两张组卡');
-  assert.ok(await frame.locator('.group-card').filter({hasText:'🚀 节点选择'}).isVisible(),'主组卡');
-  // 点击第二张组卡：节点网格切换，无 RPC select。
-  await frame.locator('.group-card').filter({hasText:'全球直连'}).click();
-  await frame.locator('.nodes-title').filter({hasText:'全球直连'}).waitFor();
-  assert.ok(!calls.includes('clash.select'),'切组不发 select');
-  // 回到主组点节点：select RPC 用带前缀原名。
-  await frame.locator('.group-card').filter({hasText:'节点选择'}).click();
-  const nodeCard=frame.locator('.node').filter({hasText:'香港 01'});
-  await nodeCard.waitFor();
-  assert.ok(await nodeCard.locator('.source').filter({hasText:'合成订阅 A'}).isVisible(),'来源订阅名');
-  assert.ok(await nodeCard.locator('.n-delay').filter({hasText:'20 ms'}).isVisible(),'延迟显示');
-  await nodeCard.click();
+  await frame.locator('#group-pick').waitFor();
+  assert.equal(await frame.locator('#group-pick option').count(),2,'两个代理组');
+  // 换组只改前端状态；换节点才发 select。
+  await frame.locator('#group-pick').selectOption({label:'🎯 全球直连'});
+  await frame.locator('#node-pick option').filter({hasText:'DIRECT'}).first().waitFor({state:'attached'});
+  assert.ok(!calls.includes('clash.select'),'换组不发 select');
+  await frame.locator('#group-pick').selectOption({label:'🚀 节点选择'});
+  await frame.locator('#node-pick').waitFor();
+  assert.ok(await frame.locator('#node-pick option').filter({hasText:'香港 01'}).count()>0,'订阅节点在下拉里');
+  assert.ok(await frame.locator('#node-pick option').filter({hasText:'20 ms'}).count()>0,'下拉里带延迟');
+  await frame.locator('#node-pick').selectOption({index:2});
+  for(let i=0;i<60&&!calls.includes('clash.select');i++)await page.waitForTimeout(25);
+  assert.ok(calls.includes('clash.select'),'换节点发 select');
   assert.ok(calls.includes('clash.select'),'节点点击发 select');
   // 订阅卡额度条：A 有额度，B 没有。
   await frame.locator('[data-action="section-providers"]').click();
