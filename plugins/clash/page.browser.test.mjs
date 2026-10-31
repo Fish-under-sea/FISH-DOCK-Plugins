@@ -101,10 +101,11 @@ test('真实 sandbox 页面：按钮、回车、错误反馈、多订阅落盘�
   await frame.locator('#subscription-name').fill('token=synthetic-invalid-name');
   await frame.locator('#subscription-url').fill('https://example.test/c?token=synthetic');
   await frame.locator('[data-action="save-subscription"]').click();
-  await frame.locator('.banner[role="alert"]').filter({hasText:'请输入 1–80 字'}).waitFor();
+  // 名称里带 token= 由页面就地拦下，错误贴在字段下方（field-error），不是全局 banner。
+  await frame.locator('[role="alert"]').filter({hasText:'请输入 1–80 字'}).first().waitFor();
   assert.equal(await frame.locator('#subscription-name').inputValue(),'token=synthetic-invalid-name');
   assert.equal(await frame.locator('.subscription').count(),2);
-  assert.ok(!(await frame.locator('.banner[role="alert"]').textContent()).includes('synthetic'));
+  assert.ok(!(await frame.locator('[role="alert"]').first().textContent()).includes('synthetic'));
   // 内核配置同样在 allow-scripts 环境内保存，不要求放开 allow-forms。
   await frame.locator('#settings summary').click();
   await frame.locator('#mixedPort').fill('7897');
