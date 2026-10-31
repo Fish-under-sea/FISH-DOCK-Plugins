@@ -5,31 +5,36 @@ import vm from 'node:vm';
 const flush=()=>new Promise(r=>setImmediate(r));
 // Minimal DOM adapter for testing actual page event handlers; visual/WebView QA remains separate.
 function fixture() {
- const calls=[],timers=new Map();let serial=0,html='',elements={},buttons=[],blocked=null,fail=false;
+ const calls=[],timers=new Map();let serial=0,html='',elements={},buttons=[],cards=[],blocked=null,fail=false,ipReply=null;
  const row={kernel:'D:/mihomo.exe',mixedPort:7895,controllerPort:9099,configured:true,running:false,
   version:'v1.19.0',rulesCount:11,uptimeMs:3723000,os:'Windows 10.0.26200',
+  arch:'x64',cpu:'Synthetic CPU · 16 核',memoryTotal:64*1024**3,pluginVersion:'2.0.3',bundled:true,
   tun:{enable:false,stack:'mixed'},systemProxy:false,groups:[
   {name:'🚀 节点选择',selected:'♻️ 自动选择',nodes:[
    {name:'♻️ 自动选择',label:'♻️ 自动选择',sourceId:null,source:null,type:'group',delay:null},
    {name:'DIRECT',label:'DIRECT',sourceId:null,source:null,type:'Direct',delay:null},
    {name:'[sub-00000000-0000-0000-0000-000000000001] 香港节点',label:'香港节点',sourceId:'sub-00000000-0000-0000-0000-000000000001',source:'One',type:'ss',delay:20}]}],
   subscriptions:[{id:'sub-00000000-0000-0000-0000-000000000001',name:'One',enabled:true,status:'ready',nodeCount:2,hasCache:true}],
-  layout:'single',mode:'rule'};
+  mode:'rule'};
  const decode=s=>s.replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'").replaceAll('&lt;','<').replaceAll('&gt;','>');
  const attrs=tag=>Object.fromEntries([...tag.matchAll(/([\w-]+)="([^"]*)"/g)].map(m=>[m[1],decode(m[2])]));
  const root={
   get innerHTML(){return html},
   set innerHTML(value){
-   html=value;elements={};buttons=[];
+   html=value;elements={};buttons=[];cards=[];
    // div 也收：节点列表的滚动容器就是带 id 的 div，重绘后要能拿回它的 scrollTop。
-   for(const m of value.matchAll(/<(?:input|form|details|select|div)\b[^>]*>/g)){
-    const a=attrs(m[0]);if(a.id)elements[a.id]={...a,tagName:(/^<(\w+)/.exec(m[0])?.[1]??'').toUpperCase(),value:a.value??'',open:m[0].includes(' open'),disabled:m[0].includes('disabled'),scrollTop:0,scrollLeft:0,focus(){}};
+   // article 也收：订阅卡整张可点，靠 data-sub 找到它。
+   for(const m of value.matchAll(/<(?:input|form|details|select|div|article)\b[^>]*>/g)){
+    const a=attrs(m[0]);
+    if(a.id)elements[a.id]={...a,tagName:(/^<(\w+)/.exec(m[0])?.[1]??'').toUpperCase(),value:a.value??'',open:m[0].includes(' open'),disabled:m[0].includes('disabled'),scrollTop:0,scrollLeft:0,focus(){}};
+    if(a['data-sub'])cards.push({dataset:{sub:a['data-sub']},enabled:a['aria-checked']==='true',onclick:null,onkeydown:null});
    }
    for(const m of value.matchAll(/<button\b[^>]*>/g)){
-    const a=attrs(m[0]);if(a['data-action'])buttons.push({dataset:{action:a['data-action'],id:a['data-id'],node:a['data-node'],group:a['data-group'],mode:a['data-mode']},disabled:m[0].includes('disabled')});
+    const a=attrs(m[0]);if(a['data-action'])buttons.push({dataset:{action:a['data-action'],id:a['data-id'],node:a['data-node'],group:a['data-group'],mode:a['data-mode'],section:a['data-section']},disabled:m[0].includes('disabled')});
    }
   },
-  querySelector:q=>elements[q.slice(1)]??null,querySelectorAll:()=>buttons
+  querySelector:q=>elements[q.slice(1)]??null,
+  querySelectorAll:q=>q==='[data-sub]'?cards:buttons
  };
  class FormData {
   constructor(form){this.id=form.id}
@@ -40,8 +45,16 @@ function fixture() {
   FishDock:{setLayout(){},call:async(method,params)=>{
    calls.push({method,params});
    if(method==='clash.subscriptionSave'){await blocked;if(fail)throw Error('PRIVATE');}
-   if(method==='clash.ipInfo')return {available:true,ip:'203.0.113.7',country:'日本',countryCode:'JP',
+   if(method==='clash.ipInfo')return ipReply??{available:true,ip:'203.0.113.7',country:'日本',countryCode:'JP',
     asn:'AS2516',isp:'KDDI',org:'KDDI Corporation',location:'日本 · 东京 · 千代田',timezone:'Asia/Tokyo'};
+   if(method==='clash.details')return params.section==='rules'
+    ?{count:3,rules:[{type:'MATCH',payload:'',proxy:'🐟 漏网之鱼'},
+      {type:'GEOSITE',payload:'cn',proxy:'🎯 全球直连'},{type:'IP-CIDR',payload:'192.168.0.0/16',proxy:'🎯 全球直连'}]}
+    :{count:2,uploadTotal:2048,downloadTotal:4096,connections:[
+      {id:'c1',network:'tcp',host:'example.test',destination:'203.0.113.9:443',source:'127.0.0.1',
+       chains:['🚀 节点选择','香港节点'],rule:'DomainSuffix test',upload:1024,download:2048,start:'2026-10-31T09:00:00.000Z'},
+      {id:'c2',network:'tcp',host:'google.com',destination:'142.250.0.1:443',source:'127.0.0.1',
+       chains:['🚀 节点选择','DIRECT'],rule:'GEOSITE google',upload:0,download:0,start:'2026-10-31T09:05:00.000Z'}]};
    if(method==='clash.siteTest')return {node:'[sub-00000000-0000-0000-0000-000000000001] 香港节点',sites:[
     {key:'apple',label:'Apple',url:'https://www.apple.com/library/test/success.html',delay:128,ok:true},
     {key:'github',label:'GitHub',url:'https://github.com/favicon.ico',delay:null,ok:false},
@@ -50,10 +63,14 @@ function fixture() {
    return structuredClone(row);
   }}};
  vm.runInNewContext(readFileSync(new URL('./page.js',import.meta.url),'utf8'),context);
- return {calls,row,timers,root,element:id=>elements[id],buttons:()=>buttons,
+ return {calls,row,timers,root,element:id=>elements[id],buttons:()=>buttons,cards:()=>cards,
   // 页面用 document.activeElement 判断「下拉是否展开」，夹具照真实 DOM 的最小面提供。
   setActive:el=>{context.document.activeElement=el},
-  click:action=>{const button=buttons.find(b=>b.dataset.action===action);assert.ok(button,action);return button.onclick()},
+  click:(action,section)=>{const button=buttons.find(b=>b.dataset.action===action
+   &&(section===undefined||b.dataset.section===section));assert.ok(button,`${action}${section?`(${section})`:''}`);return button.onclick()},
+  // 订阅卡整张可点：卡内按钮不算（真实 DOM 用 closest 判断，夹具传 null 表示点在卡片本身）。
+  cardClick:id=>{const card=cards.find(c=>c.dataset.sub===id);assert.ok(card,`订阅卡 ${id}`);return card.onclick({target:{closest:()=>null}})},
+  setIpReply:value=>{ipReply=value},
   block:()=>{let release;blocked=new Promise(r=>release=r);return release},fail:()=>{fail=true}};
 }
 // 从渲染结果里按出现顺序取节点原始名：验证过滤与排序只靠 DOM 顺序，不靠后端。
@@ -319,4 +336,90 @@ test('内核运行时 TUN 开关仍可点',async()=>{
  assert.ok(button,'概览的网络设置卡应有 TUN 开关');
  assert.equal(button.disabled,false,'运行中要能直接切 TUN');
  assert.ok(f.root.innerHTML.includes('切换会重启内核'),'要告诉用户这一下会重启内核');
+});
+// 概览不再把所有已启用订阅铺开：只讲当前节点所用的那条，其余一句话带过。
+test('概览只显示当前节点所用的订阅，其余订阅折叠成一行',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ const second='sub-00000000-0000-0000-0000-000000000002';
+ f.row.subscriptions.push({id:second,name:'Two',enabled:true,status:'ready',nodeCount:3,hasCache:true});
+ f.row.groups[0].nodes.push({name:`[${second}] 云图节点`,label:'云图节点',sourceId:second,source:'Two',type:'ss',delay:30});
+ f.row.groups[0].selected=`[${second}] 云图节点`;
+ f.click('view');await flush();
+ const html=f.root.innerHTML;
+ assert.ok(html.includes('另有 1 个已启用订阅'),'其余订阅折叠成一行');
+ assert.ok(html.includes('>Two<'),'当前节点属于第二条订阅：概览就显示它');
+ assert.ok(!html.includes('>One<'),'没在用的那条不铺开');
+});
+test('订阅页点卡片即切换启用，启用中的卡片高亮',async()=>{
+ const f=fixture();await flush();
+ const first='sub-00000000-0000-0000-0000-000000000001';
+ f.row.subscriptions.push({id:'sub-00000000-0000-0000-0000-000000000002',name:'Two',enabled:false,status:'ready',nodeCount:3,hasCache:true});
+ f.click('view');await flush();f.click('section-providers');
+ const html=f.root.innerHTML;
+ assert.ok(new RegExp(`data-sub="${first}"[^>]*role="switch" aria-checked="true"`).test(html),'启用卡高亮');
+ assert.ok(/role="switch" aria-checked="false"/.test(html),'未启用卡不高亮');
+ assert.equal(/data-action="toggle"/.test(html),false,'不再保留启用/停用按钮');
+ assert.ok(html.includes('点卡片切换'),'卡片上写明可点');
+ f.cardClick(first);await flush();
+ const call=f.calls.find(c=>c.method==='clash.subscriptionToggle');
+ assert.ok(call,'点卡片发切换请求');
+ assert.equal(call.params.id,first);
+ assert.equal(call.params.enabled,false,'当前启用，点一下变停用');
+});
+// 规则页以前只有一个「读取详情」加一段 JSON：用户看到的是「规则什么都没有」。
+test('规则页进页自动读取，按类型/内容/策略三列渲染并支持搜索',async()=>{
+ const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+ f.click('section-rules');await flush();await flush();
+ const html=f.root.innerHTML;
+ assert.ok(f.calls.some(c=>c.method==='clash.details'&&c.params.section==='rules'),'进页自动读取规则');
+ assert.ok(html.includes('GEOSITE'),'规则类型');
+ assert.ok(html.includes('192.168.0.0/16'),'规则内容');
+ assert.ok(html.includes('🐟 漏网之鱼'),'规则策略');
+ assert.ok(html.includes('3 条'),'规则总数');
+ f.element('rule-search').oninput({target:{value:'192.168'},isComposing:false});
+ assert.ok(f.root.innerHTML.includes('192.168.0.0/16'),'命中项保留');
+ assert.equal(f.root.innerHTML.includes('GEOSITE'),false,'不匹配的规则被过滤');
+ assert.ok(f.root.innerHTML.includes('显示 1 / 3 条'));
+});
+test('连接页进页自动读取，显示上下行汇总与逐条连接',async()=>{
+ const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+ f.click('section-connections');await flush();await flush();
+ const html=f.root.innerHTML;
+ assert.ok(f.calls.some(c=>c.method==='clash.details'&&c.params.section==='connections'),'进页自动读取连接');
+ assert.ok(html.includes('example.test')&&html.includes('google.com'),'逐条连接');
+ assert.ok(html.includes('DomainSuffix test'),'命中的规则');
+ assert.ok(html.includes('香港节点'),'链路末节点');
+ assert.ok(html.includes('↑ 2 KB')&&html.includes('↓ 4 KB'),'上下行汇总');
+ assert.ok(html.includes('2 条'),'连接数');
+});
+test('页面版本跟随插件版本，单双栏切换与顶部工具条一并去掉',async()=>{
+ const f=fixture();await flush();
+ const html=f.root.innerHTML;
+ assert.ok(html.includes('插件 v2.0.3'),'显示插件版本');
+ assert.equal(html.includes('页面 v'),false,'不再有独立的页面版本号');
+ assert.equal(/data-action="double"/.test(html),false,'没有双栏按钮');
+ assert.equal(/data-action="single"/.test(html),false,'没有单栏按钮');
+ const tabs=html.indexOf('data-action="section-overview"'),start=html.indexOf('data-action="start"');
+ assert.ok(tabs>0&&start>tabs,`启停与刷新要挪到标签页之后（tabs=${tabs} start=${start}）`);
+ assert.ok(html.includes('overview-scroll'),'概览有独立滚动容器，不把整页顶长');
+ assert.equal(f.calls.some(c=>c.method==='clash.layout'),false,'不再发 layout RPC');
+});
+test('系统信息补齐处理器、内存、内核来源与插件版本',async()=>{
+ const f=fixture();await flush();
+ const html=f.root.innerHTML;
+ assert.ok(html.includes('Synthetic CPU · 16 核'),'处理器');
+ assert.ok(html.includes('64.00 GB'),'内存');
+ assert.ok(html.includes('内置 mihomo'),'内核来源');
+ assert.ok(html.includes('插件 v2.0.3'));
+});
+// 出口 IP 查不到不是错误：能力缺失或代理不通都属于「暂时没有」，不该顶一条红字告警。
+test('出口 IP 不可用时按普通提示显示，不用红色告警',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ f.setIpReply({available:false,reason:'当前运行时不支持查询出口 IP'});
+ f.click('view');await flush();await flush();
+ const html=f.root.innerHTML;
+ assert.ok(html.includes('当前运行时不支持查询出口 IP'),'原因透出');
+ const alerts=[...html.matchAll(/role="alert">([^<]*)</g)].map(m=>m[1]);
+ assert.equal(alerts.some(text=>text.includes('不支持')),false,'不作为告警渲染');
+ assert.ok(html.includes('重试'),'给重试入口');
 });

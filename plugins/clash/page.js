@@ -1,17 +1,21 @@
 (() => {
  const root=document.querySelector('#app');
- // 页面自身版本：用于区分「插件已升级」与「页面仍在跑旧缓存」。
- const UI_VERSION='1.4.1';
+ // 版本号不再单独维护：后端读包内 plugin.json 并把 version 放进 view.pluginVersion，
+ // 页面直接显示插件版本，跟着发行版本走。
  const SECTIONS=[['overview','概览'],['nodes','节点'],['providers','订阅'],['rules','规则'],['connections','连接']];
  const MODES=[['rule','规则','按规则分流：国内直连，其余走代理'],['global','全局','所有流量都走代理'],
   ['direct','直连','全部不走代理，等价于关闭分流']];
  let view=null,busy=false,polling=false,error='',notice='',noticeKind='info';
- let group='',section='overview',detail=null,timer=null,revision=0;
+ let group='',section='overview',timer=null,revision=0;
  let draft={id:'',name:'',url:''},fieldErrors={},configDraft=null,settingsOpen=false,confirmDelete='',confirmTun='';
  // 节点浏览状态只影响渲染，不落盘：搜索、延迟排序、只看可用。
  let nodeQuery='',sortDelay=false,onlyAvailable=false;
  let ip=null,ipBusy=false,ipError='',ipReveal=false,ipAsked=false;
  let sites=null,sitesBusy=false;
+ // 规则与连接是内核侧的实时数据：进页自动读一次，读过的靠「重新读取」刷新，
+ // 不跟着 1.2 秒轮询重绘一起炸一次 RPC。
+ let details={rules:null,connections:null},detailAsked={rules:false,connections:false};
+ let detailBusy={rules:false,connections:false},detailQuery={rules:'',connections:''};
  // 下拉框展开期间被推迟的重绘（见 draw）；焦点离开后补上。
  let staleDraw=false;
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -46,20 +50,17 @@
   busy=true;revision++;error='';say('');draw();
   try {
    const result=await FishDock.call(`clash.${method}`,params);
-   if(method==='details')detail=result;
-   else {
-    view=result;
-    if(method==='save'){configDraft=null;say('内核设置已保存','ok')}
-    if(method==='subscriptionSave'){draft={id:'',name:'',url:''};fieldErrors={};say('订阅已保存。下一步点「更新」下载并校验节点。','ok')}
-    if(method==='subscriptionToggle')say('启用状态已更新','ok');
-    if(method==='subscriptionRemove')say('订阅已删除，其余订阅不受影响','ok');
-    if(method==='reload')say('已开始更新，完成后显示节点数与结果','ok');
-    if(method==='installTunService')say('TUN 服务已安装','ok');
-    if(method==='uninstallTunService')say('TUN 服务已卸载','ok');
-    if(method==='select')sites=null;
-    // 内核重启后出口 IP 会变，缓存不能沿用。
-    if(method==='start'||method==='stop'){ip=null;ipAsked=false;ipError='';sites=null}
-   }
+   view=result;
+   if(method==='save'){configDraft=null;say('内核设置已保存','ok')}
+   if(method==='subscriptionSave'){draft={id:'',name:'',url:''};fieldErrors={};say('订阅已保存。下一步点「更新」下载并校验节点。','ok')}
+   if(method==='subscriptionToggle')say('启用状态已更新','ok');
+   if(method==='subscriptionRemove')say('订阅已删除，其余订阅不受影响','ok');
+   if(method==='reload')say('已开始更新，完成后显示节点数与结果','ok');
+   if(method==='installTunService')say('TUN 服务已安装','ok');
+   if(method==='uninstallTunService')say('TUN 服务已卸载','ok');
+   if(method==='select')sites=null;
+   // 内核重启后出口 IP 会变，缓存不能沿用。
+   if(method==='start'||method==='stop'){ip=null;ipAsked=false;ipError='';sites=null;details={rules:null,connections:null};detailAsked={rules:false,connections:false}}
    return true;
   }catch(e){error=`${methodLabel(method)}失败：${reason(e)}`;return false}
   finally{busy=false;draw();schedule();}
@@ -106,20 +107,32 @@
  const kv=(key,value)=>`<div class="kv"><span class="k">${key}</span><span class="v">${value}</span></div>`;
  const subState=s=>s.updating?'更新中…':({pending:'等待更新',ready:`可用 · ${s.nodeCount} 个节点`,error:'更新失败'}[s.status]??'等待更新');
  // ── 概览：Verge 式信息卡。每张卡只讲一件事，数据全部来自 view / 插件命令 ──
+ // 当前订阅：优先取「当前选中节点所属的那条」，取不到（选的是 DIRECT / 自动选择这类
+ // 不是订阅节点）就落到第一条已启用。概览只讲这一条，其余订阅在订阅页管理。
+ function activeSubscription(rows) {
+  let name=groups()[0]?.name;
+  for(let depth=0;depth<4&&name;depth++){
+   const group=groups().find(g=>g.name===name);if(!group)break;
+   const node=group.nodes.find(n=>n.name===group.selected);if(!node)break;
+   if(node.sourceId){const hit=rows.find(s=>s.id===node.sourceId);if(hit)return hit}
+   name=node.type==='group'?node.name:'';
+  }
+  return rows[0]??null;
+ }
  function subscriptionCard() {
-  const rows=(view.subscriptions??[]).filter(s=>s.enabled),single=rows.length===1;
-  // 只有一条订阅时，把「更新」放到底部操作区，和「管理订阅」并排；
-  // 多条时每条各自带按钮，避免底部堆一排分不清归属的更新键。
-  const body=rows.length?rows.map(s=>`<div class="sub-row">
-   <div class="sub-head"><strong>${esc(s.name)}</strong><span class="tag ${s.status==='ready'?'on':'off'}">${subState(s)}</span></div>
-   <p class="small muted">最近成功 ${when(s.lastSuccess)} · ${s.hasCache?'保有可用缓存':'尚无缓存'}</p>
-   ${usageBlock(s)}
-   ${s.error?`<p class="bad small" role="alert">${esc(s.error)}</p>`:''}
-   ${single?'':button('update',s.updating?'更新中…':'更新',`data-id="${esc(s.id)}"`,busy||s.updating||!view.configured||!!view.operation)}
-  </div>`).join(''):'<p class="muted">还没有启用中的订阅。添加并更新后才能启动内核。</p>';
-  const update=single?button('update',rows[0].updating?'更新中…':'更新订阅',`data-id="${esc(rows[0].id)}"`,
-   busy||rows[0].updating||!view.configured||!!view.operation):'';
-  return card('订阅',body,{wide:true,footer:`${update}${button('goto-providers',rows.length?'管理订阅':'添加订阅','',false)}`});
+  const rows=(view.subscriptions??[]).filter(s=>s.enabled);
+  if(!rows.length)return card('订阅','<p class="muted">还没有启用中的订阅。添加并更新后才能启动内核。</p>',
+   {wide:true,footer:button('goto-providers','添加订阅','',false)});
+  const current=activeSubscription(rows),others=rows.length-1;
+  const update=button('update',current.updating?'更新中…':'更新订阅',`data-id="${esc(current.id)}"`,
+   busy||current.updating||!view.configured||!!view.operation);
+  return card('订阅',`<div class="sub-row">
+   <div class="sub-head"><strong>${esc(current.name)}</strong><span class="tag ${current.status==='ready'?'on':'off'}">${subState(current)}</span></div>
+   <p class="small muted">最近成功 ${when(current.lastSuccess)} · ${current.hasCache?'保有可用缓存':'尚无缓存'}</p>
+   ${usageBlock(current)}
+   ${current.error?`<p class="bad small" role="alert">${esc(current.error)}</p>`:''}
+   ${others>0?`<p class="small muted">另有 ${others} 个已启用订阅，这里只显示当前节点所用的那条；切换在订阅页点卡片。</p>`:''}
+  </div>`,{wide:true,footer:`${update}${button('goto-providers','管理订阅','',false)}`});
  }
  function currentNodeCard() {
   const list=groups();
@@ -196,13 +209,19 @@
    ${kv('规则数量',Number.isFinite(view.rulesCount)?`${view.rulesCount} 条`:'—')}`);
  }
  function systemCard() {
-  return card('系统信息',`${kv('操作系统',esc(view.os||'—'))}
-   ${kv('运行模式',view.tun?.enable?'TUN / 服务模式':'普通模式')}
-   ${kv('页面版本',UI_VERSION)}`);
+  // 系统信息一次给全：之前只有操作系统/运行模式/页面版本三行，看着像没读到。
+  const rows=[['操作系统',`${esc(view.os||'—')}${view.arch?` · ${esc(view.arch)}`:''}`]];
+  if(view.cpu)rows.push(['处理器',esc(view.cpu)]);
+  if(Number.isFinite(view.memoryTotal))rows.push(['内存',fmtBytes(view.memoryTotal)]);
+  rows.push(['运行模式',view.tun?.enable?'TUN / 服务模式':'普通模式']);
+  rows.push(['内核来源',view.bundled?'内置 mihomo':'自定义路径']);
+  if(view.pluginVersion)rows.push(['插件版本',`v${esc(view.pluginVersion)}`]);
+  return card('系统信息',rows.map(([key,value])=>kv(key,value)).join(''));
  }
  function overviewSection() {
-  return `<div class="cards">${subscriptionCard()}${currentNodeCard()}${networkCard()}${modeCard()}
-   ${siteCard()}${ipCard()}${clashCard()}${systemCard()}</div>`;
+  // 概览卡片多，但不该把整屏顶走：容器内滚，工具条和标签页始终留在视野里。
+  return `<div class="overview-scroll"><div class="cards">${subscriptionCard()}${currentNodeCard()}${networkCard()}${modeCard()}
+   ${siteCard()}${ipCard()}${clashCard()}${systemCard()}</div></div>`;
  }
  // ── 节点：搜索 / 延迟排序 / 只看可用，列表内部滚动，工具栏常驻 ──
  function visibleNodes(nodes) {
@@ -247,10 +266,10 @@
   const field=(id,label,input,error)=>`<label for="${id}">${label}${input}${error?`<p class="field-error" role="alert">${esc(error)}</p>`:''}</label>`;
   const nameInput=`<input id="subscription-name" name="name" maxlength="80" required aria-label="订阅名称" value="${esc(draft.name)}" placeholder="例如：机场A" aria-invalid="${!!fieldErrors.name}" ${locked()?'disabled':''}>`;
   const urlInput=`<input id="subscription-url" name="url" type="password" autocomplete="off" spellcheck="false" aria-label="HTTPS 订阅地址" value="${esc(draft.url)}" placeholder="${draft.id?'留空保持原地址':'https://…'}" aria-invalid="${!!fieldErrors.url}" ${draft.id?'':'required'} ${locked()?'disabled':''}>`;
-  return `<h2>订阅管理</h2><p class="muted">多个订阅可同时启用；新增后点「更新」校验，通过后才能启动内核。</p>
+  return `<h2>订阅管理</h2><p class="muted">点订阅卡片即启用或停用，启用中的卡片会高亮；新增后点「更新」校验，通过后才能启动内核。</p>
    ${banner}${empty}
    ${button('reload','更新全部已启用订阅','',busy||!view.configured||!rows.some(s=>s.enabled)||!!view.operation)}
-   <div class="subscriptions">${rows.map(s=>`<article class="subscription">
+   <div class="subscriptions">${rows.map(s=>`<article class="subscription" data-sub="${esc(s.id)}" role="switch" aria-checked="${s.enabled}" tabindex="${locked()?-1:0}" aria-label="${esc(s.name)}：${s.enabled?'已启用':'已停用'}">
     <div class="subscription-title"><strong>${esc(s.name)}</strong><span class="tag ${s.enabled?'on':'off'}">${s.enabled?'已启用':'已停用'}</span></div>
     <p class="sub-state ${s.status==='error'?'bad':s.status==='ready'?'good':'muted'}" role="status">${s.updating?'更新中…':{pending:'等待更新',ready:'缓存可用',error:'更新失败'}[s.status]||'等待更新'} · ${s.nodeCount} 个节点</p>
     <p class="muted small">最近尝试：${when(s.lastAttempt)} · 最近成功：${when(s.lastSuccess)}</p>
@@ -259,9 +278,9 @@
     ${!s.hasCache&&s.status==='pending'?`<p class="muted small">还没下载过节点：点下面的「更新」。</p>`:''}
     <div class="toolbar">${button('update','更新',`data-id="${esc(s.id)}"`,busy||s.updating||!view.configured||!!view.operation)}
     ${button('edit','编辑',`data-id="${esc(s.id)}"`,locked())}
-    ${button('toggle',s.enabled?'停用':'启用',`data-id="${esc(s.id)}"`,locked())}
     ${button('delete','删除',`data-id="${esc(s.id)}"`,locked())}</div>
     ${confirmDelete===s.id?`<div class="confirm-bar" role="alert"><p>删除此订阅和本地节点缓存？其他订阅保持原状态。</p>${button('confirm-delete','确认删除',`data-id="${esc(s.id)}"`,locked())}${button('cancel-delete','取消')}</div>`:''}
+    <p class="sub-hint">${locked()?'内核运行中：先停止内核再切换订阅':'点卡片切换'}</p>
    </article>`).join('')}</div>
    <form id="subscription-form"><h3>${draft.id?'编辑订阅':'添加订阅'}</h3>
     ${field('subscription-name','名称',nameInput,fieldErrors.name)}
@@ -291,10 +310,44 @@
    parts.push('<p class="banner" role="status">检测到格式未识别的旧版单订阅资料。原数据已保留；可在下方重新添加订阅地址。</p>');
   return parts.join('');
  }
- function detailSection(name) {
-  const label=name==='rules'?'规则':'连接';
-  return `<h2>${label}</h2>${button('detail',detail?'重新读取':'读取详情','',busy||!view.running)}
-   <pre>${esc(detail?JSON.stringify(detail,null,2):'详情仅显示脱敏摘要。')}</pre>`;
+ // ── 规则 / 连接：内核侧的实时数据，进页自动读一次，之后按需重读 ──
+ const detailLabel=name=>name==='rules'?'规则':'连接';
+ function detailPlaceholder(name) {
+  const label=detailLabel(name);
+  if(!view.running)return `<h2>${label}</h2><p class="muted">内核运行后${name==='rules'?'显示当前生效的分流规则。':'显示进行中的连接。'}</p>`;
+  return `<h2>${label}</h2><p class="muted">${detailBusy[name]?`正在读取${label}…`:'还没有读取到数据。'}</p>
+   ${button('detail-refresh',`读取${label}`,`data-section="${name}"`,detailBusy[name])}`;
+ }
+ function rulesSection() {
+  const data=details.rules;
+  if(!data)return detailPlaceholder('rules');
+  const query=detailQuery.rules.trim().toLowerCase(),all=data.rules??[];
+  const rows=all.filter(rule=>!query||`${rule.type} ${rule.payload} ${rule.proxy}`.toLowerCase().includes(query));
+  return `<h2>规则 <span class="muted">· ${data.count} 条</span></h2>
+   <label class="search">搜索规则<input id="rule-search" type="search" autocomplete="off" placeholder="按类型、内容或策略筛选" value="${esc(detailQuery.rules)}"></label>
+   <div class="list-scroll"><div class="rule-list">${rows.length?rows.map(rule=>`<div class="rule-row">
+    <span class="rule-type">${esc(rule.type||'—')}</span>
+    <span class="rule-payload">${esc(rule.payload||'—')}</span>
+    <span class="rule-proxy">${esc(rule.proxy||'—')}</span></div>`).join(''):'<p class="muted">没有匹配的规则。</p>'}</div></div>
+   <p class="muted small">显示 ${rows.length} / ${data.count} 条${data.count>all.length?`（只取前 ${all.length} 条）`:''}</p>
+   ${button('detail-refresh','重新读取','data-section="rules"',detailBusy.rules)}`;
+ }
+ function connectionsSection() {
+  const data=details.connections;
+  if(!data)return detailPlaceholder('connections');
+  const query=detailQuery.connections.trim().toLowerCase(),all=data.connections??[];
+  const rows=all.filter(row=>!query
+   ||`${row.host} ${row.destination} ${row.rule} ${row.chains.join(' ')}`.toLowerCase().includes(query));
+  return `<h2>连接 <span class="muted">· ${data.count} 条</span></h2>
+   <p class="status-line">↑ ${fmtBytes(data.uploadTotal)} · ↓ ${fmtBytes(data.downloadTotal)}</p>
+   <label class="search">搜索连接<input id="conn-search" type="search" autocomplete="off" placeholder="按域名、地址或规则筛选" value="${esc(detailQuery.connections)}"></label>
+   <div class="list-scroll"><div class="conn-list">${rows.length?rows.map(row=>`<div class="conn-row">
+    <div class="conn-main"><span class="conn-host">${esc(row.host||row.destination||'—')}</span>
+     <span class="conn-tail">↑ ${fmtBytes(row.upload)} · ↓ ${fmtBytes(row.download)}</span></div>
+    <div class="conn-meta"><span>${esc(row.rule||row.network||'—')}</span>
+     <span>${esc(row.chains.at(-1)??'—')}</span></div></div>`).join(''):'<p class="muted">没有匹配的连接。</p>'}</div></div>
+   <p class="muted small">显示 ${rows.length} / ${data.count} 条${data.count>all.length?`（只取前 ${all.length} 条）`:''}</p>
+   ${button('detail-refresh','重新读取','data-section="connections"',detailBusy.connections)}`;
  }
  // 与后端一致的就地校验：文案复用后端固定提示，避免两套说法。
  function validateSubscription(values) {
@@ -337,11 +390,17 @@
   if(busy||view.operation||view.tunSwitching)return false;
   return run('tunSwitch',{enable:!(view.tun?.enable===true)});
  }
+ async function loadDetails(name) {
+  if(detailBusy[name])return;
+  detailBusy[name]=true;detailAsked[name]=true;draw();
+  try{details[name]=await FishDock.call('clash.details',{section:name})}
+  catch(e){details[name]=null;error=`${detailLabel(name)}读取失败：${reason(e)}`}
+  finally{detailBusy[name]=false;draw()}
+ }
  async function loadIp(refresh=false) {
   if(ipBusy)return;
   ipBusy=true;ipAsked=true;ipError='';if(refresh)ip=null;draw();
-  try{const next=await FishDock.call('clash.ipInfo',{refresh});ip=next??null;
-   if(next?.available===false)ipError=next.reason||'当前无法查询出口 IP'}
+  try{const next=await FishDock.call('clash.ipInfo',{refresh});ip=next??null}
   catch(e){ip=null;ipError=`查询出口 IP 失败：${reason(e)}`}
   finally{ipBusy=false;draw()}
  }
@@ -372,17 +431,17 @@
   const keepScroll={nodeTop:scrolled?.scrollTop??0,groupLeft:groupStrip?.scrollLeft??0};
   if(!view){root.innerHTML=`<h1>Clash</h1><p role="status">${busy?'正在读取内核状态…':esc(error||'尚未读取状态')}</p>${button('view','重试')}`;bind();return}
   if(!groups().some(g=>g.name===group))group=groups()[0]?.name||'';
-  const double=view.layout==='double',cfg=configDraft||view;
-  FishDock.setLayout(double?'double':'single');
+  const cfg=configDraft||view;
   const nav=SECTIONS.map(([key,label])=>button(`section-${key}`,label,`aria-pressed="${section===key}"`,false)).join('');
   const body=section==='overview'?overviewSection():section==='nodes'?nodesSection()
-   :section==='providers'?providersSection():detailSection(section);
-  root.innerHTML=`<header><div><h1>Clash</h1><span class="muted">${view.running?'内核运行中':'内核已停止'}${view.version?' · '+esc(view.version):''} · 页面 v${UI_VERSION}</span></div><div class="layouts" aria-label="页面布局">${button('single','单栏',`aria-pressed="${!double}"`,false)}${button('double','双栏',`aria-pressed="${double}"`,false)}</div></header>
-   <div class="toolbar">${button(view.running||view.operation==='starting'||updating()?'stop':'start',view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',busy||view.operation==='stopping')}${button('view','刷新')}</div>
-   ${double?'<p class="muted narrow-note">窄窗口自动按单列排列，双栏偏好保持。</p>':''}
+   :section==='providers'?providersSection():section==='rules'?rulesSection():connectionsSection();
+  // 单栏到底：宿主里这页是窄面板，双栏只是把卡片挤成两列，切换按钮没有实际收益。
+  // 内核启停与刷新从标题栏挪到标签页下面，贴着它们要作用的内容。
+  root.innerHTML=`<header><div><h1>Clash</h1><span class="muted">${view.running?'内核运行中':'内核已停止'}${view.version?' · 内核 '+esc(view.version):''}${view.pluginVersion?' · 插件 v'+esc(view.pluginVersion):''}</span></div></header>
    ${feedbackBlock()}
-   <div class="workspace ${double?'double':''}">${double?`<aside><h2>管理</h2><nav>${nav}</nav><p>代理 ${esc(view.mixedPort)}<br>控制器 ${esc(view.controllerPort)}</p></aside>`:''}<section class="${section==='overview'?'plain':''}">${!double?`<div class="toolbar">${nav}</div>`:''}
-   ${body}</section></div>
+   <div class="toolbar tabs" aria-label="页面分区">${nav}</div>
+   <div class="toolbar">${button(view.running||view.operation==='starting'||updating()?'stop':'start',view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',busy||view.operation==='stopping')}${button('view','刷新')}</div>
+   <section class="${section==='overview'?'plain':''}">${body}</section>
    <details id="settings" class="spaced" ${settingsOpen?'open':''}><summary>内核设置</summary><form id="config">
    <label>mihomo 可执行文件<input id="kernel" name="kernel" value="${esc(cfg.kernel)}" required ${locked()?'disabled':''}></label>
    <div class="columns"><label>混合代理端口<input id="mixedPort" name="mixedPort" type="number" min="1024" max="65535" value="${esc(cfg.mixedPort)}" required ${locked()?'disabled':''}></label>
@@ -429,8 +488,7 @@
    const a=b.dataset.action,id=b.dataset.id;
    if(a==='save-subscription')return saveSubscription();
    if(a==='save-config')return saveConfig();
-   if(a==='single'||a==='double')return run('layout',{layout:a});
-   if(a.startsWith('section-')){section=a.slice(8);detail=null;draw();return}
+   if(a.startsWith('section-')){section=a.slice(8);draw();return}
    // 点击组卡切换当前组（纯前端状态，不发 RPC）；节点点击才走 select。
    if(a==='group-card'){group=b.dataset.group;draw();return}
    if(a==='node')return run('select',{group, name:b.dataset.node});
@@ -444,10 +502,9 @@
    if(a==='site-test')return testSites();
    if(a==='ip-refresh')return loadIp(true);
    if(a==='ip-reveal'){ipReveal=!ipReveal;draw();return}
-   if(a==='detail')return run('details',{section});
+   if(a==='detail-refresh'){details[b.dataset.section]=null;detailAsked[b.dataset.section]=false;return loadDetails(b.dataset.section)}
    if(a==='edit'){const s=view.subscriptions.find(s=>s.id===id);draft={id,name:s.name,url:''};fieldErrors={};draw();return}
    if(a==='cancel-edit'){draft={id:'',name:'',url:''};fieldErrors={};draw();return}
-   if(a==='toggle'){const s=view.subscriptions.find(s=>s.id===id);return run('subscriptionToggle',{id,enabled:!s.enabled})}
    if(a==='delete'){confirmDelete=id;draw();return}
    if(a==='cancel-delete'){confirmDelete='';draw();return}
    if(a==='confirm-delete'){confirmDelete='';if(draft.id===id)draft={id:'',name:'',url:''};return run('subscriptionRemove',{id})}
@@ -460,8 +517,32 @@
    if(a==='tun-refresh')return run('tunService');
    run(a);
   });
+  // 订阅卡整张可点：启停走同一个 RPC，卡片上的按钮不触发切换。
+  root.querySelectorAll('[data-sub]').forEach(card=>{
+   card.onclick=event=>{
+    if(event?.target?.closest?.('button,input,select,form,a'))return false;
+    if(locked())return false;
+    const row=view?.subscriptions?.find(s=>s.id===card.dataset.sub);
+    if(!row)return false;
+    return run('subscriptionToggle',{id:row.id,enabled:!row.enabled});
+   };
+   card.onkeydown=event=>{
+    if(event?.key!=='Enter'&&event?.key!==' ')return false;
+    event.preventDefault?.();
+    return card.onclick(event);
+   };
+  });
+  // 规则与连接的搜索同样就地过滤，重建后把焦点与光标放回去。
+  for(const [id,name] of [['rule-search','rules'],['conn-search','connections']]){
+   const input=root.querySelector(`#${id}`);
+   if(!input)continue;
+   input.oninput=event=>{detailQuery[name]=String(event.target.value??'');if(!event.isComposing)draw()};
+   input.oncompositionend=()=>draw();
+  }
   // 出口 IP 是一次性读取，加标记避免每次重绘都打一次 RPC。
   if(section==='overview'&&view?.running&&!ip&&!ipError&&!ipAsked)void loadIp();
+  // 规则与连接进页自动读一次；读失败或内核重启后由「重新读取」手动补。
+  if((section==='rules'||section==='connections')&&view?.running&&!details[section]&&!detailAsked[section]&&!detailBusy[section])void loadDetails(section);
  }
  window.addEventListener('pagehide',()=>clearTimeout(timer));
  run('view');
