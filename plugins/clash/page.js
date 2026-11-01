@@ -55,10 +55,18 @@
   EADDRINUSE:'端口已被本机其他程序占用（EADDRINUSE）：请关闭占用该端口的程序，或改用其他端口后重试',
   EACCES:'没有访问权限（EACCES）：请确认目标目录归当前用户所有，或以管理员权限重新安装插件',
   EPERM:'系统拒绝该操作（EPERM）：请检查安全软件或系统策略是否拦截，再重试',
-  EBUSY:'文件被占用或资源忙（EBUSY）：请关闭占用该文件的程序后重试'};
+  EBUSY:'文件被占用或资源忙（EBUSY）：请关闭占用该文件的程序后重试',
+  // 插件协议层（d.sdk/宿主产生，t12 打通后真的会到页面）：不要落到「未识别错误」。
+  COMMAND_FAILED:'这次操作插件没能完成：请重试；仍失败请打开插件日志查看原因',
+  NOT_ACTIVE:'插件尚未启用：回到插件页启用后重试',
+  UNKNOWN_METHOD:'宿主与插件版本不匹配（页面要的方法插件没有）：请更新插件到 2.1.2 后重试',
+  CAPABILITY_REQUIRED:'宿主与插件版本不匹配（插件没声明所需能力）：请更新插件到 2.1.2 后重试',
+  BAD_HANDSHAKE:'插件没能与 Dock 完成握手：请重新安装该插件；仍失败请打开插件日志',
+  HANDSHAKE_REQUIRED:'插件会话尚未就绪：请关闭并重新打开插件页面后重试',
+  OPERATION_ERROR:'插件操作未完成：请刷新后重试；仍失败请打开插件日志查看原因'};
  // 宿主协议层会把插件错误折叠成一条固定常量（plugin_protocol.rs 的 OPERATION_ERROR），
  // code 到不了页面时按这条常量给出可执行的下一步；其余原始 message 仍不透出。
- const HOST_FOLD={'插件操作未完成，请检查配置后重试':'操作未完成：插件进程可能已重启，请刷新后重试；仍失败请打开插件日志查看原因'};
+ const HOST_FOLD={'插件操作未完成，请检查配置后重试':ERROR_TEXT.OPERATION_ERROR};
  const reason=e=>{
   const code=typeof e?.code==='string'?e.code.trim():'';
   if(Object.hasOwn(ERROR_TEXT,code))return ERROR_TEXT[code];

@@ -429,7 +429,9 @@ test('shared/errors.mjs 的错误码表覆盖约定三类码，且每条文案�
  for(const code of ['KERNEL_ATTACH_FAILED','KERNEL_STOP_UNCONFIRMED','PROXY_RESTORE_RECORD_INVALID',
   'PROXY_REGISTRY_READ_FAILED','PROXY_REGISTRY_WRITE_FAILED','CONTROLLER_UNREACHABLE','CONTROLLER_TIMEOUT',
   'SUBSCRIPTION_CORRUPT','PORT_IN_USE','PORT_BIND_DENIED','FILE_BUSY','PERMISSION_DENIED','RUNTIME_COPY_FAILED',
-  'GATEWAY_ERROR','UNKNOWN_ERROR','EADDRINUSE','EACCES','EPERM','EBUSY'])
+  'GATEWAY_ERROR','UNKNOWN_ERROR','EADDRINUSE','EACCES','EPERM','EBUSY',
+  // 协议层码：t12 打通透传后真的会到页面，必须各有专属文案
+  'COMMAND_FAILED','NOT_ACTIVE','UNKNOWN_METHOD','CAPABILITY_REQUIRED','BAD_HANDSHAKE','HANDSHAKE_REQUIRED','OPERATION_ERROR'])
   assert.equal(typeof errorMessages[code],'string',`缺少错误码 ${code}`);
  assert.equal(errorMessages.UNKNOWN_ERROR,'未识别错误，请重试；若反复出现，请打开插件日志查看原始错误码','兜底单独成条');
  const texts=Object.values(errorMessages);
@@ -466,14 +468,30 @@ test('系统代理失败显示注册表类专属文案，不再是「请检查�
  assert.equal(html.includes('请检查配置和运行状态后重试'),false,'旧兜底文案已移除');
  assert.equal(html.includes('HKCU'),false,'不透出注册表原文');
 });
-test('宿主把插件错误折叠成固定常量时，页面仍给出可执行的下一步',async()=>{
- const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
- // plugin_protocol.rs 的 OPERATION_ERROR：所有插件错误的 message 都被宿主替换成这一句。
- f.throwOn('clash.proxy',Error('插件操作未完成，请检查配置后重试'));
- f.click('proxy');await flush();
- assert.ok(alertsOf(f.root.innerHTML).includes(
-  '系统代理失败：操作未完成：插件进程可能已重启，请刷新后重试；仍失败请打开插件日志查看原因'),'折叠常量有专属下一步');
- assert.equal(f.root.innerHTML.includes('请检查配置和运行状态后重试'),false,'旧兜底文案已移除');
+// 宿主把插件错误折叠成固定常量、或带上协议层码时，都不能退化成「未识别错误」。
+test('协议层码与宿主折叠常量都按文案呈现，不落到「未识别错误」',async()=>{
+ const codes=['COMMAND_FAILED','NOT_ACTIVE','UNKNOWN_METHOD','CAPABILITY_REQUIRED','BAD_HANDSHAKE',
+  'HANDSHAKE_REQUIRED','OPERATION_ERROR'];
+ for(const code of codes){
+  const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+  const error=new Error('插件操作未完成');error.code=code;
+  f.throwOn('clash.proxy',error);f.click('proxy');await flush();
+  const alerts=alertsOf(f.root.innerHTML);
+  assert.ok(alerts.includes(`系统代理失败：${errorMessages[code]}`),`${code} 显示专属文案`);
+  assert.equal(alerts.some(text=>text.includes(errorMessages.UNKNOWN_ERROR)),false,`${code} 不再兜底`);
+ }
+ // 没有码、只剩宿主常量时，仍按 OPERATION_ERROR 的文案给下一步。
+ const folded=fixture();await flush();folded.row.running=true;folded.click('view');await flush();
+ folded.throwOn('clash.proxy',Error('插件操作未完成，请检查配置后重试'));
+ folded.click('proxy');await flush();
+ assert.ok(alertsOf(folded.root.innerHTML).includes(`系统代理失败：${errorMessages.OPERATION_ERROR}`),'折叠常量给下一步');
+ assert.equal(folded.root.innerHTML.includes('请检查配置和运行状态后重试'),false,'旧兜底文案已移除');
+ // 未知码仍然只有一条兜底。
+ const unknown=fixture();await flush();unknown.row.running=true;unknown.click('view');await flush();
+ const error=new Error('PRIVATE');error.code='NOT_A_REAL_CODE';
+ unknown.throwOn('clash.proxy',error);unknown.click('proxy');await flush();
+ assert.ok(alertsOf(unknown.root.innerHTML).includes(`系统代理失败：${errorMessages.UNKNOWN_ERROR}`),'未知码仍兜底');
+ assert.equal(unknown.root.innerHTML.includes('PRIVATE'),false,'不透出原文');
 });
 test('原始 message 恰好是原型键名时也不当成文案，仍落到「未识别错误」',async()=>{
  for(const message of ['toString','constructor']){
