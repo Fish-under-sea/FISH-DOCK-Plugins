@@ -1,4 +1,5 @@
 import {createHash,randomBytes, randomUUID} from 'node:crypto';
+import {execFile} from 'node:child_process';
 import os from 'node:os';
 import {publicUpdateError,updateMessages} from './subscriptions.mjs';
 // 校验错误统一挂码：文案在 shared/errors.mjs 按 code 查表，页面不再做中文正则匹配。
@@ -19,6 +20,28 @@ const isPort=value=>Number.isInteger(value)&&value>=1024&&value<=65535;
 const defaultPidAlive=pid=>{
   try{process.kill(pid,0);return true}catch{return false}
 };
+// pid 复用只能靠「这个 pid 的实际启动时刻」挡住：与宿主 plugin_runtime.rs 的 running_for(pid)+
+// ORPHAN_SLACK_MS 同口径。取不到（无权限、进程已退、平台不认）就返回 null，
+// 调用方一律当作「不是本插件的内核」，不发信号。
+const PID_REUSE_SLACK_MS=5000;
+function defaultProcessStartedAt(pid) {
+  return new Promise(resolve=>{
+    const done=value=>resolve(Number.isFinite(value)&&value>0?value:null);
+    if(!Number.isInteger(pid)||pid<=0)return done(null);
+    const windows=process.platform==='win32';
+    // 不把 pid 拼进脚本源码以外的地方；PowerShell 只回「已运行毫秒」，由这里换算成启动时刻。
+    const args=windows
+      ?['-NoProfile','-NonInteractive','-Command',`[long]((Get-Date).ToUniversalTime()-(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime()).TotalMilliseconds`]
+      :['-o','etimes=','-p',String(pid)];
+    execFile(windows?'pwsh':'ps',args,{windowsHide:true,timeout:3000},(error,stdout)=>{
+      if(error)return done(null);
+      const text=String(stdout??'').trim();
+      if(windows)return done(Date.now()-Number(text));
+      const seconds=Number(text.split(/\s+/)[0]);
+      return done(Number.isFinite(seconds)?Date.now()-seconds*1000:null);
+    });
+  });
+}
 // 落盘记录必须自证完整才可信：字段不全就当作「没有残留内核」，不能让坏记录冒充运行中。
 function runStateValue(value) {
   if(!value||typeof value!=='object'||value.schema!==1)return null;
@@ -84,7 +107,7 @@ function cpuLabel() {
   return model?`${model} · ${list.length} 核`:`${list.length} 核`;
 }
 export function createClash({context,runtime,request:injectedRequest,fetch:fetcher=globalThis.fetch,defaultKernel='',pluginVersion='',
-  pidAlive=defaultPidAlive,attachCooldownMs=3000}) {
+  pidAlive=defaultPidAlive,pidStartedAt=defaultProcessStartedAt,attachCooldownMs=3000}) {
   let running=null,settings,loading,subscriptions=[],secret='',operation=null,closing=false,operationError='';
   let startedAt=0,ipCache=null;
   // 「内核在不在跑」不再只由内存里的 running 决定：插件进程重启后 running 会归零，
@@ -148,6 +171,27 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     if(typeof value?.version!=='string')throw coded('CONTROLLER_UNREACHABLE','残留内核的控制器应答无效');
     return value;
   }
+  // 残留内核的判据：reclaim 与 stop 共用一套，且与 attach 的判据对齐——只看 pid 存活就
+  // SIGTERM/SIGKILL，会在 pid 被系统复用给别的程序（浏览器等）时杀错人（#14 复审 F1/F2）。
+  //   service     —— 由 TUN 服务托管，交给 runtime.tunStop；
+  //   absent      —— 内核进程已经不在了，没有残留；
+  //   attachable  —— 控制器还应答：这是能接管的活内核，留给 attach，这里绝不发信号；
+  //   reclaim     —— 控制器不通 + pid 的实际启动时刻与记录一致（±5s）：确实是我们的僵尸内核；
+  //   foreign     —— 控制器不通 + 启动时刻对不上或取不到（pid 多半已被复用）：不杀。
+  async function residualKernel(record) {
+    if(!record)return 'absent';
+    if(record.mode==='service')return 'service';
+    if(!processAlive(record.pid))return 'absent';
+    let key='';
+    try{key=await context.secrets.read('keys','controller.key')||''}catch{key=''}
+    if(key&&secretFingerprint(key)===record.secretFingerprint){
+      try{await probeController(record.controllerPort,key);return 'attachable'}
+      catch{/* 控制器不通：接着用启动时刻判定是不是同一个进程 */}
+    }
+    const actual=await pidStartedAt(record.pid);
+    if(!Number.isFinite(actual))return 'foreign';
+    return Math.abs(actual-record.startedAt)<=PID_REUSE_SLACK_MS?'reclaim':'foreign';
+  }
   // attach 三重校验：pid 存活（服务托管模式看控制器）、secret 指纹一致、/version 可达。
   // pid 复用只能靠后两项兜底，所以缺一项就不认。
   async function attachRunning() {
@@ -208,14 +252,19 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     return attachTask;
   }
   // 起新内核前先收拾上一实例的残留：否则两边抢同一个控制器端口，用户看到的是 EADDRINUSE。
+  // 判据走 residualKernel：只有「确实是记录里那个内核」才结束它，可接管的活内核留给 attach。
   async function reclaimRunState() {
     const record=await readRunState();
-    if(!record)return;
+    if(!record)return 'absent';
+    let verdict='absent';
     try{
-      if(record.mode==='service')await runtime.tunStop?.();
-      else if(processAlive(record.pid))await terminateKernel(record.pid);
+      verdict=await residualKernel(record);
+      if(verdict==='service')await runtime.tunStop?.();
+      else if(verdict==='reclaim')await terminateKernel(record.pid);
     }catch{/* 回收不成功留给后续端口探测报错 */}
-    await clearRunState();
+    // 可接管的活内核必须留住记录：清掉就再也认不出来，下次启动必然并起第二个内核。
+    if(verdict!=='attachable')await clearRunState();
+    return verdict;
   }
   async function persist(rows) {
     await context.storage.write('config','subscriptions.json',JSON.stringify({schema:2,subscriptions:rows}));
@@ -482,7 +531,14 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const enabled=subscriptions.filter(s=>s.enabled);
       if(enabled.some(s=>!s.hasCache))throw serviceError('SUBSCRIPTION_NO_CACHE');
       // 走到这里说明没有可 attach 的内核；上一实例可能留下了僵尸进程占着端口，先回收。
-      await reclaimRunState();
+      // 回收判定为「可 attach」时不杀它，而是先把那个内核接管过来，绝不并起第二个。
+      const reclaimed=await reclaimRunState();
+      if(reclaimed==='attachable'){
+        attachRetryAt=0;attachTask=null;
+        await ready();
+        if(alive())return view();
+        throw coded('KERNEL_ATTACH_FAILED','残留内核仍在运行但无法接管，请先停止内核再启动');
+      }
       secret=await context.secrets.read('keys','controller.key')||randomBytes(32).toString('hex');
       await context.secrets.write('keys','controller.key',secret);
       const candidate=await runtime.start({...c,secret,subscriptions:enabled,request,signal:task.controller.signal});running=candidate;
@@ -513,13 +569,30 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       // 插件重载过就只剩落盘记录：先尝试 attach，才能认出「内核其实还在跑」。
       await ready();
       const result={kernel:'absent',proxy:'skipped',code:null,message:'',ok:true};
-      let kernelError=null;
+      let kernelError=null,keepRecord=false;
       try{
         if(running){await running.stop();result.kernel='stopped'}
         else{
           const record=await readRunState();
-          if(record?.mode==='service'){try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}result.kernel='stopped'}
-          else if(record&&processAlive(record.pid)){await terminateKernel(record.pid);result.kernel='stopped'}
+          if(record){
+            // 用户点「停止」是默认路径，这里同样不能只凭 pid 存活就发信号（复审 F2）。
+            const verdict=await residualKernel(record);
+            if(verdict==='service'){try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}result.kernel='stopped'}
+            else if(verdict==='reclaim'){await terminateKernel(record.pid);result.kernel='stopped'}
+            else if(verdict==='attachable'){
+              // 控制器还应答：先把这个内核接管成自己的句柄，再按正常路径停——不对没有句柄的 pid 发信号。
+              attachRetryAt=0;attachTask=null;
+              await ready();
+              if(running){await running.stop();result.kernel='stopped'}
+              else{
+                keepRecord=true;result.kernel='attachable';result.ok=false;
+                result.code='KERNEL_ATTACH_FAILED';
+                result.message='内核仍在运行且可接管，未结束进程；请重启插件后再次停止';
+                operationError=result.message;
+              }
+            }
+            // verdict==='foreign'：pid 的启动时刻对不上（多半已被系统复用给别的程序），不杀。
+          }
         }
       }catch(error){
         kernelError=error;result.kernel='failed';result.ok=false;
@@ -529,7 +602,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       running=null;startedAt=0;ipCache=null;attached=false;kernelPid=null;
       // TUN 由 SYSTEM 服务托管时，确保服务侧内核也停下（running 为空时的兜底）。
       try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}
-      await clearRunState();attachTask=null;attachRetryAt=0;attachError=null;
+      // 可接管的活内核要留住记录，否则下次启动就把它当成没有内核、再起一个。
+      if(!keepRecord)await clearRunState();
+      attachTask=null;attachRetryAt=0;
+      if(!keepRecord)attachError=null;
       // 系统代理恢复：只有带 code 的适配层错误才降级为警告；
       // 没有 code 的异常说明不是已知状况，保持原有「停止失败」语义，但带上结构化结果。
       let proxyError=null;

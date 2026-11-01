@@ -16,6 +16,8 @@ function fixture(disk=new Map(),options={}) {
  // external 模拟「插件进程重启后仍有残留内核」：pid 还活着、控制器可应答，但不是本实例 spawn 的。
  const external=options.external?{alive:true,...options.external}:null;
  const controllerUp=options.controller!==false;
+ // 夹具层的 options 在 request(path,options) 里会被参数遮蔽，先取出来再用。
+ const externalDown=options.externalController===false;
  const kernelPid=options.pid??4242;
  const context={dataDirectory:'D:/synthetic/.fishplugin-clash',
   storage:{read:async(c,n)=>disk.get(`${c}/${n}`)??null,write:async(c,n,v)=>disk.set(`${c}/${n}`,v)},
@@ -25,6 +27,8 @@ function fixture(disk=new Map(),options={}) {
   requests.push({path,...options});
   if(delayError&&path.includes('/delay?'))throw delayError;
   if(!controllerUp)throw Object.assign(Error('控制器不可达'),{code:'CONTROLLER_UNREACHABLE'});
+  // 残留内核（不是本实例 spawn 的）控制器不通：用来证明 attach 失败后也不会盲杀 pid。
+  if(!up&&externalDown)throw Object.assign(Error('控制器不可达'),{code:'CONTROLLER_UNREACHABLE'});
   if(!up&&!external?.alive)throw Error('offline');
   const names=subs().map(s=>`[${s.id}] same`);
   return path==='/version'?{version:'synthetic'}:path==='/proxies'?{proxies:{
@@ -56,6 +60,16 @@ function fixture(disk=new Map(),options={}) {
   // 残留内核优先按 external 判活：它的 pid 可能与本实例的假 pid 同号。
   if(external&&external.pid===pid)return external.alive;
   return pid===kernelPid?up:false;
+ },pidStartedAt:pid=>{
+  // pid 复用的回归开关：externalStartedAt 与落盘记录不一致＝这个 pid 已经被系统复用给别的程序。
+  if(options.externalStartedAt!==undefined)return options.externalStartedAt;
+  // 默认认为残留内核就是记录里那个进程：启动时刻与 run-state 一致。
+  try{
+   const raw=disk.get('config/run-state.json');
+   const record=raw?JSON.parse(raw):null;
+   if(record&&Number.isFinite(record.startedAt))return record.startedAt;
+  }catch{/* 坏记录按取不到处理 */}
+  return null;
  }});
  return {service,disk,requests,updates,runtime,context,external,stats:()=>({starts,stops,up,owned,kills}),fail:()=>{fail=true},
   breakDelay:error=>{delayError=error},
@@ -390,6 +404,29 @@ test('残留内核在跑但控制器不可达：不谎报运行中，停止仍�
  assert.deepEqual(g.stats().kills,[record.pid],'停止必须按落盘 pid 结束残留内核');
  assert.equal(stopped.stop.kernel,'stopped');
 });
+// 复审 t7 F2：pid 被系统复用给外部进程（记录还在、控制器不通）时，用户点「停止」不能盲杀。
+// 第二道防线是「pid 的实际启动时刻」与 run-state 记录比对（宿主 plugin_runtime.rs 同口径 ±5s）。
+test('pid 被复用给外部进程时，点停止不杀它',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const record=JSON.parse(f.disk.get('config/run-state.json'));
+ const g=fixture(f.disk,{external:{pid:record.pid},controller:false,attachCooldownMs:0,
+  externalStartedAt:record.startedAt+600000});
+ const stopped=await g.service.stop();
+ assert.deepEqual(g.stats().kills,[],'启动时刻对不上＝不是我们的内核，绝不能发信号');
+ assert.equal(stopped.stop.kernel,'absent','没杀就别谎报 stopped');
+ assert.equal((await g.service.view()).running,false);
+});
+// 复审 t7 F1：再次启动前的残留回收同样不能盲杀；确认不是我们的内核后才起新内核。
+test('残留回收遇到被复用的 pid：不杀外部进程，照常起自己的内核',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const record=JSON.parse(f.disk.get('config/run-state.json'));
+ const g=fixture(f.disk,{external:{pid:record.pid},externalController:false,attachCooldownMs:0,
+  externalStartedAt:record.startedAt-600000});
+ const state=await g.service.start();
+ assert.deepEqual(g.stats().kills,[],'回收路径也不得对外部进程发信号');
+ assert.equal(g.stats().starts,1,'确认不是残留内核之后才拉起新内核');
+ assert.equal(state.running,true);
+});
 // 现象 B：系统代理恢复失败不该让整次停止失败，更不该拦住杀内核。
 test('系统代理恢复记录无效只降级为警告，内核照样停干净',async()=>{
  const f=fixture();await f.service.save(kernel);await f.service.start();
@@ -525,3 +562,8 @@ test('校验错误统一挂码：无节点、组失效、未启动路径都带 c
  await assert.rejects(f.service.mode({mode:'rule'}),error=>error.code==='KERNEL_NOT_RUNNING');
  await assert.rejects(f.service.mode({mode:'sideways'}),error=>error.code==='KERNEL_NOT_RUNNING');
 });
+
+
+
+
+
