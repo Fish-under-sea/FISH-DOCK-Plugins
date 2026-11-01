@@ -61,6 +61,9 @@ export const errorMessages = Object.freeze({
  TUN_NOT_INSTALLED: '请先在设置里安装 TUN 服务',
  TUN_START_UNCONFIRMED: 'TUN 服务未确认启动，请查看服务日志',
  TUN_READY_TIMEOUT: 'TUN 内核未在时限内就绪，请检查服务日志与端口',
+ // runtime.mjs:218 手工赋码 TUN_KERNEL_MISMATCH：与原文逐字一致，下一步就是重装服务。
+ // （:214/:216 的 TUN_UNAVAILABLE / TUN_SERVICE_MISSING 由 clash 分支改为码表的 TUN_UNSUPPORTED / TUN_NOT_INSTALLED）
+ TUN_KERNEL_MISMATCH: '已安装的 TUN 服务绑定了另一个内核，请重新安装服务',
  RESPONSE_TOO_LARGE: 'mihomo 响应超过限制',
  GEO_DATA_TOO_LARGE: 'geo 数据超过限制',
  // ── 原生系统码：保留原始语义，便于对日志 ──

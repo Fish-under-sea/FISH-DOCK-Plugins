@@ -504,7 +504,7 @@ test('原始 message 恰好是原型键名时也不当成文案，仍落到「�
 // t14（Clash 校验补码）用到的 28 个码：页面必须原话照旧，不能落到「未识别错误」。
 test('Clash 校验码沿用原话原文，按码查表而不是落到「未识别错误」',async()=>{
  const codes=['KERNEL_NOT_RUNNING','KERNEL_RUNNING_LOCK','PORT_RANGE_INVALID','SUBSCRIPTION_URL_INVALID',
-  'NODE_UNAVAILABLE','TUN_UNSUPPORTED','SUBSCRIPTION_UPDATING'];
+  'NODE_UNAVAILABLE','TUN_UNSUPPORTED','SUBSCRIPTION_UPDATING','TUN_KERNEL_MISMATCH'];
  for(const code of codes){
   const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
   const error=new Error('raw backend text');error.code=code;
@@ -519,6 +519,10 @@ test('Clash 校验码沿用原话原文，按码查表而不是落到「未识�
  assert.equal(errorMessages.PORT_RANGE_INVALID,'端口应为 1024–65535');
  assert.equal(errorMessages.DETAIL_SECTION_INVALID,'详情类别无效');
  assert.equal(errorMessages.PLUGIN_STOPPING,'插件正在停用');
+ // TUN 三码对齐：218 的手工码单独补，214/216 改成码表码后仍要有对应条目
+ assert.equal(errorMessages.TUN_KERNEL_MISMATCH,'已安装的 TUN 服务绑定了另一个内核，请重新安装服务');
+ assert.equal(errorMessages.TUN_UNSUPPORTED,'当前环境不支持 TUN 服务模式');
+ assert.equal(errorMessages.TUN_NOT_INSTALLED,'请先在设置里安装 TUN 服务');
 });
 test('IP 查询与测速失败同样按码呈现，无码异常退到「未识别错误」',async()=>{
  const f=fixture();await flush();f.row.running=true;

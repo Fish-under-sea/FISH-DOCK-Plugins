@@ -61,6 +61,7 @@
   TUN_NOT_INSTALLED:'请先在设置里安装 TUN 服务',
   TUN_START_UNCONFIRMED:'TUN 服务未确认启动，请查看服务日志',
   TUN_READY_TIMEOUT:'TUN 内核未在时限内就绪，请检查服务日志与端口',
+  TUN_KERNEL_MISMATCH:'已安装的 TUN 服务绑定了另一个内核，请重新安装服务',
   RESPONSE_TOO_LARGE:'mihomo 响应超过限制',
   GEO_DATA_TOO_LARGE:'geo 数据超过限制',
   PORT_IN_USE:'端口已被占用，请停止冲突服务或更换本机端口后重试',
