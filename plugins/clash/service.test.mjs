@@ -103,7 +103,7 @@ test('multiple subscriptions keep independent IDs but only one runs at a time',a
  await f.service.select({group:'🚀 节点选择',name:sourceNodes[0].name});
  assert.ok(f.requests.some(r=>r.method==='PUT'&&r.body?.name===`[${a.id}] same`));
  assert.ok(!JSON.stringify(state).includes('PRIVATE'));assert.ok(!f.disk.get('config/subscriptions.json').includes('https:'));
- await assert.rejects(f.service.subscriptionToggle({id:a.id,enabled:false}),/停止/);
+ await assert.rejects(f.service.subscriptionToggle({id:a.id,enabled:false}),error=>error.code==='KERNEL_RUNNING_LOCK');
  await f.service.stop();await f.service.subscriptionToggle({id:a.id,enabled:true});
  await f.service.start();assert.deepEqual(f.stats().owned.subscriptions.map(s=>s.id),[a.id]);
  await f.service.stop();await f.service.subscriptionRemove({id:a.id});
@@ -180,22 +180,23 @@ test('invalid URLs/ports are rejected; unsynced subscriptions block startup; int
  const f=fixture();await f.service.view();
  // 只拒真正的非法地址：非 http(s) 协议、带账号密码、空串。
  for(const url of ['file:///bad','ftp://example.test','https://user:pass@example.test',''])
-  await assert.rejects(add(f,'A',url),/订阅/);
+  await assert.rejects(add(f,'A',url),error=>error.code==='SUBSCRIPTION_URL_INVALID');
  // http 与 #片段 必须接受：国内机场大量如此，拒绝会让用户永远导不进来。
  const httpRow=await f.service.subscriptionSave({name:'http ok',url:'http://example.test/sub?token=x'});
  assert.equal(httpRow.subscriptions.at(-1).name,'http ok');
  const fragRow=await f.service.subscriptionSave({name:'fragment ok',url:'https://example.test/sub?token=y#Clash'});
  assert.equal(fragRow.subscriptions.length,2);
  assert.equal(f.disk.get(`secret/credentials/${fragRow.subscriptions.at(-1).id}.json`),'https://example.test/sub?token=y');
- await assert.rejects(f.service.save({...kernel,mixedPort:9099}));
+ await assert.rejects(f.service.save({...kernel,mixedPort:9099}),error=>error.code==='PORT_CONFLICT');
+ await assert.rejects(f.service.save({...kernel,mixedPort:80}),error=>error.code==='PORT_RANGE_INVALID');
  await f.service.save(kernel);
  await add(f,'third','https://example.test/three');
- await assert.rejects(f.service.start(),/更新/);
+ await assert.rejects(f.service.start(),error=>error.code==='SUBSCRIPTION_NO_CACHE');
  const release=f.block();await f.service.reload();
  const restart=await fixture(f.disk).service.view();assert.equal(restart.subscriptions[0].status,'error');
  const stop=f.service.shutdown();await tick();release();await stop;
  assert.equal(f.updates[0].signal.aborted,true);assert.equal(f.stats().starts,0);
- await assert.rejects(f.service.start(),/停用/);
+ await assert.rejects(f.service.start(),error=>error.code==='PLUGIN_STOPPING');
 });
 test('bundled kernel follows exact host package upgrades but custom paths remain untouched',async()=>{
  const old=`C:/old/packages/fish.clash/1.0.0/${'a'.repeat(64)}/service/mihomo.exe`;
@@ -236,7 +237,7 @@ test('节点测速对当前组逐条打 delay 接口，按节点名回结果',as
  assert.ok(result.delays.every(row=>typeof row.name==='string'),'每条都带节点名');
  assert.ok(f.requests.some(row=>/\/proxies\/.*\/delay\?url=/.test(row.path)),'走控制器的 delay 接口');
  await f.service.stop();
- await assert.rejects(f.service.nodeTest({group:'🚀 节点选择'}),/内核尚未启动/);
+ await assert.rejects(f.service.nodeTest({group:'🚀 节点选择'}),error=>error.code==='KERNEL_NOT_RUNNING');
 });
 test('TUN 服务：未安装→安装→卸载，安装后 TUN 开关持久化且栈值受控',async()=>{
  const f=fixture();await f.service.save(kernel);
@@ -259,7 +260,7 @@ test('TUN 服务安装要求内核已配置且内核未运行',async()=>{
  const f=fixture();
  await assert.rejects(f.service.installTunService());
  await f.service.save(kernel);await f.service.start();
- await assert.rejects(f.service.installTunService(),/停止内核/);
+ await assert.rejects(f.service.installTunService(),error=>error.code==='KERNEL_RUNNING_LOCK');
 });
 test('解密后的旧凭据内容格式无效时保留原值，view 与新增订阅仍可用',async()=>{
  // 覆盖真正的损坏内容；此替身不代表宿主 DPAPI 解密行为。
@@ -315,7 +316,7 @@ test('出口 IP 只在经代理时查询，字段归一化并缓存一分钟',as
 });
 test('网站测试经当前叶子节点测速，超时与无延迟都归零',async()=>{
  const f=fixture();await f.service.save(kernel);
- await assert.rejects(f.service.siteTest(),/内核尚未启动/);
+ await assert.rejects(f.service.siteTest(),error=>error.code==='KERNEL_NOT_RUNNING');
  const a=await add(f);await f.service.reload();await settled(f.service);await f.service.start();
  const result=await f.service.siteTest();
  assert.equal(result.node,`[${a.id}] same`);
@@ -476,7 +477,7 @@ test('内核本来停着时切 TUN 只写配置，不顺手拉起内核',async()
 test('TUN 服务没装时拒绝切换，且不动正在跑的内核',async()=>{
  const f=fixture();await f.service.save(kernel);await f.service.start();
  const before=f.stats();
- await assert.rejects(f.service.tunSwitch({enable:true}),/请先在设置里安装 TUN 服务/);
+ await assert.rejects(f.service.tunSwitch({enable:true}),error=>error.code==='TUN_NOT_INSTALLED');
  assert.equal(f.stats().stops,before.stops,'拒绝时不该停内核');
  assert.equal(f.stats().up,true);
  assert.equal((await f.service.view({controller:false})).tun.enable,false);
@@ -505,3 +506,22 @@ test('出口 IP：运行时缺能力才报不支持，代理不通报查询失�
  await f.service.stop();
 });
 
+
+// t14：校验错误统一挂码，文案由 shared/errors.mjs 按 code 查表（本分支码表未合入时 message 为回退文案，
+// 断言一律按 code；高频码 KERNEL_NOT_RUNNING / KERNEL_RUNNING_LOCK / PORT_RANGE_INVALID /
+// SUBSCRIPTION_URL_INVALID / NODE_UNAVAILABLE 分别在各自场景测试里覆盖）。
+test('校验错误统一挂码：无节点、组失效、未启动路径都带 code',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ // 无订阅时叶子节点不存在：NODE_UNAVAILABLE。
+ await assert.rejects(f.service.siteTest(),error=>error.code==='NODE_UNAVAILABLE');
+ // 节点不在组里：NODE_STALE。
+ await assert.rejects(f.service.select({group:'🚀 节点选择',name:'[sub-00000000-0000-0000-0000-000000000001] ghost'}),error=>error.code==='NODE_STALE');
+ // 内核在跑但模式值非法：KERNEL_STATE_INVALID（与「没启动」是两种用户动作，不能合并）。
+ await assert.rejects(f.service.mode({mode:'sideways'}),error=>error.code==='KERNEL_STATE_INVALID');
+ await f.service.stop();
+ // 停止后：KERNEL_NOT_RUNNING。
+ await assert.rejects(f.service.details({section:'rules'}),error=>error.code==='KERNEL_NOT_RUNNING');
+ await assert.rejects(f.service.select({group:'🚀 节点选择',name:'x'}),error=>error.code==='KERNEL_NOT_RUNNING');
+ await assert.rejects(f.service.mode({mode:'rule'}),error=>error.code==='KERNEL_NOT_RUNNING');
+ await assert.rejects(f.service.mode({mode:'sideways'}),error=>error.code==='KERNEL_NOT_RUNNING');
+});

@@ -1,6 +1,8 @@
 import {createHash,randomBytes, randomUUID} from 'node:crypto';
 import os from 'node:os';
 import {publicUpdateError,updateMessages} from './subscriptions.mjs';
+// 校验错误统一挂码：文案在 shared/errors.mjs 按 code 查表，页面不再做中文正则匹配。
+import {serviceError} from '../../shared/errors.mjs';
 
 // 统一错误码：这些 code 由适配层产生，页面按 code 显示专属文案（#13/#14 共用一套）。
 // 只在这里声明消息，不把 code 拼进字符串，避免页面只能做字符串匹配。
@@ -55,11 +57,11 @@ const ipSources=Object.freeze([
 ]);
 const validId=id=>/^sub-[a-f0-9-]{36}$/.test(id);
 function urlValue(value) {
-  let url;try{url=new URL(String(value).trim())}catch{throw Error('订阅地址无效，请粘贴完整的 http:// 或 https:// 链接')}
+  let url;try{url=new URL(String(value).trim())}catch{throw serviceError('SUBSCRIPTION_URL_INVALID')}
   if(url.protocol!=='http:'&&url.protocol!=='https:')
-    throw Error('订阅地址必须以 http:// 或 https:// 开头');
-  if(url.username||url.password)throw Error('订阅地址不要包含用户名和密码');
-  if(url.href.length>8192)throw Error('订阅地址过长');
+    throw serviceError('SUBSCRIPTION_URL_INVALID');
+  if(url.username||url.password)throw serviceError('SUBSCRIPTION_URL_INVALID');
+  if(url.href.length>8192)throw serviceError('SUBSCRIPTION_URL_INVALID');
   // 片段（#名称）是订阅备注，不是地址的一部分；机场常带，直接剥掉而不是拒绝。
   url.hash='';
   return url.href;
@@ -67,7 +69,7 @@ function urlValue(value) {
 function labelValue(value) {
   const name=String(value??'').trim();
   if(!name||name.length>80||/[\x00-\x1f\x7f]/.test(name)||/https?:\/\/|token\s*=/i.test(name))
-    throw Error('请输入 1–80 字的订阅名称，不要包含地址或凭据');
+    throw serviceError('SUBSCRIPTION_NAME_INVALID');
   return name;
 }
 // 连接详情最多回这么多条：控制器返回的是全量连接，几千条一层层过协议会把页面卡住。
@@ -233,7 +235,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         const data=JSON.parse(raw);
         if(data.schema!==2||!Array.isArray(data.subscriptions)||data.subscriptions.length>32||
           data.subscriptions.some(s=>!validId(s.id))||new Set(data.subscriptions.map(s=>s.id)).size!==data.subscriptions.length)
-          throw Error('订阅配置损坏，请从备份恢复');
+          throw serviceError('SUBSCRIPTION_CORRUPT');
         subscriptions=data.subscriptions.map(s=>({
           id:s.id,name:labelValue(s.name),enabled:s.enabled===true,
           status:s.status==='updating'?'error':(['ready','error'].includes(s.status)?s.status:'pending'),
@@ -292,7 +294,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     if(response.status===204)return {};
     const reader=response.body.getReader();let size=0;const chunks=[];
     try{for(;;){const {done,value}=await reader.read();if(done)break;
-      if((size+=value.byteLength)>limit)throw Error('mihomo 响应超过限制');chunks.push(value)}}
+      if((size+=value.byteLength)>limit)throw serviceError('RESPONSE_TOO_LARGE');chunks.push(value)}}
     finally{await reader.cancel().catch(()=>{})}
     return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');
   }
@@ -340,28 +342,28 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     return state;
   }
   function editable() {
-    if(alive()||operation)throw Error('请先停止内核再更改配置');
-    if(jobs.size)throw Error('请等待订阅更新完成');
-    if(closing)throw Error('插件正在停用');
+    if(alive()||operation)throw serviceError('KERNEL_RUNNING_LOCK');
+    if(jobs.size)throw serviceError('SUBSCRIPTION_UPDATING');
+    if(closing)throw serviceError('PLUGIN_STOPPING');
   }
   function rowFor(id) {
-    const row=subscriptions.find(s=>s.id===id);if(!row)throw Error('订阅不存在，请刷新');return row;
+    const row=subscriptions.find(s=>s.id===id);if(!row)throw serviceError('SUBSCRIPTION_NOT_FOUND');return row;
   }
   async function save(params) {
     return exclusive(async()=>{
       const old=await config();editable();
       const next={...old,kernel:String(params.kernel??old.kernel).trim(),
         mixedPort:params.mixedPort??old.mixedPort,controllerPort:params.controllerPort??old.controllerPort};
-      if(!next.kernel||next.kernel.length>2048||/[\r\n\0]/.test(next.kernel))throw Error('请选择 mihomo 内核');
+      if(!next.kernel||next.kernel.length>2048||/[\r\n\0]/.test(next.kernel))throw serviceError('KERNEL_NOT_SELECTED');
       for(const port of [next.mixedPort,next.controllerPort])
-        if(!Number.isInteger(port)||port<1024||port>65535)throw Error('端口应为 1024–65535');
-      if(next.mixedPort===next.controllerPort)throw Error('混合代理和控制器端口应不同');
-      if(params.subscription||params.clearSubscription)throw Error('请在订阅管理中新增或删除订阅');
+        if(!Number.isInteger(port)||port<1024||port>65535)throw serviceError('PORT_RANGE_INVALID');
+      if(next.mixedPort===next.controllerPort)throw serviceError('PORT_CONFLICT');
+      if(params.subscription||params.clearSubscription)throw serviceError('SUBSCRIPTION_IMMUTABLE');
       if(params.tun!==undefined){
         const tun=params.tun||{};
-        if(typeof tun.enable!=='boolean'&&tun.enable!==undefined)throw Error('TUN 开关无效');
+        if(typeof tun.enable!=='boolean'&&tun.enable!==undefined)throw serviceError('TUN_SWITCH_INVALID');
         next.tun={enable:tun.enable===true, stack:tunStacks.includes(tun.stack)?tun.stack:(old.tun?.stack??defaultTun.stack)};
-        if(next.tun.enable&&!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+        if(next.tun.enable&&!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
       }
       next.bundled=!!defaultKernel&&next.kernel.replaceAll('\\','/').toLowerCase()===defaultKernel.replaceAll('\\','/').toLowerCase();
       await context.storage.write('config','clash.json',JSON.stringify(next));settings=next;
@@ -374,10 +376,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const name=labelValue(params.name),old=params.id?rowFor(params.id):null;
       const previous=old?await context.secrets.read('credentials',`${old.id}.json`):'';
       const url=params.url?.trim()?urlValue(params.url):previous;
-      if(!url)throw Error('请输入 HTTPS 订阅地址');
+      if(!url)throw serviceError('SUBSCRIPTION_URL_INVALID');
       for(const row of subscriptions)if(row.id!==old?.id&&await context.secrets.read('credentials',`${row.id}.json`)===url)
         return view({controller:false});
-      if(!old&&subscriptions.length>=32)throw Error('最多保存 32 个订阅');
+      if(!old&&subscriptions.length>=32)throw serviceError('SUBSCRIPTION_LIMIT');
       const id=old?.id??`sub-${randomUUID()}`;
       const row={id,name,enabled:old?.enabled??subscriptions.length===0,status:old?.status??'pending',
         lastAttempt:old?.lastAttempt??null,lastSuccess:old?.lastSuccess??null,
@@ -394,7 +396,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function subscriptionToggle({id,enabled}) {
     return exclusive(async()=>{
       await config();editable();rowFor(id);
-      if(typeof enabled!=='boolean')throw Error('订阅启用状态无效');
+      if(typeof enabled!=='boolean')throw serviceError('SUBSCRIPTION_STATE_INVALID');
       await persist(subscriptions.map(s=>s.id===id?{...s,enabled}:(enabled?{...s,enabled:false}:s)));
       return view({controller:false});
     });
@@ -430,8 +432,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function reload({id}={}) {
     return exclusive(async()=>{
       await config();
-      if(closing||operation)throw Error('内核正在切换状态，请稍后重试');
-      if(!settings.kernel)throw Error('请先配置 mihomo 内核');
+      if(closing||operation)throw serviceError('KERNEL_SWITCHING');
+      if(!settings.kernel)throw serviceError('KERNEL_NOT_SELECTED');
       const selected=id?[rowFor(id)]:subscriptions.filter(s=>s.enabled),fresh=selected.filter(s=>!jobs.has(s.id));
       await persist(subscriptions.map(s=>fresh.some(f=>f.id===s.id)?{...s,status:'updating',
         lastAttempt:new Date().toISOString(),error:'',errorCode:null}:s));
@@ -444,21 +446,21 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   }
   // TUN 服务：安装/卸载各需要一次 UAC；装好后普通权限即可开关 TUN。
   async function tunService() {
-    if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+    if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
     return runtime.tun.status();
   }
   async function installTunService() {
     return exclusive(async()=>{
-      if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+      if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
       const c=await config();editable();
-      if(!c.kernel)throw Error('请先选择 mihomo 内核');
+      if(!c.kernel)throw serviceError('KERNEL_NOT_SELECTED');
       await runtime.tun.install({kernel:c.kernel,home:context.dataDirectory});
       return view({controller:false});
     });
   }
   async function uninstallTunService() {
     return exclusive(async()=>{
-      if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+      if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
       const c=await config();editable();
       await runtime.tun.uninstall();
       const next={...c,tun:{...c.tun,enable:false}};
@@ -474,11 +476,11 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       // attach 优先于 start：插件重载后内核通常还在跑，此时再 spawn 就是第二个内核。
       await ready();
       if(alive())return view();
-      if(jobs.size)throw Error('请等待订阅更新完成');
-      if(closing)throw Error('插件正在停用');
-      if(!c.kernel)throw Error('请先选择 mihomo 内核');
+      if(jobs.size)throw serviceError('SUBSCRIPTION_UPDATING');
+      if(closing)throw serviceError('PLUGIN_STOPPING');
+      if(!c.kernel)throw serviceError('KERNEL_NOT_SELECTED');
       const enabled=subscriptions.filter(s=>s.enabled);
-      if(enabled.some(s=>!s.hasCache))throw Error('请先更新已启用订阅，获取可用缓存');
+      if(enabled.some(s=>!s.hasCache))throw serviceError('SUBSCRIPTION_NO_CACHE');
       // 走到这里说明没有可 attach 的内核；上一实例可能留下了僵尸进程占着端口，先回收。
       await reclaimRunState();
       secret=await context.secrets.read('keys','controller.key')||randomBytes(32).toString('hex');
@@ -551,25 +553,27 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   }
   async function shutdown(){closing=true;return stop()}
   async function select({group,name}) {
-    if(!alive())throw Error('内核尚未启动');const state=await view();
-    if(!state.groups.some(g=>g.name===group&&g.nodes.some(n=>n.name===name)))throw Error('代理组或节点已变化，请刷新');
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');const state=await view();
+    if(!state.groups.some(g=>g.name===group&&g.nodes.some(n=>n.name===name)))throw serviceError('NODE_STALE');
     await request(`/proxies/${encodeURIComponent(group)}`,{method:'PUT',body:{name}});
     // 出口 IP 跟着节点走：缓存还留着旧节点的结果就是「换了节点 IP 还是上一个」（#14 现象 D）。
     ipCache=null;
     return view();
   }
   async function mode({mode}) {
-    if(!alive()||!['rule','global','direct'].includes(mode))throw Error('内核状态或模式无效');
+    // 两种失败是两种用户动作，别合成一条：没启动内核该去点「启动内核」，模式值非法才该查调用方。
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
+    if(!['rule','global','direct'].includes(mode))throw serviceError('KERNEL_STATE_INVALID');
     await request('/configs',{method:'PATCH',body:{mode}});return view();
   }
   async function proxy({enabled}) {
-    if(typeof enabled!=='boolean')throw Error('系统代理状态无效');
-    if(enabled){if(!alive()||operation)throw Error('请先启动内核');await runtime.proxy.enable((await config()).mixedPort)}
+    if(typeof enabled!=='boolean')throw serviceError('PROXY_STATE_INVALID');
+    if(enabled){if(!alive()||operation)throw serviceError('KERNEL_NOT_RUNNING');await runtime.proxy.enable((await config()).mixedPort)}
     else await runtime.proxy.restore();return view();
   }
   async function details({section}) {
     if(section==='providers')return (await view({controller:false})).subscriptions;
-    if(!alive())throw Error('内核尚未启动');
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
     if(section==='rules'){
       // payload 是规则真正拦/放的域名或网段：只有 type 与 proxy 的话，页面上一行行
       // 全是「GEOSITE → 🎯 全球直连」，看不出规则在干什么。
@@ -598,7 +602,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
             start:row?.start??null};
         })};
     }
-    throw Error('详情类别无效');
+    throw serviceError('DETAIL_SECTION_INVALID');
   }
   // 出口 IP 必须经用户配置的代理口查询：直连查询在 TUN 或系统代理下会得到本机出口，
   // 与页面要展示的「当前节点看到的 IP」不一致。结果缓存 60 秒，避免反复打查询接口。
@@ -628,10 +632,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     return null;
   }
   async function siteTest() {
-    if(!alive())throw Error('内核尚未启动');
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
     const {proxies}=await request('/proxies');
     const leaf=resolveLeaf(proxies??{});
-    if(!leaf)throw Error('没有可用的代理节点，请先选择节点');
+    if(!leaf)throw serviceError('NODE_UNAVAILABLE');
     const sites=await Promise.all(siteTargets.map(async target=>{
       try{
         const result=await request(`/proxies/${encodeURIComponent(leaf)}/delay?url=${encodeURIComponent(target.url)}&timeout=5000`);
@@ -653,10 +657,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   // 并发 6：几百个节点同时打会把控制器压住，单条失败只影响它自己。
   const delayUrl='https://www.gstatic.com/generate_204';
   async function nodeTest({group:groupName}={}) {
-    if(!alive())throw Error('内核尚未启动');
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
     const state=await view();
     const target=groupName?state.groups.find(row=>row.name===groupName):state.groups[0];
-    if(!target)throw Error('没有可用的代理节点，请先选择节点');
+    if(!target)throw serviceError('NODE_UNAVAILABLE');
     const names=target.nodes.filter(node=>node.type!=='group').slice(0,200).map(node=>node.name);
     const delays=[];
     let cursor=0;
@@ -677,13 +681,13 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   // 两者写同一个控制器端口，不能并存。整段「停 → 写配置 → 按新设置起」放到后台跑，
   // RPC 立刻返回：一次 TUN 启动要等 SYSTEM 服务拉起内核，很容易超过单次 RPC 的 15 秒。
   async function tunSwitch({enable}={}) {
-    if(typeof enable!=='boolean')throw Error('TUN 开关无效');
-    if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+    if(typeof enable!=='boolean')throw serviceError('TUN_SWITCH_INVALID');
+    if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
     if(tunBusy)return view({controller:false});
     const old=await config();
     if(enable){
       const info=await runtime.tun.status();
-      if(!info.installed)throw Error('请先在设置里安装 TUN 服务');
+      if(!info.installed)throw serviceError('TUN_NOT_INSTALLED');
     }
     const wasRunning=alive();
     tunBusy=true;operationError='';

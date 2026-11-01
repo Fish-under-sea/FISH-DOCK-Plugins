@@ -7,6 +7,8 @@ import {mkdir} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {writeFile,rename,readFile} from 'node:fs/promises';
 import {createSubscriptionRuntime,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
+// 校验错误统一挂码：文案在 shared/errors.mjs 按 code 查表，页面不再做中文正则匹配。
+import {serviceError} from '../../shared/errors.mjs';
 const coded=(code,message,extra)=>{
  const error=Error(message);
  error.code=code;
@@ -55,7 +57,7 @@ export function createProxyLease({storage,adapter}){
   }catch(error){throw coded('PROXY_REGISTRY_WRITE_FAILED','恢复系统代理失败，请检查注册表写入权限',error)}
  }
  async function enable(port){
-  if(!Number.isInteger(port)||port<1024||port>65535)throw Error('代理端口无效');
+  if(!Number.isInteger(port)||port<1024||port>65535)throw serviceError('PROXY_PORT_INVALID');
   if(active)return;
   // 记录无效等价于「没有可恢复的租约」，不该拦住接管。
   try{await restore()}catch(error){if(error?.code!=='PROXY_RESTORE_RECORD_INVALID')throw error}
@@ -166,7 +168,7 @@ export async function ensureGeoData(home,{bundleDir,fetch:fetcher=globalThis.fet
         if(!response.ok||!response.body){await response.body?.cancel().catch(()=>{});continue}
         const reader=response.body.getReader();const chunks=[];let size=0;
         try{for(;;){signal?.throwIfAborted();const{done,value}=await reader.read();if(done)break;
-          if((size+=value.byteLength)>32*1024*1024)throw Error('geo 数据超过限制');chunks.push(value)}}
+          if((size+=value.byteLength)>32*1024*1024)throw serviceError('GEO_DATA_TOO_LARGE');chunks.push(value)}}
         finally{await reader.cancel().catch(()=>{})}
         if(!size)continue;
         const target=join(home,name),candidate=`${target}.download-${process.pid}`;
@@ -211,16 +213,16 @@ export function createRuntime(context){
 
   // TUN 交给已安装的 SYSTEM 服务托管：本进程不再 spawn 内核，只写 job.ini。
   if(c.tun?.enable){
-   if(!tun){const error=Error('当前环境不支持 TUN 服务模式');error.code='TUN_UNAVAILABLE';throw error}
+   if(!tun)throw serviceError('TUN_UNSUPPORTED')
    const info=await tun.status();
-   if(!info.installed){const error=Error('开启 TUN 前请先在设置里安装 TUN 服务');error.code='TUN_SERVICE_MISSING';throw error}
+   if(!info.installed)throw serviceError('TUN_NOT_INSTALLED')
    if(info.kernel&&info.kernel.toLowerCase()!==c.kernel.toLowerCase()){
     const error=Error('已安装的 TUN 服务绑定了另一个内核，请重新安装服务');error.code='TUN_KERNEL_MISMATCH';throw error}
    viaService=true;
    try{
     const applied=await tun.enable({config:runtimePath,home:context.dataDirectory});
-    if(!applied)throw Error('TUN 服务未确认启动，请查看服务日志');
-    if(!(await waitController(c,15000)))throw Error('TUN 内核未在时限内就绪，请检查服务日志与端口');
+    if(!applied)throw serviceError('TUN_START_UNCONFIRMED');
+    if(!(await waitController(c,15000)))throw serviceError('TUN_READY_TIMEOUT');
     return {alive:()=>viaService,pid:null,mode:'service',stop:async()=>{await tun.disable().catch(()=>{});viaService=false}};
    }catch(error){viaService=false;throw error}
   }
