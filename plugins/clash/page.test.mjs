@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+// 页面里的文案表与 shared/errors.mjs 同源：这里逐码比对，防止两份表漂移。
+import {errorMessages} from '../../shared/errors.mjs';
 const flush=()=>new Promise(r=>setImmediate(r));
+const alertsOf=html=>[...html.matchAll(/role="alert">([^<]*)</g)].map(m=>m[1]);
 // Minimal DOM adapter for testing actual page event handlers; visual/WebView QA remains separate.
 function fixture(prepare) {
- const calls=[],timers=new Map();let serial=0,html='',elements={},buttons=[],cards=[],blocked=null,fail=false,ipReply=null,nodeTestReply=null;
+ const calls=[],timers=new Map();let serial=0,html='',elements={},buttons=[],cards=[],blocked=null,fail=false,ipReply=null,nodeTestReply=null,thrown=null;
  const row={kernel:'D:/mihomo.exe',mixedPort:7895,controllerPort:9099,configured:true,running:false,
   version:'v1.19.0',rulesCount:11,uptimeMs:3723000,os:'Windows 10.0.26200',
   arch:'x64',cpu:'Synthetic CPU · 16 核',memoryTotal:64*1024**3,pluginVersion:'2.0.3',bundled:true,
@@ -44,6 +47,8 @@ function fixture(prepare) {
   setTimeout:fn=>{timers.set(++serial,fn);return serial},clearTimeout:id=>timers.delete(id),
   FishDock:{setLayout(){},call:async(method,params)=>{
    calls.push({method,params});
+   // 指定方法按需抛带 code 的错误，用来验证「按 code 查表」而不是猜中文原文。
+   if(thrown&&thrown.method===method){const error=thrown.error;thrown=null;throw error}
    if(method==='clash.subscriptionSave'){await blocked;if(fail)throw Error('PRIVATE');}
    if(method==='clash.ipInfo')return ipReply??{available:true,ip:'203.0.113.7',country:'日本',countryCode:'JP',
     asn:'AS2516',isp:'KDDI',org:'KDDI Corporation',location:'日本 · 东京 · 千代田',timezone:'Asia/Tokyo'};
@@ -75,6 +80,7 @@ function fixture(prepare) {
   cardClick:id=>{const card=cards.find(c=>c.dataset.sub===id);assert.ok(card,`订阅卡 ${id}`);return card.onclick({target:{closest:()=>null}})},
   setIpReply:value=>{ipReply=value},
   setNodeTest:value=>{nodeTestReply=value},
+  throwOn:(method,error)=>{thrown={method,error}},
   block:()=>{let release;blocked=new Promise(r=>release=r);return release},fail:()=>{fail=true}};
 }
 test('sandbox 页面点击保存订阅直接调用 RPC，并读取实时输入而非依赖 oninput',async()=>{
@@ -416,4 +422,72 @@ test('出口 IP 不可用时按普通提示显示，不用红色告警',async()=
  const alerts=[...html.matchAll(/role="alert">([^<]*)</g)].map(m=>m[1]);
  assert.equal(alerts.some(text=>text.includes('不支持')),false,'不作为告警渲染');
  assert.ok(html.includes('重试'),'给重试入口');
+});
+// ── 错误码体系统一（#13-1 / #14-4）──
+// 页面按 code 查固定文案；原生码与上位码各有专属文案；兜底只剩「未识别错误」。
+test('shared/errors.mjs 的错误码表覆盖约定三类码，且每条文案互不相同',()=>{
+ for(const code of ['KERNEL_ATTACH_FAILED','KERNEL_STOP_UNCONFIRMED','PROXY_RESTORE_RECORD_INVALID',
+  'PROXY_REGISTRY_READ_FAILED','PROXY_REGISTRY_WRITE_FAILED','CONTROLLER_UNREACHABLE','CONTROLLER_TIMEOUT',
+  'SUBSCRIPTION_CORRUPT','PORT_IN_USE','PORT_BIND_DENIED','FILE_BUSY','PERMISSION_DENIED','RUNTIME_COPY_FAILED',
+  'GATEWAY_ERROR','UNKNOWN_ERROR','EADDRINUSE','EACCES','EPERM','EBUSY'])
+  assert.equal(typeof errorMessages[code],'string',`缺少错误码 ${code}`);
+ assert.equal(errorMessages.UNKNOWN_ERROR,'未识别错误，请重试；若反复出现，请打开插件日志查看原始错误码','兜底单独成条');
+ const texts=Object.values(errorMessages);
+ assert.equal(new Set(texts).size,texts.length,'每条码有专属文案，不重复定义');
+ assert.notEqual(errorMessages.EADDRINUSE,errorMessages.PORT_IN_USE,'原生码不与上位码共用文案');
+ assert.notEqual(errorMessages.PORT_BIND_DENIED,errorMessages.PORT_IN_USE,'端口类三种码彼此不同');
+});
+// 逐码跑一遍页面：页面里的文案表必须与 shared/errors.mjs 完全一致，也不得透出原始 message。
+test('页面按错误码展示各自专属文案（含原生码），原始 message 不透出',async()=>{
+ for(const [code,text] of Object.entries(errorMessages)){
+  const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+  const error=new Error('backend said: PRIVATE');error.code=code;
+  f.throwOn('clash.proxy',error);
+  f.click('proxy');await flush();
+  assert.ok(alertsOf(f.root.innerHTML).includes(`系统代理失败：${text}`),`${code} 应显示专属文案`);
+  assert.equal(f.root.innerHTML.includes('PRIVATE'),false,`${code} 不得透出原始 message`);
+ }
+});
+test('未知错误码与无码异常一律折叠成「未识别错误」，不回显原文也不漏栈',async()=>{
+ const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+ const error=new Error('PRIVATE https://example.test/?token=PRIVATE');error.code='NOT_A_REAL_CODE';
+ f.throwOn('clash.proxy',error);f.click('proxy');await flush();
+ assert.ok(alertsOf(f.root.innerHTML).includes(`系统代理失败：${errorMessages.UNKNOWN_ERROR}`),'落到唯一条兜底');
+ assert.equal(f.root.innerHTML.includes('PRIVATE'),false,'不透出原文');
+ assert.equal(/at .*\.js:\d+/.test(f.root.innerHTML),false,'不漏栈');
+});
+test('系统代理失败显示注册表类专属文案，不再是「请检查配置和运行状态后重试」',async()=>{
+ const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+ const error=new Error('registry write failed at HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings');
+ error.code='PROXY_REGISTRY_WRITE_FAILED';
+ f.throwOn('clash.proxy',error);f.click('proxy');await flush();
+ const html=f.root.innerHTML;
+ assert.ok(html.includes(`系统代理失败：${errorMessages.PROXY_REGISTRY_WRITE_FAILED}`),'专属文案带下一步');
+ assert.equal(html.includes('请检查配置和运行状态后重试'),false,'旧兜底文案已移除');
+ assert.equal(html.includes('HKCU'),false,'不透出注册表原文');
+});
+test('宿主把插件错误折叠成固定常量时，页面仍给出可执行的下一步',async()=>{
+ const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+ // plugin_protocol.rs 的 OPERATION_ERROR：所有插件错误的 message 都被宿主替换成这一句。
+ f.throwOn('clash.proxy',Error('插件操作未完成，请检查配置后重试'));
+ f.click('proxy');await flush();
+ assert.ok(alertsOf(f.root.innerHTML).includes(
+  '系统代理失败：操作未完成：插件进程可能已重启，请刷新后重试；仍失败请打开插件日志查看原因'),'折叠常量有专属下一步');
+ assert.equal(f.root.innerHTML.includes('请检查配置和运行状态后重试'),false,'旧兜底文案已移除');
+});
+test('原始 message 恰好是原型键名时也不当成文案，仍落到「未识别错误」',async()=>{
+ for(const message of ['toString','constructor']){
+  const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+  f.throwOn('clash.proxy',Error(message));
+  f.click('proxy');await flush();
+  assert.ok(alertsOf(f.root.innerHTML).includes(`系统代理失败：${errorMessages.UNKNOWN_ERROR}`),`${message} 落到兜底`);
+ }
+});
+test('IP 查询与测速失败同样按码呈现，无码异常退到「未识别错误」',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ const coded=new Error('controller said nothing');coded.code='CONTROLLER_TIMEOUT';
+ f.throwOn('clash.ipInfo',coded);
+ f.click('view');await flush();await flush();
+ assert.ok(f.root.innerHTML.includes(`查询出口 IP 失败：${errorMessages.CONTROLLER_TIMEOUT}`),'IP 失败按码展示');
+ assert.equal(f.root.innerHTML.includes('controller said nothing'),false,'不透出原文');
 });
