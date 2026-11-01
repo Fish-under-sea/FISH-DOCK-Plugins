@@ -7,15 +7,65 @@ import {mkdir} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {writeFile,rename,readFile} from 'node:fs/promises';
 import {createSubscriptionRuntime,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
+const coded=(code,message,extra)=>{
+ const error=Error(message);
+ error.code=code;
+ if(extra)Object.assign(error,{cause:extra});
+ return error;
+};
+const processAlive=pid=>{try{process.kill(pid,0);return true}catch{return false}};
+// 结束一个不属于本实例的进程：先 SIGTERM，等不到退出再 SIGKILL。
+// 返回 false 表示「杀不掉」——调用方据此报 KERNEL_STOP_UNCONFIRMED，而不是假装成功。
+export async function killProcess(pid,{timeoutMs=2000,step=80}={}){
+ if(!Number.isInteger(pid)||pid<=0)return true;
+ const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ if(!processAlive(pid))return true;
+ try{process.kill(pid,'SIGTERM')}catch{}
+ const deadline=Date.now()+timeoutMs;
+ while(Date.now()<deadline){await wait(step);if(!processAlive(pid))return true}
+ try{process.kill(pid,'SIGKILL')}catch{}
+ for(let i=0;i<5;i++){await wait(step);if(!processAlive(pid))return true}
+ return !processAlive(pid);
+}
+export {processAlive};
 export function createProxyLease({storage,adapter}){
  let active=false;
  const same=(a,b)=>['ProxyEnable','ProxyServer','ProxyOverride'].every(k=>a[k]===b[k]);
- async function restore(){const raw=await storage.read('config','system-proxy.json');if(!raw){active=false;return}const record=JSON.parse(raw);if(record.schema!==1||!record.previous||!record.owned)throw Error('系统代理恢复记录无效');if(same(await adapter.read(),record.owned))await adapter.write(record.previous);await storage.write('config','system-proxy.json','');active=false}
+ async function discard(){try{await storage.write('config','system-proxy.json','')}catch{/* 丢不掉也不影响停止 */}active=false}
+ // 「记录对不上」不是致命错误：别的程序（TUN、其他代理）可能改过注册表。
+ // 这类情况丢租约 + 带 code 返回，由上层降级成警告，别再让每次 stop 都失败。
+ async function restore() {
+  let raw;
+  try{raw=await storage.read('config','system-proxy.json')}
+  catch(error){throw coded('PROXY_REGISTRY_READ_FAILED','读取系统代理恢复记录失败',error)}
+  if(!raw){active=false;return}
+  let record=null;
+  try{record=JSON.parse(raw)}catch{/* 坏 JSON 与坏结构同样处理 */}
+  if(!record||record.schema!==1||!record.previous||!record.owned){
+   await discard();
+   throw coded('PROXY_RESTORE_RECORD_INVALID','系统代理恢复记录无效，已丢弃');
+  }
+  let current;
+  try{current=await adapter.read()}
+  catch(error){throw coded('PROXY_REGISTRY_READ_FAILED','读取当前系统代理设置失败',error)}
+  try{
+   if(same(current,record.owned))await adapter.write(record.previous);
+   await storage.write('config','system-proxy.json','');
+   active=false;
+  }catch(error){throw coded('PROXY_REGISTRY_WRITE_FAILED','恢复系统代理失败，请检查注册表写入权限',error)}
+ }
  async function enable(port){
   if(!Number.isInteger(port)||port<1024||port>65535)throw Error('代理端口无效');
-  if(active)return;await restore();const previous=await adapter.read();const owned={ProxyEnable:1,ProxyServer:`127.0.0.1:${port}`,ProxyOverride:'<local>'};
+  if(active)return;
+  // 记录无效等价于「没有可恢复的租约」，不该拦住接管。
+  try{await restore()}catch(error){if(error?.code!=='PROXY_RESTORE_RECORD_INVALID')throw error}
+  let previous;
+  try{previous=await adapter.read()}
+  catch(error){throw coded('PROXY_REGISTRY_READ_FAILED','读取当前系统代理设置失败',error)}
+  const owned={ProxyEnable:1,ProxyServer:`127.0.0.1:${port}`,ProxyOverride:'<local>'};
   await storage.write('config','system-proxy.json',JSON.stringify({schema:1,previous,owned}));
-  try{await adapter.write(owned);active=true}catch(error){await restore();throw error}
+  try{await adapter.write(owned);active=true}
+  catch(error){await restore().catch(()=>{});throw coded('PROXY_REGISTRY_WRITE_FAILED','开启系统代理失败，请检查注册表写入权限',error)}
  }
  return {enable,restore,active:()=>active};
 }
@@ -171,7 +221,7 @@ export function createRuntime(context){
     const applied=await tun.enable({config:runtimePath,home:context.dataDirectory});
     if(!applied)throw Error('TUN 服务未确认启动，请查看服务日志');
     if(!(await waitController(c,15000)))throw Error('TUN 内核未在时限内就绪，请检查服务日志与端口');
-    return {alive:()=>viaService,stop:async()=>{await tun.disable().catch(()=>{});viaService=false}};
+    return {alive:()=>viaService,pid:null,mode:'service',stop:async()=>{await tun.disable().catch(()=>{});viaService=false}};
    }catch(error){viaService=false;throw error}
   }
 
@@ -192,10 +242,12 @@ export function createRuntime(context){
   })()}
   try{
    if(!(await waitController(c)))throw failure||Error('内核未在时限内就绪，请检查订阅与端口');
-   child.once('exit',()=>{void proxy.restore().catch(()=>{})});return {alive,stop};
+   child.once('exit',()=>{void proxy.restore().catch(()=>{})});return {alive,stop,pid:child.pid,mode:'process'};
   }catch(error){await stop();throw error}
  }
  return {start,proxy,tun,proxiedGet,
+  // 插件重载后留下的内核不由本实例 spawn，只能按 pid 结束；processAlive 供 attach 判活。
+  kill:killProcess,processAlive,
   // 停止时若内核由 TUN 服务托管，一并让服务停下，避免遗留提升权限的内核。
   tunStop:async()=>{if(viaService&&tun){await tun.disable().catch(()=>{});viaService=false}},
   ...createSubscriptionRuntime(context)};

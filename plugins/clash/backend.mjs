@@ -16,7 +16,10 @@ createPlugin({id:'fish.clash',activate:async context=>{
  // 内置 geo 数据随插件分发，位于插件自己的 service 目录（与 tun-service.exe 同级）。
  const geoDir=fileURLToPath(new URL('./service',import.meta.url));
  const runtime=createRuntime({...context,tun:createTun({context,programData}),geoDir});
- await runtime.proxy.restore();
+ // 系统代理恢复记录被其他程序改过（TUN、别的代理）属于可降级状况：带上 code 记一条，
+ // 但不能让 activate 抛出去——插件进程起不来，标签页就跟着消失（#14 现象 C/E）。
+ try{await runtime.proxy.restore()}
+ catch(error){console.error('[clash] 系统代理恢复失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
  const kernel=fileURLToPath(new URL('../../service/mihomo.exe',import.meta.url));
  service=createClash({context,runtime,pluginVersion:await pluginVersion(),defaultKernel:(await stat(kernel).catch(()=>null))?.isFile()?kernel:''});
  await service.view();
