@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {setTimeout as delay} from 'node:timers/promises';
 import {randomBytes} from 'node:crypto';
 import {embedProxy,freePort} from './embed-proxy.mjs';
 import {available,startChild} from '../../shared/child.mjs';
@@ -10,6 +11,58 @@ import {gatewayAddr,gatewayHost,gatewayPortCandidates,readMagpiePrefs} from './n
 import {registerSeedPage,syncPageDirectory} from './page-seed.mjs';
 import {preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
 import {serviceError} from '../../shared/errors.mjs';
+
+// 只有「换个时机就可能成功」的失败值得重试：端口被短暂占住、复制被文件占用、
+// 子进程刚起来就退出。路径错误、资料损坏、副本校验失败，再试也不会变。
+const TRANSIENT_CODES=new Set(['PORT_IN_USE','PORT_BIND_DENIED','FILE_BUSY','PERMISSION_DENIED',
+ 'RUNTIME_COPY_FAILED','GATEWAY_ERROR','UNKNOWN_ERROR','SPAWN_FAILED','EARLY_EXIT','READY_TIMEOUT']);
+export function isRetryableFailure(code){return code==null||TRANSIENT_CODES.has(code)}
+
+// 适配层已经出过的码原样放行；别的一律是原生码（Windows 上 spawn 会同步抛 UNKNOWN），
+// 换成 SPAWN_FAILED 的文案，原生 code 挂 cause 留给失败日志。
+const ADAPTER_CODES=new Set(['PORT_IN_USE','PORT_BIND_DENIED','FILE_BUSY','PERMISSION_DENIED',
+ 'RUNTIME_COPY_FAILED','GATEWAY_ERROR','UNKNOWN_ERROR','EXECUTABLE_MISSING','EXECUTABLE_INVALID',
+ 'DATA_UNWRITABLE','DATA_MIGRATION_FAILED','RUNTIME_PREPARE_FAILED','RUNTIME_INTEGRITY',
+ 'SETTINGS_INVALID','SPAWN_FAILED','EARLY_EXIT','READY_TIMEOUT','INVALID_READY_URL','STOP_FAILED']);
+function spawnFailure(error){
+ if(error?.name==='AbortError'||ADAPTER_CODES.has(error?.code))return error;
+ const failure=serviceError('SPAWN_FAILED');failure.cause=error;return failure;
+}
+
+// 老配置会把插件包内的绝对路径写进 gateway.json；包升级后该目录消失，需改指当前包。
+// 只认宿主 packages/fish.magpie/<版本>/<摘要>/ 这一种布局，用户自选路径不动。
+export function packagedExecutablePath(executable){
+ return typeof executable==='string'&&/\/packages\/fish\.magpie\/[^/]+\//i.test(executable.replaceAll('\\','/'));
+}
+
+// 失败落盘：插件数据目录下 gateway-error.log 追加一行，含原始 code、阶段、端口、时间。
+// 只有落盘的文件才熬得过插件进程重启，内存里的 gateway.error 不行。写日志本身失败
+// 不能盖掉原错误，所以这里的 IO 异常全部吞掉。
+export async function recordGatewayError(root,{error,phase,port}={}){
+ if(typeof root!=='string'||!path.isAbsolute(root))return '';
+ const entry={time:new Date().toISOString(),
+  code:typeof error?.code==='string'?error.code:'UNKNOWN_ERROR',
+  nativeCode:typeof error?.cause?.code==='string'?error.cause.code:null,
+  phase:typeof phase==='string'?phase:null,
+  port:Number.isInteger(port)?port:null,
+  message:String(error?.message??'').slice(0,300)};
+ const line=`${JSON.stringify(entry)}\n`;
+ try{await fs.mkdir(root,{recursive:true});await fs.appendFile(path.join(root,'gateway-error.log'),line)}catch{}
+ return line;
+}
+
+// gateway 停在 error 时按递增间隔重试；用户停止或已恢复就停手，用尽后定住并保留原因。
+export async function startWithBackoff(service,{attempts=3,delays=[600,1500],shouldRetry=()=>true}={}){
+ let view=await service.start();
+ for(let attempt=0;view?.state==='error'&&attempt<attempts-1;attempt++){
+  if(!shouldRetry(view,attempt))break;
+  await delay(delays[Math.min(attempt,delays.length-1)]||0);
+  const current=service.view();
+  if(current?.state!=='error'){view=current;break}
+  view=await service.start();
+ }
+ return view;
+}
 
 // lanGatewayPort 挑一个共享时能长期不变的端口：按保存端口、Magpie 端口、默认
 // 端口依次试，每个再试紧跟的两个；设过的那一个被占也不至于整台机器没法共享。
@@ -26,53 +79,73 @@ async function lanGatewayPort({configured,prefs,port,upstreamPort}){
 }
 export function createRuntime(context){
  return {async start({executable,port,gatewayPort,signal,onPhase=()=>{}}){
-  signal?.throwIfAborted();
-  if(!path.isAbsolute(context.dataDirectory))throw Error('缺少插件数据目录');
-  const root=context.dataDirectory,credentials=path.join(root,'credentials'),cache=path.join(root,'tmp');
-  try{await fs.mkdir(credentials,{recursive:true});await fs.mkdir(cache,{recursive:true})}catch{throw serviceError('DATA_UNWRITABLE')}
-  // 上游便携模式优先于 XDG。插件只运行不附带便携目录的已验证副本。
-  for(const name of ['data','.portable']){try{await fs.stat(path.join(path.dirname(executable),name));throw Error('服务旁存在便携数据，请使用独立服务副本')}catch(error){if(error.code!=='ENOENT')throw error}}
-  let stat;try{stat=await fs.stat(executable)}catch(error){if(error.code==='ENOENT')throw serviceError('EXECUTABLE_MISSING');throw error}
-  if(!stat.isFile())throw serviceError('EXECUTABLE_INVALID');
-  let key=await context.secrets.read('keys','web-key');
-  if(!key){key=randomBytes(32).toString('hex');await context.secrets.write('keys','web-key',key)}
-  await available(port);
-  const url=`http://127.0.0.1:${port}/?k=${encodeURIComponent(key)}`;
-  let upstreamPort;do{upstreamPort=await freePort()}while(upstreamPort===port);
-  const upstreamUrl=`http://127.0.0.1:${upstreamPort}/?k=${encodeURIComponent(key)}`;
-  // web --addr 仅设置管理页；模型网关需独立地址。
-  const portable=await preparePortableRuntime(executable,credentials,{signal,onPhase});
-  // 共享时绑全网卡：MAGPIE_ADDR 一旦钉住回环，Magpie 自己不会放开绑定，局域网
-  // 共享开关就不生效（internal/gateway/lan.go 的 pinnedHost / LANURLs）。
-  const prefs=await readMagpiePrefs(portable.data);
-  let listeningPort;
-  if(prefs.lan)listeningPort=await lanGatewayPort({configured:gatewayPort,prefs,port,upstreamPort});
-  else do{listeningPort=await freePort()}while(listeningPort===port||listeningPort===upstreamPort);
-  if(!listeningPort)throw serviceError('PORT_IN_USE');
-  const gateway=gatewayAddr(gatewayHost(prefs.lan),listeningPort);
-  // 出厂预置的页面插件随 Dock 内置在 page-plugins/ 下。启动前逐个同步到
-  // <data>/plugins/<name>，并让 plugins.json 只用这个稳定路径引用：升级之后路径
-  // 不变，页面才跟着换版本；旧包目录被清理也不会 404。
-  // 没有内置目录（普通 magpie）时不碰清单，仍由原生按包名装 npm 上的同名包。
-  const bundledPages=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins');
+  // 阶段名只用于失败记录与页面进度，内部记住最后一个是哪一段。
+  let phase=null;const track=value=>{phase=value;onPhase(value)};
   try{
-   for(const name of ['page-checkin','page-relay-probe']){
-    const seeded=await syncPageDirectory({source:path.join(bundledPages,name),data:portable.data,name,onPhase,signal});
-    if(seeded)await registerSeedPage({data:portable.data,name,directory:seeded.directory,onPhase,signal});
+   signal?.throwIfAborted();
+   if(!path.isAbsolute(context.dataDirectory))throw Error('缺少插件数据目录');
+   const root=context.dataDirectory,credentials=path.join(root,'credentials'),cache=path.join(root,'tmp');
+   try{await fs.mkdir(credentials,{recursive:true});await fs.mkdir(cache,{recursive:true})}catch{throw serviceError('DATA_UNWRITABLE')}
+   // 上游便携模式优先于 XDG。插件只运行不附带便携目录的已验证副本。
+   for(const name of ['data','.portable']){try{await fs.stat(path.join(path.dirname(executable),name));throw Error('服务旁存在便携数据，请使用独立服务副本')}catch(error){if(error.code!=='ENOENT')throw error}}
+   let stat;try{stat=await fs.stat(executable)}catch(error){if(error.code==='ENOENT')throw serviceError('EXECUTABLE_MISSING');throw error}
+   if(!stat.isFile())throw serviceError('EXECUTABLE_INVALID');
+   let key=await context.secrets.read('keys','web-key');
+   if(!key){key=randomBytes(32).toString('hex');await context.secrets.write('keys','web-key',key)}
+   const url=`http://127.0.0.1:${port}/?k=${encodeURIComponent(key)}`;
+   let upstreamPort;do{upstreamPort=await freePort()}while(upstreamPort===port);
+   const upstreamUrl=`http://127.0.0.1:${upstreamPort}/?k=${encodeURIComponent(key)}`;
+   // 端口先占后拉：代理在复制运行时之前就绑住服务端口（冲突转 PORT_IN_USE，短重试）。
+   // 之后几十秒的复制、页面同步、就绪等待期间端口一直在手，别的实例抢不走，也就
+   // 不会出现「magpie 已经拉起来，最后一步绑端口失败再被回滚」。
+   const proxy=await embedProxy({port,upstreamPort});
+   let portable,child;
+   try{
+    signal?.throwIfAborted();
+    // web --addr 仅设置管理页；模型网关需独立地址。
+    portable=await preparePortableRuntime(executable,credentials,{signal,onPhase:track});
+    // 共享时绑全网卡：MAGPIE_ADDR 一旦钉住回环，Magpie 自己不会放开绑定，局域网
+    // 共享开关就不生效（internal/gateway/lan.go 的 pinnedHost / LANURLs）。
+    const prefs=await readMagpiePrefs(portable.data);
+    let listeningPort;
+    if(prefs.lan)listeningPort=await lanGatewayPort({configured:gatewayPort,prefs,port,upstreamPort});
+    else do{listeningPort=await freePort()}while(listeningPort===port||listeningPort===upstreamPort);
+    if(!listeningPort)throw serviceError('PORT_IN_USE');
+    const gateway=gatewayAddr(gatewayHost(prefs.lan),listeningPort);
+    // 出厂预置的页面插件随 Dock 内置在 page-plugins/ 下。启动前逐个同步到
+    // <data>/plugins/<name>，并让 plugins.json 只用这个稳定路径引用：升级之后路径
+    // 不变，页面才跟着换版本；旧包目录被清理也不会 404。
+    // 没有内置目录（普通 magpie）时不碰清单，仍由原生按包名装 npm 上的同名包。
+    const bundledPages=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins');
+    try{
+     for(const name of ['page-checkin','page-relay-probe']){
+      const seeded=await syncPageDirectory({source:path.join(bundledPages,name),data:portable.data,name,onPhase:track,signal});
+      if(seeded)await registerSeedPage({data:portable.data,name,directory:seeded.directory,onPhase:track,signal});
+     }
+    }catch(error){if(error.name==='AbortError')throw error;throw serviceError('DATA_MIGRATION_FAILED')}
+    // 出厂预装的社区供应商插件只登记包名（preinstall.mjs）：首次启动由 magpie 自己
+    // 的更新循环按 spec 装进 <data>/plugins。登记失败不拦启动——它是锦上添花，写不
+    // 进去就下次再试，用户的服务照常起来。
+    if(preinstallEnabled())try{await seedPreinstalled({data:portable.data,onPhase:track,signal})}catch(error){if(error.name==='AbortError')throw error}
+    track('start-process');
+    try{
+     child=await startChild({executable:portable.executable,args:['web','--addr',`127.0.0.1:${upstreamPort}`,'--no-open'],cwd:root,signal,
+      env:{...magpieEnvironment({cache,key}),MAGPIE_ADDR:gateway},
+      ready:output=>output.includes(`magpie web on http://127.0.0.1:${upstreamPort}/`),
+      probe:async()=>{try{const response=await fetch(upstreamUrl,{redirect:'manual',signal:AbortSignal.timeout(1500)});return response.status===303&&response.headers.get('location')==='/'&&response.headers.has('set-cookie')}catch{return false}}
+     });
+    }catch(error){throw spawnFailure(error)}
+    signal?.throwIfAborted();
+   }catch(error){
+    // 启动失败要把已占住的端口和已拉起的子进程一起还回去，不留半套。
+    try{await proxy.stop()}catch{}
+    if(child)try{await child.stop()}catch{}
+    throw error;
    }
-  }catch(error){if(error.name==='AbortError')throw error;throw serviceError('DATA_MIGRATION_FAILED')}
-  // 出厂预装的社区供应商插件只登记包名（preinstall.mjs）：首次启动由 magpie 自己
-  // 的更新循环按 spec 装进 <data>/plugins。登记失败不拦启动——它是锦上添花，写不
-  // 进去就下次再试，用户的服务照常起来。
-  if(preinstallEnabled())try{await seedPreinstalled({data:portable.data,onPhase,signal})}catch(error){if(error.name==='AbortError')throw error}
-  onPhase('start-process');
-  const child=await startChild({executable:portable.executable,args:['web','--addr',`127.0.0.1:${upstreamPort}`,'--no-open'],cwd:root,signal,
-   env:{...magpieEnvironment({cache,key}),MAGPIE_ADDR:gateway},
-   ready:output=>output.includes(`magpie web on http://127.0.0.1:${upstreamPort}/`),
-   probe:async()=>{try{const response=await fetch(upstreamUrl,{redirect:'manual',signal:AbortSignal.timeout(1500)});return response.status===303&&response.headers.get('location')==='/'&&response.headers.has('set-cookie')}catch{return false}}
-  });
-  let proxy;
-  try{signal?.throwIfAborted();proxy=await embedProxy({port,upstreamPort});signal?.throwIfAborted()}catch(error){try{await proxy?.stop()}finally{await child.stop()}throw error}
-  return {alive:child.alive,url,runtime:{executable:portable.executable,sha256:portable.sha256},async stop(){try{await proxy.stop()}finally{await child.stop()}}};
+   return {alive:child.alive,url,runtime:{executable:portable.executable,sha256:portable.sha256},async stop(){try{await proxy.stop()}finally{await child.stop()}}};
+  }catch(error){
+   if(error?.name!=='AbortError')await recordGatewayError(context.dataDirectory,{error,phase,port});
+   throw error;
+  }
  }};
 }

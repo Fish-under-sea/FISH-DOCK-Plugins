@@ -1,5 +1,33 @@
 import http from 'node:http';
+import {setTimeout as delay} from 'node:timers/promises';
 import {managedUpdates,managedUpdateScript} from './managed-update.mjs';
+import {serviceError} from '../../shared/errors.mjs';
+// 原生 code 一律转成适配层错误码：文案与 shared/child.mjs 的 available() 同源，
+// 原生错误挂在 cause 上留证，不让 EADDRINUSE 之类漏成兜底话术。
+export function portBindError(error){
+ const native=error?.code;
+ const mapped=native==='EADDRINUSE'?'PORT_IN_USE':native==='EACCES'||native==='EPERM'?'PORT_BIND_DENIED':'UNKNOWN_ERROR';
+ const failure=serviceError(mapped);failure.cause=error;return failure;
+}
+function listenOnce(server,port){
+ return new Promise((resolve,reject)=>{
+  const settle=()=>{server.off('error',onError);server.off('listening',onListening)};
+  const onError=error=>{settle();reject(error)};
+  const onListening=()=>{settle();resolve()};
+  server.once('error',onError);server.once('listening',onListening);server.listen(port,'127.0.0.1');
+ });
+}
+// 只对「端口正被别人短暂占住」做短间隔重试：释放了就绑上，没释放仍按端口冲突报出。
+async function bind(server,port,retries=2,delays=[120,240]){
+ for(let attempt=0;;attempt++){
+  try{await listenOnce(server,port);return}
+  catch(error){
+   const failure=portBindError(error);
+   if(failure.code!=='PORT_IN_USE'||attempt>=retries)throw failure;
+   await delay(delays[Math.min(attempt,delays.length-1)]||0);
+  }
+ }
+}
 // 只扩展 token 页面已知的祖先策略，其余沙箱限制原样保留。
 export function pluginPagePolicy(requestPath,policy){
  if(!/^\/_magpie\/plugin\/[a-f0-9]{32}\//.test(requestPath)||typeof policy!=='string')return policy;
@@ -7,7 +35,7 @@ export function pluginPagePolicy(requestPath,policy){
   "$1$2'self' http://tauri.localhost$3");
 }
 // 仅适配插件持有的回环服务，模型流不缓存、不重试。
-export async function embedProxy({port,upstreamPort}){
+export async function embedProxy({port,upstreamPort,retries=2,delays=[120,240]}){
  const sockets=new Set();
  const cookie=value=>value.replace(/;\s*(?:SameSite=[^;]*|Secure|Partitioned)(?=;|$)/gi,'')+'; SameSite=None; Secure; Partitioned';
  const server=http.createServer(async(req,res)=>{
@@ -51,7 +79,7 @@ export async function embedProxy({port,upstreamPort}){
   upstream.on('upgrade',(reply,peer,extra)=>{sockets.add(peer);peer.on('close',()=>sockets.delete(peer));socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(reply.headers).map(([k,v])=>`${k}: ${v}`).join('\r\n')}\r\n\r\n`);if(extra.length)socket.write(extra);if(head.length)peer.write(head);socket.pipe(peer).pipe(socket);peer.on('error',()=>socket.destroy());socket.on('error',()=>peer.destroy());socket.on('close',()=>peer.destroy())});
   upstream.on('response',()=>socket.destroy());upstream.on('error',()=>socket.destroy());upstream.end();
  });
- await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve)});
+ await bind(server,port,retries,delays);
  return {async stop(){for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve))}};
 }
 export async function freePort(){const server=http.createServer();await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});const port=server.address().port;await new Promise(resolve=>server.close(resolve));return port}
