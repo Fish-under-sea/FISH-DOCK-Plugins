@@ -1,6 +1,38 @@
-import {randomBytes, randomUUID} from 'node:crypto';
+import {createHash,randomBytes, randomUUID} from 'node:crypto';
 import os from 'node:os';
 import {publicUpdateError,updateMessages} from './subscriptions.mjs';
+// 校验错误统一挂码：文案在 shared/errors.mjs 按 code 查表，页面不再做中文正则匹配。
+import {serviceError} from '../../shared/errors.mjs';
+
+// 统一错误码：这些 code 由适配层产生，页面按 code 显示专属文案（#13/#14 共用一套）。
+// 只在这里声明消息，不把 code 拼进字符串，避免页面只能做字符串匹配。
+const coded=(code,message,extra)=>{
+  const error=Error(message);
+  error.code=code;
+  if(extra)Object.assign(error,extra);
+  return error;
+};
+// 内核运行态落盘文件：插件进程重启后靠它认出「内核还在跑」。
+const RUN_STATE_FILE='run-state.json';
+const secretFingerprint=value=>createHash('sha256').update(String(value)).digest('hex').slice(0,16);
+const isPort=value=>Number.isInteger(value)&&value>=1024&&value<=65535;
+const defaultPidAlive=pid=>{
+  try{process.kill(pid,0);return true}catch{return false}
+};
+// 落盘记录必须自证完整才可信：字段不全就当作「没有残留内核」，不能让坏记录冒充运行中。
+function runStateValue(value) {
+  if(!value||typeof value!=='object'||value.schema!==1)return null;
+  const pid=Number(value.pid),startedAt=Number(value.startedAt);
+  const mode=value.mode==='service'?'service':'process';
+  if(mode==='process'&&(!Number.isInteger(pid)||pid<=0))return null;
+  if(!isPort(value.mixedPort)||!isPort(value.controllerPort))return null;
+  if(!Number.isFinite(startedAt)||startedAt<=0)return null;
+  if(typeof value.secretFingerprint!=='string'||!/^[a-f0-9]{16}$/.test(value.secretFingerprint))return null;
+  return {schema:1,pid:Number.isInteger(pid)&&pid>0?pid:null,mode,mixedPort:value.mixedPort,
+    controllerPort:value.controllerPort,startedAt,
+    subscriptions:Array.isArray(value.subscriptions)?value.subscriptions.filter(id=>validId(id)):[],
+    secretFingerprint:value.secretFingerprint};
+}
 
 const defaults={kernel:'',mixedPort:7895,controllerPort:9099};
 const tunStacks=['mixed','gvisor','system'];
@@ -25,11 +57,11 @@ const ipSources=Object.freeze([
 ]);
 const validId=id=>/^sub-[a-f0-9-]{36}$/.test(id);
 function urlValue(value) {
-  let url;try{url=new URL(String(value).trim())}catch{throw Error('订阅地址无效，请粘贴完整的 http:// 或 https:// 链接')}
+  let url;try{url=new URL(String(value).trim())}catch{throw serviceError('SUBSCRIPTION_URL_INVALID')}
   if(url.protocol!=='http:'&&url.protocol!=='https:')
-    throw Error('订阅地址必须以 http:// 或 https:// 开头');
-  if(url.username||url.password)throw Error('订阅地址不要包含用户名和密码');
-  if(url.href.length>8192)throw Error('订阅地址过长');
+    throw serviceError('SUBSCRIPTION_URL_INVALID');
+  if(url.username||url.password)throw serviceError('SUBSCRIPTION_URL_INVALID');
+  if(url.href.length>8192)throw serviceError('SUBSCRIPTION_URL_INVALID');
   // 片段（#名称）是订阅备注，不是地址的一部分；机场常带，直接剥掉而不是拒绝。
   url.hash='';
   return url.href;
@@ -37,7 +69,7 @@ function urlValue(value) {
 function labelValue(value) {
   const name=String(value??'').trim();
   if(!name||name.length>80||/[\x00-\x1f\x7f]/.test(name)||/https?:\/\/|token\s*=/i.test(name))
-    throw Error('请输入 1–80 字的订阅名称，不要包含地址或凭据');
+    throw serviceError('SUBSCRIPTION_NAME_INVALID');
   return name;
 }
 // 连接详情最多回这么多条：控制器返回的是全量连接，几千条一层层过协议会把页面卡住。
@@ -51,9 +83,14 @@ function cpuLabel() {
   const model=String(list[0]?.model??'').trim().replace(/\s+/g,' ');
   return model?`${model} · ${list.length} 核`:`${list.length} 核`;
 }
-export function createClash({context,runtime,request:injectedRequest,fetch:fetcher=globalThis.fetch,defaultKernel='',pluginVersion=''}) {
+export function createClash({context,runtime,request:injectedRequest,fetch:fetcher=globalThis.fetch,defaultKernel='',pluginVersion='',
+  pidAlive=defaultPidAlive,attachCooldownMs=3000}) {
   let running=null,settings,loading,subscriptions=[],secret='',operation=null,closing=false,operationError='';
   let startedAt=0,ipCache=null;
+  // 「内核在不在跑」不再只由内存里的 running 决定：插件进程重启后 running 会归零，
+  // 但 mihomo 子进程还在，于是界面显示「内核已停止」而代理仍然有效（#14 现象 C/E）。
+  // 这里补一份落盘运行态，并按 pid + secret 指纹 + 控制器 /version 三重确认后 attach。
+  let attached=false,kernelPid=null,attachError=null,attachTask=null,attachRetryAt=0;
   // secrets.read 由宿主先解密；这里只标记解密后内容仍不符合订阅地址格式的情况。
   let legacyPending=false;
   let queue=Promise.resolve();
@@ -62,6 +99,124 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   let tunBusy=false;
   const jobs=new Map(),alive=()=>!!running&&running.alive();
   const exclusive=fn=>{const result=queue.then(fn);queue=result.catch(()=>{});return result};
+  // ---- 运行态落盘与 attach -------------------------------------------------
+  const processAlive=pid=>{
+    try{return pidAlive(pid)===true}catch{return false}
+  };
+  async function clearRunState() {
+    try{await context.storage.write('config',RUN_STATE_FILE,'')}catch{/* 记录清不掉不影响停止语义 */}
+  }
+  async function readRunState() {
+    let raw;
+    try{raw=await context.storage.read('config',RUN_STATE_FILE)}
+    catch{attachError={code:'KERNEL_ATTACH_FAILED',message:'内核运行态记录读取失败'};return null}
+    if(!raw)return null;
+    let record=null;
+    try{record=runStateValue(JSON.parse(raw))}catch{/* 坏 JSON 与坏结构同样处理 */}
+    if(!record){
+      attachError={code:'KERNEL_ATTACH_FAILED',message:'内核运行态记录已损坏，已丢弃'};
+      await clearRunState();return null;
+    }
+    return record;
+  }
+  async function writeRunState(record) {
+    await context.storage.write('config',RUN_STATE_FILE,JSON.stringify(record));
+  }
+  // 结束一个不属于本实例的残留内核：优先交给 runtime（会等真正退出），
+  // 没有 runtime 能力时退回本进程发信号。
+  async function terminateKernel(pid) {
+    if(typeof runtime.kill==='function'){
+      const settled=await runtime.kill(pid);
+      if(settled===false)throw coded('KERNEL_STOP_UNCONFIRMED','残留内核没有退出，请在任务管理器中结束 mihomo 进程后重试');
+      return;
+    }
+    try{process.kill(pid,'SIGTERM')}
+    catch(error){if(error?.code!=='ESRCH')throw coded('KERNEL_STOP_UNCONFIRMED','结束残留内核失败')}
+  }
+  async function probeController(controllerPort,key) {
+    // 注入的 request 就是控制器本身（测试与宿主自测走这条），保持单一入口。
+    if(injectedRequest)return injectedRequest('/version',{method:'GET'});
+    let response;
+    try{
+      response=await fetcher(`http://127.0.0.1:${controllerPort}/version`,{
+        method:'GET',headers:{Authorization:`Bearer ${key}`},signal:AbortSignal.timeout(1500),redirect:'error'});
+    }catch(error){
+      throw coded(error?.name==='TimeoutError'?'CONTROLLER_TIMEOUT':'CONTROLLER_UNREACHABLE','残留内核的控制器没有应答');
+    }
+    if(!response.ok)throw coded('CONTROLLER_UNREACHABLE','残留内核的控制器没有应答');
+    const value=await response.json().catch(()=>null);
+    if(typeof value?.version!=='string')throw coded('CONTROLLER_UNREACHABLE','残留内核的控制器应答无效');
+    return value;
+  }
+  // attach 三重校验：pid 存活（服务托管模式看控制器）、secret 指纹一致、/version 可达。
+  // pid 复用只能靠后两项兜底，所以缺一项就不认。
+  async function attachRunning() {
+    const record=await readRunState();
+    if(!record)return null;
+    let key='';
+    try{key=await context.secrets.read('keys','controller.key')||''}catch{key=''}
+    if(!key||secretFingerprint(key)!==record.secretFingerprint){
+      attachError={code:'KERNEL_ATTACH_FAILED',message:'内核运行态记录与当前密钥不匹配，已丢弃'};
+      await clearRunState();return null;
+    }
+    if(record.mode!=='service'&&!processAlive(record.pid)){
+      // 内核已经退出：这是正常停机后的残留记录，静默丢弃。
+      await clearRunState();return null;
+    }
+    try{await probeController(record.controllerPort,key)}
+    catch(error){
+      attachError={code:'KERNEL_ATTACH_FAILED',cause:error?.code??'CONTROLLER_UNREACHABLE',
+        message:'残留内核仍在运行，但控制器没有应答，请停止后重新启动'};
+      return {record,key,ok:false};
+    }
+    return {record,key,ok:true};
+  }
+  function adoptKernel(record) {
+    let stopped=false;
+    return {pid:record.pid,mode:record.mode,attached:true,
+      alive:()=>!stopped&&(record.mode==='service'?true:processAlive(record.pid)),
+      stop:async()=>{
+        if(stopped)return;
+        stopped=true;
+        if(record.mode==='service'){try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}return}
+        await terminateKernel(record.pid);
+      }};
+  }
+  // 只在需要时读一次盘；失败后按冷却窗口重试，避免每次 view() 都等一次控制器超时。
+  // 已经持有运行中的句柄时绝不重新 attach：那会把本实例 spawn 的内核替换成「外来进程」，
+  // 停止时只发信号不等它退出，反而杀不干净。
+  function ready() {
+    if(running)return Promise.resolve(null);
+    if(attachTask)return attachTask;
+    if(Date.now()<attachRetryAt)return Promise.resolve(null);
+    attachTask=(async()=>{
+      const outcome=await attachRunning();
+      if(!outcome)return null;
+      if(!outcome.ok){
+        attachTask=null;attachRetryAt=Date.now()+attachCooldownMs;
+        return outcome;
+      }
+      running=adoptKernel(outcome.record);
+      attached=true;kernelPid=outcome.record.pid;startedAt=outcome.record.startedAt;
+      secret=outcome.key;ipCache=null;attachError=null;attachRetryAt=0;
+      return outcome;
+    })().catch(error=>{
+      attachTask=null;
+      attachError={code:'KERNEL_ATTACH_FAILED',message:error?.message??'识别残留内核失败'};
+      return null;
+    });
+    return attachTask;
+  }
+  // 起新内核前先收拾上一实例的残留：否则两边抢同一个控制器端口，用户看到的是 EADDRINUSE。
+  async function reclaimRunState() {
+    const record=await readRunState();
+    if(!record)return;
+    try{
+      if(record.mode==='service')await runtime.tunStop?.();
+      else if(processAlive(record.pid))await terminateKernel(record.pid);
+    }catch{/* 回收不成功留给后续端口探测报错 */}
+    await clearRunState();
+  }
   async function persist(rows) {
     await context.storage.write('config','subscriptions.json',JSON.stringify({schema:2,subscriptions:rows}));
     subscriptions=rows;
@@ -80,7 +235,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         const data=JSON.parse(raw);
         if(data.schema!==2||!Array.isArray(data.subscriptions)||data.subscriptions.length>32||
           data.subscriptions.some(s=>!validId(s.id))||new Set(data.subscriptions.map(s=>s.id)).size!==data.subscriptions.length)
-          throw Error('订阅配置损坏，请从备份恢复');
+          throw serviceError('SUBSCRIPTION_CORRUPT');
         subscriptions=data.subscriptions.map(s=>({
           id:s.id,name:labelValue(s.name),enabled:s.enabled===true,
           status:s.status==='updating'?'error':(['ready','error'].includes(s.status)?s.status:'pending'),
@@ -123,14 +278,23 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   }
   async function request(path,{method='GET',body,limit=2*1024*1024}={}) {
     if(injectedRequest)return injectedRequest(path,{method,...(body===undefined?{}:{body})});
-    const c=await config(),response=await fetcher(`http://127.0.0.1:${c.controllerPort}${path}`,{
-      method,headers:{Authorization:`Bearer ${secret}`,'Content-Type':'application/json'},
-      body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(3500),redirect:'error'});
-    if(!response.ok)throw Error('mihomo 控制器请求失败');
+    const c=await config();
+    let response;
+    try{
+      response=await fetcher(`http://127.0.0.1:${c.controllerPort}${path}`,{
+        method,headers:{Authorization:`Bearer ${secret}`,'Content-Type':'application/json'},
+        body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(3500),redirect:'error'});
+    }catch(error){
+      // 超时与不可达对用户是两件事：一个可能只是内核忙，另一个是内核/端口不对。
+      throw error?.name==='TimeoutError'
+        ?coded('CONTROLLER_TIMEOUT','mihomo 控制器请求超时，请稍后重试')
+        :coded('CONTROLLER_UNREACHABLE','mihomo 控制器不可达，请检查内核是否在运行');
+    }
+    if(!response.ok)throw coded('CONTROLLER_UNREACHABLE','mihomo 控制器请求失败');
     if(response.status===204)return {};
     const reader=response.body.getReader();let size=0;const chunks=[];
     try{for(;;){const {done,value}=await reader.read();if(done)break;
-      if((size+=value.byteLength)>limit)throw Error('mihomo 响应超过限制');chunks.push(value)}}
+      if((size+=value.byteLength)>limit)throw serviceError('RESPONSE_TOO_LARGE');chunks.push(value)}}
     finally{await reader.cancel().catch(()=>{})}
     return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');
   }
@@ -148,14 +312,19 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     return name!=='GLOBAL'&&Array.isArray(proxy?.all);
   }
   async function view({controller=true}={}) {
+    // 先认一次落盘运行态：插件进程重启后 view() 是唯一的唤醒点。
+    await ready();
     const c=await config(),state={...c,configured:!!c.kernel,subscriptionConfigured:subscriptions.length>0,
       legacyPending,
       subscriptions:subscriptions.map(s=>({...s,updating:jobs.has(s.id)})),
-      running:alive(),operation:operation?.name??null,tunSwitching:tunBusy,error:operationError,systemProxy:runtime.proxy.active?.()??false,
+      running:alive(),operation:operation?.name??null,tunSwitching:tunBusy,error:operationError,
+      errorCode:null,attached,kernelPid,attachError,systemProxy:runtime.proxy.active?.()??false,
       os:`${os.platform()==='win32'?'Windows':os.platform()} ${os.release()}`,
       arch:os.arch(),cpu:cpuLabel(),memoryTotal:os.totalmem(),pluginVersion,
       uptimeMs:alive()&&startedAt?Date.now()-startedAt:null,
       rulesCount:null,groups:[],mode:'rule'};
+    if(!state.error&&attachError)state.error=attachError.message;
+    if(attachError)state.errorCode=attachError.code;
     if(controller&&state.running)try{
       // /rules 只用于概览卡片的规则数量；拿不到不影响主视图。
       const [version,proxies,status,rules]=await Promise.all([
@@ -164,33 +333,37 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       state.rulesCount=Array.isArray(rules?.rules)?rules.rules.length:null;
       state.groups=Object.entries(proxies.proxies||{}).filter(([name,p])=>isProxyGroup(name,p)).map(([name,p])=>({
         name,selected:p.now,nodes:p.all.map(name=>sourceNode(name,proxies.proxies))}));
-    }catch{state.error='控制器暂未响应，请刷新或停止内核'}
+    }catch(error){
+      // 「内核在跑但控制器不可达」与「内核根本没起」是两件事，页面要能分开显示。
+      state.error='控制器暂未响应，请刷新或停止内核';
+      state.errorCode=error?.code??'CONTROLLER_UNREACHABLE';
+    }
     if(runtime.tun)try{state.tunService=await runtime.tun.status()}catch{state.tunService=null}
     return state;
   }
   function editable() {
-    if(alive()||operation)throw Error('请先停止内核再更改配置');
-    if(jobs.size)throw Error('请等待订阅更新完成');
-    if(closing)throw Error('插件正在停用');
+    if(alive()||operation)throw serviceError('KERNEL_RUNNING_LOCK');
+    if(jobs.size)throw serviceError('SUBSCRIPTION_UPDATING');
+    if(closing)throw serviceError('PLUGIN_STOPPING');
   }
   function rowFor(id) {
-    const row=subscriptions.find(s=>s.id===id);if(!row)throw Error('订阅不存在，请刷新');return row;
+    const row=subscriptions.find(s=>s.id===id);if(!row)throw serviceError('SUBSCRIPTION_NOT_FOUND');return row;
   }
   async function save(params) {
     return exclusive(async()=>{
       const old=await config();editable();
       const next={...old,kernel:String(params.kernel??old.kernel).trim(),
         mixedPort:params.mixedPort??old.mixedPort,controllerPort:params.controllerPort??old.controllerPort};
-      if(!next.kernel||next.kernel.length>2048||/[\r\n\0]/.test(next.kernel))throw Error('请选择 mihomo 内核');
+      if(!next.kernel||next.kernel.length>2048||/[\r\n\0]/.test(next.kernel))throw serviceError('KERNEL_NOT_SELECTED');
       for(const port of [next.mixedPort,next.controllerPort])
-        if(!Number.isInteger(port)||port<1024||port>65535)throw Error('端口应为 1024–65535');
-      if(next.mixedPort===next.controllerPort)throw Error('混合代理和控制器端口应不同');
-      if(params.subscription||params.clearSubscription)throw Error('请在订阅管理中新增或删除订阅');
+        if(!Number.isInteger(port)||port<1024||port>65535)throw serviceError('PORT_RANGE_INVALID');
+      if(next.mixedPort===next.controllerPort)throw serviceError('PORT_CONFLICT');
+      if(params.subscription||params.clearSubscription)throw serviceError('SUBSCRIPTION_IMMUTABLE');
       if(params.tun!==undefined){
         const tun=params.tun||{};
-        if(typeof tun.enable!=='boolean'&&tun.enable!==undefined)throw Error('TUN 开关无效');
+        if(typeof tun.enable!=='boolean'&&tun.enable!==undefined)throw serviceError('TUN_SWITCH_INVALID');
         next.tun={enable:tun.enable===true, stack:tunStacks.includes(tun.stack)?tun.stack:(old.tun?.stack??defaultTun.stack)};
-        if(next.tun.enable&&!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+        if(next.tun.enable&&!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
       }
       next.bundled=!!defaultKernel&&next.kernel.replaceAll('\\','/').toLowerCase()===defaultKernel.replaceAll('\\','/').toLowerCase();
       await context.storage.write('config','clash.json',JSON.stringify(next));settings=next;
@@ -203,10 +376,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const name=labelValue(params.name),old=params.id?rowFor(params.id):null;
       const previous=old?await context.secrets.read('credentials',`${old.id}.json`):'';
       const url=params.url?.trim()?urlValue(params.url):previous;
-      if(!url)throw Error('请输入 HTTPS 订阅地址');
+      if(!url)throw serviceError('SUBSCRIPTION_URL_INVALID');
       for(const row of subscriptions)if(row.id!==old?.id&&await context.secrets.read('credentials',`${row.id}.json`)===url)
         return view({controller:false});
-      if(!old&&subscriptions.length>=32)throw Error('最多保存 32 个订阅');
+      if(!old&&subscriptions.length>=32)throw serviceError('SUBSCRIPTION_LIMIT');
       const id=old?.id??`sub-${randomUUID()}`;
       const row={id,name,enabled:old?.enabled??subscriptions.length===0,status:old?.status??'pending',
         lastAttempt:old?.lastAttempt??null,lastSuccess:old?.lastSuccess??null,
@@ -223,7 +396,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function subscriptionToggle({id,enabled}) {
     return exclusive(async()=>{
       await config();editable();rowFor(id);
-      if(typeof enabled!=='boolean')throw Error('订阅启用状态无效');
+      if(typeof enabled!=='boolean')throw serviceError('SUBSCRIPTION_STATE_INVALID');
       await persist(subscriptions.map(s=>s.id===id?{...s,enabled}:(enabled?{...s,enabled:false}:s)));
       return view({controller:false});
     });
@@ -259,8 +432,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function reload({id}={}) {
     return exclusive(async()=>{
       await config();
-      if(closing||operation)throw Error('内核正在切换状态，请稍后重试');
-      if(!settings.kernel)throw Error('请先配置 mihomo 内核');
+      if(closing||operation)throw serviceError('KERNEL_SWITCHING');
+      if(!settings.kernel)throw serviceError('KERNEL_NOT_SELECTED');
       const selected=id?[rowFor(id)]:subscriptions.filter(s=>s.enabled),fresh=selected.filter(s=>!jobs.has(s.id));
       await persist(subscriptions.map(s=>fresh.some(f=>f.id===s.id)?{...s,status:'updating',
         lastAttempt:new Date().toISOString(),error:'',errorCode:null}:s));
@@ -273,21 +446,21 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   }
   // TUN 服务：安装/卸载各需要一次 UAC；装好后普通权限即可开关 TUN。
   async function tunService() {
-    if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+    if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
     return runtime.tun.status();
   }
   async function installTunService() {
     return exclusive(async()=>{
-      if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+      if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
       const c=await config();editable();
-      if(!c.kernel)throw Error('请先选择 mihomo 内核');
+      if(!c.kernel)throw serviceError('KERNEL_NOT_SELECTED');
       await runtime.tun.install({kernel:c.kernel,home:context.dataDirectory});
       return view({controller:false});
     });
   }
   async function uninstallTunService() {
     return exclusive(async()=>{
-      if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+      if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
       const c=await config();editable();
       await runtime.tun.uninstall();
       const next={...c,tun:{...c.tun,enable:false}};
@@ -300,22 +473,35 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const task={name:'starting',promise:null,controller:new AbortController()};operation=task;operationError='';
     task.promise=(async()=>{
       await queue;const c=await config();
+      // attach 优先于 start：插件重载后内核通常还在跑，此时再 spawn 就是第二个内核。
+      await ready();
       if(alive())return view();
-      if(jobs.size)throw Error('请等待订阅更新完成');
-      if(closing)throw Error('插件正在停用');
-      if(!c.kernel)throw Error('请先选择 mihomo 内核');
+      if(jobs.size)throw serviceError('SUBSCRIPTION_UPDATING');
+      if(closing)throw serviceError('PLUGIN_STOPPING');
+      if(!c.kernel)throw serviceError('KERNEL_NOT_SELECTED');
       const enabled=subscriptions.filter(s=>s.enabled);
-      if(enabled.some(s=>!s.hasCache))throw Error('请先更新已启用订阅，获取可用缓存');
+      if(enabled.some(s=>!s.hasCache))throw serviceError('SUBSCRIPTION_NO_CACHE');
+      // 走到这里说明没有可 attach 的内核；上一实例可能留下了僵尸进程占着端口，先回收。
+      await reclaimRunState();
       secret=await context.secrets.read('keys','controller.key')||randomBytes(32).toString('hex');
       await context.secrets.write('keys','controller.key',secret);
       const candidate=await runtime.start({...c,secret,subscriptions:enabled,request,signal:task.controller.signal});running=candidate;
-      try{await request('/version')}catch{await candidate.stop();running=null;throw Error('内核控制器尚未就绪')}
-      startedAt=Date.now();ipCache=null;
+      try{await request('/version')}catch{await candidate.stop();running=null;throw coded('CONTROLLER_UNREACHABLE','内核控制器尚未就绪')}
+      startedAt=Date.now();ipCache=null;attached=false;attachError=null;attachTask=null;attachRetryAt=0;
+      kernelPid=Number.isInteger(candidate.pid)?candidate.pid:null;
+      // 运行态落盘是「下次能 attach」的唯一依据；写失败不该让已经起来的内核回滚。
+      try{
+        await writeRunState({schema:1,pid:kernelPid,mode:candidate.mode??(c.tun?.enable?'service':'process'),
+          mixedPort:c.mixedPort,controllerPort:c.controllerPort,startedAt,
+          subscriptions:enabled.map(s=>s.id),secretFingerprint:secretFingerprint(secret)});
+      }catch{/* 落盘失败只影响重载后能否 attach */}
       return view();
     })().catch(error=>{operationError=task.controller.signal.aborted?'启动已取消':'启动失败，请检查内核路径、端口和订阅缓存';throw error})
       .finally(()=>{if(operation===task)operation=null});
     return task.promise;
   }
+  // 停止是两件事：内核必须杀干净，系统代理恢复失败只降级为警告（#14 现象 B）。
+  // 顺序也是结论的一部分——先杀内核，再动注册表，恢复失败才拦不住内核。
   async function stop() {
     if(operation?.name==='stopping')return operation.promise;
     const prior=operation?.promise;operation?.controller?.abort();
@@ -324,38 +510,70 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       await prior?.catch(()=>{});
       for(const job of jobs.values())job.controller.abort();
       await Promise.allSettled([...jobs.values()].map(j=>j.promise));
-      // A failed registry restore must not keep the owned core running.
-      // The lease record remains available for retry on the next stop/activation.
-      let restoreError;
-      try{await runtime.proxy.restore()}catch(error){restoreError=error}
-      if(running){await running.stop();running=null}
-      startedAt=0;ipCache=null;
+      // 插件重载过就只剩落盘记录：先尝试 attach，才能认出「内核其实还在跑」。
+      await ready();
+      const result={kernel:'absent',proxy:'skipped',code:null,message:'',ok:true};
+      let kernelError=null;
+      try{
+        if(running){await running.stop();result.kernel='stopped'}
+        else{
+          const record=await readRunState();
+          if(record?.mode==='service'){try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}result.kernel='stopped'}
+          else if(record&&processAlive(record.pid)){await terminateKernel(record.pid);result.kernel='stopped'}
+        }
+      }catch(error){
+        kernelError=error;result.kernel='failed';result.ok=false;
+        result.code=error?.code??'KERNEL_STOP_UNCONFIRMED';
+        result.message='内核未能确认停止，请在任务管理器中结束 mihomo 进程后重试';
+      }
+      running=null;startedAt=0;ipCache=null;attached=false;kernelPid=null;
       // TUN 由 SYSTEM 服务托管时，确保服务侧内核也停下（running 为空时的兜底）。
       try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}
-      if(restoreError)throw restoreError;
-      return view({controller:false});
-    })().catch(error=>{operationError='停止失败，请检查内核和系统代理恢复状态';throw error})
+      await clearRunState();attachTask=null;attachRetryAt=0;attachError=null;
+      // 系统代理恢复：只有带 code 的适配层错误才降级为警告；
+      // 没有 code 的异常说明不是已知状况，保持原有「停止失败」语义，但带上结构化结果。
+      let proxyError=null;
+      try{await runtime.proxy.restore();result.proxy='restored'}
+      catch(error){
+        proxyError=error;result.proxy='failed';result.ok=false;
+        if(error?.code){
+          result.code=error.code;
+          result.message=`内核已停止，系统代理恢复失败（${error.code}）`;
+        }
+      }
+      if(kernelError)throw coded(result.code,result.message,{result});
+      if(proxyError&&!proxyError.code)throw Object.assign(proxyError,{result});
+      if(proxyError)operationError=result.message;
+      const state=await view({controller:false});
+      state.stop=result;
+      return state;
+    })().catch(error=>{operationError=error?.result?.message||'停止失败，请检查内核和系统代理恢复状态';throw error})
       .finally(()=>{if(operation===task)operation=null});
     return task.promise;
   }
   async function shutdown(){closing=true;return stop()}
   async function select({group,name}) {
-    if(!alive())throw Error('内核尚未启动');const state=await view();
-    if(!state.groups.some(g=>g.name===group&&g.nodes.some(n=>n.name===name)))throw Error('代理组或节点已变化，请刷新');
-    await request(`/proxies/${encodeURIComponent(group)}`,{method:'PUT',body:{name}});return view();
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');const state=await view();
+    if(!state.groups.some(g=>g.name===group&&g.nodes.some(n=>n.name===name)))throw serviceError('NODE_STALE');
+    await request(`/proxies/${encodeURIComponent(group)}`,{method:'PUT',body:{name}});
+    // 出口 IP 跟着节点走：缓存还留着旧节点的结果就是「换了节点 IP 还是上一个」（#14 现象 D）。
+    ipCache=null;
+    return view();
   }
   async function mode({mode}) {
-    if(!alive()||!['rule','global','direct'].includes(mode))throw Error('内核状态或模式无效');
+    // 两种失败是两种用户动作，别合成一条：没启动内核该去点「启动内核」，模式值非法才该查调用方。
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
+    if(!['rule','global','direct'].includes(mode))throw serviceError('KERNEL_STATE_INVALID');
     await request('/configs',{method:'PATCH',body:{mode}});return view();
   }
   async function proxy({enabled}) {
-    if(typeof enabled!=='boolean')throw Error('系统代理状态无效');
-    if(enabled){if(!alive()||operation)throw Error('请先启动内核');await runtime.proxy.enable((await config()).mixedPort)}
+    if(typeof enabled!=='boolean')throw serviceError('PROXY_STATE_INVALID');
+    if(enabled){if(!alive()||operation)throw serviceError('KERNEL_NOT_RUNNING');await runtime.proxy.enable((await config()).mixedPort)}
     else await runtime.proxy.restore();return view();
   }
   async function details({section}) {
     if(section==='providers')return (await view({controller:false})).subscriptions;
-    if(!alive())throw Error('内核尚未启动');
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
     if(section==='rules'){
       // payload 是规则真正拦/放的域名或网段：只有 type 与 proxy 的话，页面上一行行
       // 全是「GEOSITE → 🎯 全球直连」，看不出规则在干什么。
@@ -384,7 +602,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
             start:row?.start??null};
         })};
     }
-    throw Error('详情类别无效');
+    throw serviceError('DETAIL_SECTION_INVALID');
   }
   // 出口 IP 必须经用户配置的代理口查询：直连查询在 TUN 或系统代理下会得到本机出口，
   // 与页面要展示的「当前节点看到的 IP」不一致。结果缓存 60 秒，避免反复打查询接口。
@@ -414,16 +632,24 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     return null;
   }
   async function siteTest() {
-    if(!alive())throw Error('内核尚未启动');
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
     const {proxies}=await request('/proxies');
     const leaf=resolveLeaf(proxies??{});
-    if(!leaf)throw Error('没有可用的代理节点，请先选择节点');
+    if(!leaf)throw serviceError('NODE_UNAVAILABLE');
     const sites=await Promise.all(siteTargets.map(async target=>{
       try{
         const result=await request(`/proxies/${encodeURIComponent(leaf)}/delay?url=${encodeURIComponent(target.url)}&timeout=5000`);
         const delay=Number.isFinite(result?.delay)&&result.delay>0?result.delay:null;
-        return {...target,delay,ok:delay!==null};
-      }catch{return {...target,delay:null,ok:false}}
+        return {...target,delay,ok:delay!==null,kind:delay===null?'node':null,code:null,
+          reason:delay===null?'节点不通，延迟测试失败':''};
+      }catch(error){
+        // 「节点不通」和「控制器超时」是两种结论，都渲染成超时页面就没法判断该查哪边。
+        // kind 是这次测试的结论类别；code 只在控制器侧用统一错误码。
+        const timeout=error?.code==='CONTROLLER_TIMEOUT'||error?.name==='TimeoutError';
+        return {...target,delay:null,ok:false,kind:timeout?'controller':'node',
+          code:timeout?'CONTROLLER_TIMEOUT':null,
+          reason:timeout?'控制器超时，未取到节点延迟':'节点不通，延迟测试失败'};
+      }
     }));
     return {node:leaf,sites};
   }
@@ -431,10 +657,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   // 并发 6：几百个节点同时打会把控制器压住，单条失败只影响它自己。
   const delayUrl='https://www.gstatic.com/generate_204';
   async function nodeTest({group:groupName}={}) {
-    if(!alive())throw Error('内核尚未启动');
+    if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
     const state=await view();
     const target=groupName?state.groups.find(row=>row.name===groupName):state.groups[0];
-    if(!target)throw Error('没有可用的代理节点，请先选择节点');
+    if(!target)throw serviceError('NODE_UNAVAILABLE');
     const names=target.nodes.filter(node=>node.type!=='group').slice(0,200).map(node=>node.name);
     const delays=[];
     let cursor=0;
@@ -455,13 +681,13 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   // 两者写同一个控制器端口，不能并存。整段「停 → 写配置 → 按新设置起」放到后台跑，
   // RPC 立刻返回：一次 TUN 启动要等 SYSTEM 服务拉起内核，很容易超过单次 RPC 的 15 秒。
   async function tunSwitch({enable}={}) {
-    if(typeof enable!=='boolean')throw Error('TUN 开关无效');
-    if(!runtime.tun)throw Error('当前环境不支持 TUN 服务模式');
+    if(typeof enable!=='boolean')throw serviceError('TUN_SWITCH_INVALID');
+    if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
     if(tunBusy)return view({controller:false});
     const old=await config();
     if(enable){
       const info=await runtime.tun.status();
-      if(!info.installed)throw Error('请先在设置里安装 TUN 服务');
+      if(!info.installed)throw serviceError('TUN_NOT_INSTALLED');
     }
     const wasRunning=alive();
     tunBusy=true;operationError='';

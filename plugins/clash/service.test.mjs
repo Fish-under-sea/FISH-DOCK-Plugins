@@ -12,13 +12,21 @@ test('failed proxy restoration still stops the owned core and remains retryable'
  await f.service.stop();assert.equal((await f.service.view()).error,'');
 });
 function fixture(disk=new Map(),options={}) {
- const requests=[],updates=[];let up=false,starts=0,stops=0,owned,fail=false,blocked=null;
+ const requests=[],updates=[],kills=[];let up=false,starts=0,stops=0,owned,fail=false,blocked=null,delayError=null;
+ // external 模拟「插件进程重启后仍有残留内核」：pid 还活着、控制器可应答，但不是本实例 spawn 的。
+ const external=options.external?{alive:true,...options.external}:null;
+ const controllerUp=options.controller!==false;
+ const kernelPid=options.pid??4242;
  const context={dataDirectory:'D:/synthetic/.fishplugin-clash',
   storage:{read:async(c,n)=>disk.get(`${c}/${n}`)??null,write:async(c,n,v)=>disk.set(`${c}/${n}`,v)},
   secrets:{read:async(c,n)=>disk.get(`secret/${c}/${n}`)??null,write:async(c,n,v)=>disk.set(`secret/${c}/${n}`,v)}};
+ const subs=()=>owned?.subscriptions??external?.subscriptions??[];
  const request=async(path,options={})=>{
-  requests.push({path,...options});if(!up)throw Error('offline');
-  const names=owned.subscriptions.map(s=>`[${s.id}] same`);
+  requests.push({path,...options});
+  if(delayError&&path.includes('/delay?'))throw delayError;
+  if(!controllerUp)throw Object.assign(Error('控制器不可达'),{code:'CONTROLLER_UNREACHABLE'});
+  if(!up&&!external?.alive)throw Error('offline');
+  const names=subs().map(s=>`[${s.id}] same`);
   return path==='/version'?{version:'synthetic'}:path==='/proxies'?{proxies:{
    GLOBAL:{now:'🚀 节点选择',all:['🚀 节点选择','♻️ 自动选择','DIRECT',...names]},
    '🚀 节点选择':{now:'♻️ 自动选择',all:['♻️ 自动选择','DIRECT',...names]},
@@ -28,12 +36,14 @@ function fixture(disk=new Map(),options={}) {
    ...Object.fromEntries(names.map(name=>[name,{history:[{delay:20}]}]))}}:
    path==='/configs'?{mode:'rule'}:path==='/connections'?{connections:[{id:'conn-1',
     metadata:{network:'tcp',host:'example.test',destinationIP:'203.0.113.9',destinationPort:'443',sourceIP:'127.0.0.1',processPath:'C:/private/PRIVATE.exe'},
-    chains:['🚀 节点选择',`[${owned.subscriptions[0].id}] same`],rule:'DomainSuffix',rulePayload:'test',
+    chains:['🚀 节点选择',`[${subs()[0]?.id}] same`],rule:'DomainSuffix',rulePayload:'test',
     upload:5,download:7,start:'2026-10-31T09:00:00.000Z',token:'PRIVATE'}],uploadTotal:10,downloadTotal:12,memory:1048576}:
    path==='/rules'?{rules:[{type:'MATCH',payload:'',proxy:'🐟 漏网之鱼'},{type:'GEOSITE',payload:'cn',proxy:'🎯 全球直连'},{type:'GEOIP',payload:'cn',proxy:'🎯 全球直连'}]}:
    path.includes('/delay?')?{delay:path.includes('youtube')?0:87}:{url:'https://private.test/?token=PRIVATE'};
  };
- const runtime={start:async c=>{starts++;up=true;owned=c;return {alive:()=>up,stop:async()=>{stops++;up=false}}},
+ const runtime={start:async c=>{starts++;up=true;owned=c;return {alive:()=>up,pid:kernelPid,mode:'process',stop:async()=>{stops++;up=false}}},
+  // 结束残留内核（不是本实例 spawn 的）：记录 pid，按 external 状态回报是否真的没了。
+  kill:async pid=>{kills.push(pid);if(external&&external.pid===pid)external.alive=false;return true},
   updateSubscription:async c=>{updates.push(c);await blocked;if(c.signal.aborted||fail)throw Error('token=PRIVATE');await c.apply?.();await c.commit({nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}});return {nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}}},
   proxy:{enable:async()=>{},restore:async()=>{},active:()=>false},
   tun:{status:async()=>({installed:tunInstalled,state:tunInstalled?'running':'absent',kernel:tunKernel,log:''}),
@@ -42,8 +52,13 @@ function fixture(disk=new Map(),options={}) {
    enable:async()=>true,disable:async()=>true},
   tunStop:async()=>{}};
  let tunInstalled=false,tunKernel='';
- const service=createClash({context,runtime,request,...options});
- return {service,disk,requests,updates,runtime,context,stats:()=>({starts,stops,up,owned}),fail:()=>{fail=true},
+ const service=createClash({context,runtime,request,...options,pidAlive:pid=>{
+  // 残留内核优先按 external 判活：它的 pid 可能与本实例的假 pid 同号。
+  if(external&&external.pid===pid)return external.alive;
+  return pid===kernelPid?up:false;
+ }});
+ return {service,disk,requests,updates,runtime,context,external,stats:()=>({starts,stops,up,owned,kills}),fail:()=>{fail=true},
+  breakDelay:error=>{delayError=error},
   block:()=>{let release;blocked=new Promise(r=>release=r);return release}};
 }
 async function add(f,name='A',url='https://example.test/a?token=PRIVATE') {
@@ -88,7 +103,7 @@ test('multiple subscriptions keep independent IDs but only one runs at a time',a
  await f.service.select({group:'🚀 节点选择',name:sourceNodes[0].name});
  assert.ok(f.requests.some(r=>r.method==='PUT'&&r.body?.name===`[${a.id}] same`));
  assert.ok(!JSON.stringify(state).includes('PRIVATE'));assert.ok(!f.disk.get('config/subscriptions.json').includes('https:'));
- await assert.rejects(f.service.subscriptionToggle({id:a.id,enabled:false}),/停止/);
+ await assert.rejects(f.service.subscriptionToggle({id:a.id,enabled:false}),error=>error.code==='KERNEL_RUNNING_LOCK');
  await f.service.stop();await f.service.subscriptionToggle({id:a.id,enabled:true});
  await f.service.start();assert.deepEqual(f.stats().owned.subscriptions.map(s=>s.id),[a.id]);
  await f.service.stop();await f.service.subscriptionRemove({id:a.id});
@@ -165,22 +180,23 @@ test('invalid URLs/ports are rejected; unsynced subscriptions block startup; int
  const f=fixture();await f.service.view();
  // 只拒真正的非法地址：非 http(s) 协议、带账号密码、空串。
  for(const url of ['file:///bad','ftp://example.test','https://user:pass@example.test',''])
-  await assert.rejects(add(f,'A',url),/订阅/);
+  await assert.rejects(add(f,'A',url),error=>error.code==='SUBSCRIPTION_URL_INVALID');
  // http 与 #片段 必须接受：国内机场大量如此，拒绝会让用户永远导不进来。
  const httpRow=await f.service.subscriptionSave({name:'http ok',url:'http://example.test/sub?token=x'});
  assert.equal(httpRow.subscriptions.at(-1).name,'http ok');
  const fragRow=await f.service.subscriptionSave({name:'fragment ok',url:'https://example.test/sub?token=y#Clash'});
  assert.equal(fragRow.subscriptions.length,2);
  assert.equal(f.disk.get(`secret/credentials/${fragRow.subscriptions.at(-1).id}.json`),'https://example.test/sub?token=y');
- await assert.rejects(f.service.save({...kernel,mixedPort:9099}));
+ await assert.rejects(f.service.save({...kernel,mixedPort:9099}),error=>error.code==='PORT_CONFLICT');
+ await assert.rejects(f.service.save({...kernel,mixedPort:80}),error=>error.code==='PORT_RANGE_INVALID');
  await f.service.save(kernel);
  await add(f,'third','https://example.test/three');
- await assert.rejects(f.service.start(),/更新/);
+ await assert.rejects(f.service.start(),error=>error.code==='SUBSCRIPTION_NO_CACHE');
  const release=f.block();await f.service.reload();
  const restart=await fixture(f.disk).service.view();assert.equal(restart.subscriptions[0].status,'error');
  const stop=f.service.shutdown();await tick();release();await stop;
  assert.equal(f.updates[0].signal.aborted,true);assert.equal(f.stats().starts,0);
- await assert.rejects(f.service.start(),/停用/);
+ await assert.rejects(f.service.start(),error=>error.code==='PLUGIN_STOPPING');
 });
 test('bundled kernel follows exact host package upgrades but custom paths remain untouched',async()=>{
  const old=`C:/old/packages/fish.clash/1.0.0/${'a'.repeat(64)}/service/mihomo.exe`;
@@ -221,7 +237,7 @@ test('节点测速对当前组逐条打 delay 接口，按节点名回结果',as
  assert.ok(result.delays.every(row=>typeof row.name==='string'),'每条都带节点名');
  assert.ok(f.requests.some(row=>/\/proxies\/.*\/delay\?url=/.test(row.path)),'走控制器的 delay 接口');
  await f.service.stop();
- await assert.rejects(f.service.nodeTest({group:'🚀 节点选择'}),/内核尚未启动/);
+ await assert.rejects(f.service.nodeTest({group:'🚀 节点选择'}),error=>error.code==='KERNEL_NOT_RUNNING');
 });
 test('TUN 服务：未安装→安装→卸载，安装后 TUN 开关持久化且栈值受控',async()=>{
  const f=fixture();await f.service.save(kernel);
@@ -244,7 +260,7 @@ test('TUN 服务安装要求内核已配置且内核未运行',async()=>{
  const f=fixture();
  await assert.rejects(f.service.installTunService());
  await f.service.save(kernel);await f.service.start();
- await assert.rejects(f.service.installTunService(),/停止内核/);
+ await assert.rejects(f.service.installTunService(),error=>error.code==='KERNEL_RUNNING_LOCK');
 });
 test('解密后的旧凭据内容格式无效时保留原值，view 与新增订阅仍可用',async()=>{
  // 覆盖真正的损坏内容；此替身不代表宿主 DPAPI 解密行为。
@@ -300,7 +316,7 @@ test('出口 IP 只在经代理时查询，字段归一化并缓存一分钟',as
 });
 test('网站测试经当前叶子节点测速，超时与无延迟都归零',async()=>{
  const f=fixture();await f.service.save(kernel);
- await assert.rejects(f.service.siteTest(),/内核尚未启动/);
+ await assert.rejects(f.service.siteTest(),error=>error.code==='KERNEL_NOT_RUNNING');
  const a=await add(f);await f.service.reload();await settled(f.service);await f.service.start();
  const result=await f.service.siteTest();
  assert.equal(result.node,`[${a.id}] same`);
@@ -309,6 +325,122 @@ test('网站测试经当前叶子节点测速，超时与无延迟都归零',asy
  assert.equal(result.sites[0].delay,87);
  assert.equal(result.sites[3].delay,null);
  assert.match(f.requests.at(-1).path,/\/proxies\/.*\/delay\?url=/);
+});
+
+// 现象 C/E 的根因：「内核在不在跑」只由内存变量决定，插件进程一重启 running 归零，
+// 而 mihomo 子进程还在跑 → 界面「内核已停止」+ 代理有效。运行态必须落盘并可 attach。
+test('插件重载后按 run-state 记录 attach 成 running，不再起第二个内核',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const record=JSON.parse(f.disk.get('config/run-state.json'));
+ assert.equal(record.schema,1);
+ assert.equal(record.pid,4242);
+ assert.equal(record.mode,'process');
+ assert.equal(record.mixedPort,7895);
+ assert.equal(record.controllerPort,9099);
+ assert.ok(Number.isFinite(record.startedAt)&&record.startedAt>0,'启动时间要落盘，页面才能显示运行时长');
+ assert.ok(Array.isArray(record.subscriptions));
+ assert.match(record.secretFingerprint,/^[a-f0-9]{16}$/,'只落 secret 指纹，不落 secret 本身');
+ assert.ok(!JSON.stringify(record).includes(f.disk.get('secret/keys/controller.key')),'记录里不得出现明文密钥');
+ // 插件进程重启：同一个数据目录、新的 service 实例，内核仍在跑。
+ const g=fixture(f.disk,{external:{pid:record.pid,subscriptions:record.subscriptions}});
+ const state=await g.service.view();
+ assert.equal(state.running,true);
+ assert.equal(state.attached,true);
+ assert.equal(state.kernelPid,record.pid);
+ assert.ok(Number.isFinite(state.uptimeMs)&&state.uptimeMs>=0,'attach 后运行时长按记录里的 startedAt 算');
+ assert.equal(g.stats().starts,0,'已经 attach，不得起第二个内核');
+ await g.service.start();
+ assert.equal(g.stats().starts,0,'再点启动也只认已存在的内核');
+ assert.equal((await g.service.view()).running,true);
+ // 停止必须真的杀掉那个不属于本实例的内核，并清掉运行态记录。
+ const stopped=await g.service.stop();
+ assert.deepEqual(g.stats().kills,[record.pid]);
+ assert.deepEqual({kernel:stopped.stop.kernel,proxy:stopped.stop.proxy},{kernel:'stopped',proxy:'restored'});
+ assert.equal(g.disk.get('config/run-state.json'),'');
+ assert.equal((await g.service.view()).running,false);
+});
+test('run-state 里的 pid 已不存在时静默丢弃记录，不误报内核在跑',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const g=fixture(f.disk,{external:{pid:9999}});
+ const state=await g.service.view();
+ assert.equal(state.running,false);
+ assert.equal(state.attachError,null,'内核正常退出后的残留记录不是错误');
+ assert.equal(g.disk.get('config/run-state.json'),'','过期记录要清掉，避免每次都读');
+});
+test('run-state 的 secret 指纹对不上时丢弃记录并报 KERNEL_ATTACH_FAILED',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const record=JSON.parse(f.disk.get('config/run-state.json'));
+ const g=fixture(f.disk,{external:{pid:record.pid}});
+ g.disk.set('config/run-state.json',JSON.stringify({...record,secretFingerprint:'0'.repeat(16)}));
+ const state=await g.service.view();
+ assert.equal(state.running,false);
+ assert.equal(state.attachError.code,'KERNEL_ATTACH_FAILED');
+ assert.equal(state.errorCode,'KERNEL_ATTACH_FAILED');
+ assert.equal(g.disk.get('config/run-state.json'),'');
+});
+test('残留内核在跑但控制器不可达：不谎报运行中，停止仍按 pid 杀干净',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const record=JSON.parse(f.disk.get('config/run-state.json'));
+ const g=fixture(f.disk,{external:{pid:record.pid},controller:false,attachCooldownMs:0});
+ const state=await g.service.view();
+ assert.equal(state.running,false,'控制器没应答就不能当成运行中');
+ assert.equal(state.attachError.code,'KERNEL_ATTACH_FAILED');
+ assert.equal(state.attachError.cause,'CONTROLLER_UNREACHABLE');
+ const stopped=await g.service.stop();
+ assert.deepEqual(g.stats().kills,[record.pid],'停止必须按落盘 pid 结束残留内核');
+ assert.equal(stopped.stop.kernel,'stopped');
+});
+// 现象 B：系统代理恢复失败不该让整次停止失败，更不该拦住杀内核。
+test('系统代理恢复记录无效只降级为警告，内核照样停干净',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ f.runtime.proxy.restore=async()=>{const error=Error('系统代理恢复记录无效');error.code='PROXY_RESTORE_RECORD_INVALID';throw error};
+ const state=await f.service.stop();
+ assert.equal(f.stats().up,false);assert.equal(f.stats().stops,1);
+ assert.deepEqual({kernel:state.stop.kernel,proxy:state.stop.proxy,code:state.stop.code},
+  {kernel:'stopped',proxy:'failed',code:'PROXY_RESTORE_RECORD_INVALID'});
+ assert.match(state.error,/内核已停止/);
+ assert.match(state.error,/PROXY_RESTORE_RECORD_INVALID/);
+ assert.equal(state.running,false);
+});
+test('注册表读写失败带代码同样只降级：内核已停止 + 系统代理恢复失败（原因码）',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ f.runtime.proxy.restore=async()=>{const error=Error('恢复系统代理失败');error.code='PROXY_REGISTRY_WRITE_FAILED';throw error};
+ const state=await f.service.stop();
+ assert.equal(f.stats().up,false);
+ assert.equal(state.stop.proxy,'failed');
+ assert.equal(state.stop.code,'PROXY_REGISTRY_WRITE_FAILED');
+ assert.match(state.error,/PROXY_REGISTRY_WRITE_FAILED/);
+});
+// 现象 D：换节点后 IP 信息仍是旧节点的出口。
+test('换节点后服务端清空出口 IP 缓存，不再返回旧节点出口',async()=>{
+ const f=fixture();await f.service.save(kernel);const a=await add(f);
+ await f.service.reload();await settled(f.service);await f.service.start();
+ let calls=0;
+ f.runtime.proxiedGet=async()=>{calls++;return {status:'success',country:'日本',countryCode:'JP',as:'AS2516  KDDI',
+  isp:'KDDI',org:'KDDI Corporation',regionName:'东京',city:'千代田',timezone:'Asia/Tokyo',query:`203.0.113.${calls}`}};
+ assert.equal((await f.service.ipInfo()).ip,'203.0.113.1');
+ assert.equal((await f.service.ipInfo()).ip,'203.0.113.1');
+ assert.equal(calls,1,'60 秒内命中缓存');
+ const main=(await f.service.view()).groups.find(g=>g.name==='🚀 节点选择');
+ const target=main.nodes.find(node=>node.sourceId);
+ await f.service.select({group:'🚀 节点选择',name:target.name});
+ assert.equal((await f.service.ipInfo()).ip,'203.0.113.2','换节点后必须重新查询，不能返回旧出口');
+ assert.equal(calls,2);
+ await f.service.stop();
+});
+test('网站测试区分「节点不通」与「控制器超时」',async()=>{
+ const f=fixture();await f.service.save(kernel);await add(f);
+ await f.service.reload();await settled(f.service);await f.service.start();
+ f.breakDelay(Object.assign(Error('mihomo 控制器请求超时'),{code:'CONTROLLER_TIMEOUT'}));
+ const timedOut=await f.service.siteTest();
+ assert.ok(timedOut.sites.every(site=>site.kind==='controller'&&site.code==='CONTROLLER_TIMEOUT'));
+ assert.ok(timedOut.sites.every(site=>site.ok===false&&site.delay===null));
+ assert.match(timedOut.sites[0].reason,/控制器超时/);
+ f.breakDelay(Error('节点不通'));
+ const refused=await f.service.siteTest();
+ assert.ok(refused.sites.every(site=>site.kind==='node'&&site.code===null),'自造错误码不进统一映射');
+ assert.match(refused.sites[0].reason,/节点不通/);
+ await f.service.stop();
 });
 
 // TUN 由 SYSTEM 服务托管、普通模式由本进程 spawn，两者抢同一个控制器端口：切 TUN
@@ -345,7 +477,7 @@ test('内核本来停着时切 TUN 只写配置，不顺手拉起内核',async()
 test('TUN 服务没装时拒绝切换，且不动正在跑的内核',async()=>{
  const f=fixture();await f.service.save(kernel);await f.service.start();
  const before=f.stats();
- await assert.rejects(f.service.tunSwitch({enable:true}),/请先在设置里安装 TUN 服务/);
+ await assert.rejects(f.service.tunSwitch({enable:true}),error=>error.code==='TUN_NOT_INSTALLED');
  assert.equal(f.stats().stops,before.stops,'拒绝时不该停内核');
  assert.equal(f.stats().up,true);
  assert.equal((await f.service.view({controller:false})).tun.enable,false);
@@ -374,3 +506,22 @@ test('出口 IP：运行时缺能力才报不支持，代理不通报查询失�
  await f.service.stop();
 });
 
+
+// t14：校验错误统一挂码，文案由 shared/errors.mjs 按 code 查表（本分支码表未合入时 message 为回退文案，
+// 断言一律按 code；高频码 KERNEL_NOT_RUNNING / KERNEL_RUNNING_LOCK / PORT_RANGE_INVALID /
+// SUBSCRIPTION_URL_INVALID / NODE_UNAVAILABLE 分别在各自场景测试里覆盖）。
+test('校验错误统一挂码：无节点、组失效、未启动路径都带 code',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ // 无订阅时叶子节点不存在：NODE_UNAVAILABLE。
+ await assert.rejects(f.service.siteTest(),error=>error.code==='NODE_UNAVAILABLE');
+ // 节点不在组里：NODE_STALE。
+ await assert.rejects(f.service.select({group:'🚀 节点选择',name:'[sub-00000000-0000-0000-0000-000000000001] ghost'}),error=>error.code==='NODE_STALE');
+ // 内核在跑但模式值非法：KERNEL_STATE_INVALID（与「没启动」是两种用户动作，不能合并）。
+ await assert.rejects(f.service.mode({mode:'sideways'}),error=>error.code==='KERNEL_STATE_INVALID');
+ await f.service.stop();
+ // 停止后：KERNEL_NOT_RUNNING。
+ await assert.rejects(f.service.details({section:'rules'}),error=>error.code==='KERNEL_NOT_RUNNING');
+ await assert.rejects(f.service.select({group:'🚀 节点选择',name:'x'}),error=>error.code==='KERNEL_NOT_RUNNING');
+ await assert.rejects(f.service.mode({mode:'rule'}),error=>error.code==='KERNEL_NOT_RUNNING');
+ await assert.rejects(f.service.mode({mode:'sideways'}),error=>error.code==='KERNEL_NOT_RUNNING');
+});

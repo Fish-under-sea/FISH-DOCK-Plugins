@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createProxyLease, createRuntime, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet} from './runtime.mjs';
+import {createProxyLease, createRuntime, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet, killProcess} from './runtime.mjs';
 import {createServer} from 'node:http';
 import {mkdtemp,writeFile,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -18,8 +18,7 @@ test('异常后新实例可恢复持久化代理快照，持久化失败不更�
  await createProxyLease({storage,adapter}).enable(7895);await createProxyLease({storage,adapter}).restore();assert.equal(live.ProxyEnable,0);
  const broken={read:async()=>null,write:async()=>{throw Error('disk-full')}};await assert.rejects(createProxyLease({storage:broken,adapter}).enable(7895));assert.equal(writes,2);
 });
-test('mihomo uses independent local file providers with stable source prefixes and no subscription URL',()=>{
- const a='sub-00000000-0000-0000-0000-000000000001',b='sub-00000000-0000-0000-0000-000000000002';
+test('mihomo uses independent local file providers with stable source prefixes and no subscription URL',()=>{ const a='sub-00000000-0000-0000-0000-000000000001',b='sub-00000000-0000-0000-0000-000000000002';
  const c=kernelConfig({mixedPort:7895,controllerPort:9099,secret:'synthetic',dataDirectory:'D:/synthetic',subscriptions:[{id:a,enabled:true},{id:b,enabled:true}]});
  assert.equal(c['external-controller'],'127.0.0.1:9099');assert.equal(c['allow-lan'],false);
  assert.deepEqual(c['proxy-groups'][0].use,[a,b]);
@@ -168,6 +167,37 @@ test('TUN 服务还托管着内核时才需要交还，其余状态不误停',()
  assert.equal(tunHandoverNeeded(null),false);
  assert.equal(tunHandoverNeeded(undefined),false);
 });
+// #14 现象 B 的直接成因：记录被别的程序改过（TUN / 其他代理）→ 每次 stop 都失败。
+// 「记录对不上」要降级成带 code 的可诊断错误，并把租约丢掉，别让它反复拖垮停止。
+test('系统代理恢复记录无效：带 code、丢弃租约，且不拦住下一次接管',async()=>{
+ let saved=JSON.stringify({schema:2,previous:{ProxyEnable:0}});
+ const live={ProxyEnable:1,ProxyServer:'foreign:8888',ProxyOverride:null};
+ const store={read:async()=>saved,write:async(c,n,v)=>{saved=v}};
+ const adapter={read:async()=>({...live}),write:async value=>{Object.assign(live,value)}};
+ const lease=createProxyLease({storage:store,adapter});
+ await assert.rejects(lease.restore(),error=>error.code==='PROXY_RESTORE_RECORD_INVALID');
+ assert.equal(saved,'','坏记录要丢弃，否则每次停止都失败');
+ assert.equal(lease.active(),false);
+ await lease.enable(7895);
+ assert.equal(live.ProxyServer,'127.0.0.1:7895');
+});
+test('注册表读写失败各有独立错误码；写失败保留租约，下次停止还能重试',async()=>{
+ const owned={ProxyEnable:1,ProxyServer:'127.0.0.1:7895',ProxyOverride:'<local>'};
+ let saved=JSON.stringify({schema:1,previous:{ProxyEnable:0,ProxyServer:null,ProxyOverride:null},owned});
+ const store={read:async()=>saved,write:async(c,n,v)=>{saved=v}};
+ const readOnly={read:async()=>({...owned}),write:async()=>{throw Error('denied')}};
+ await assert.rejects(createProxyLease({storage:store,adapter:readOnly}).restore(),
+  error=>error.code==='PROXY_REGISTRY_WRITE_FAILED');
+ assert.ok(saved.length>0,'写失败时保留租约，下次停止仍可重试');
+ const broken={read:async()=>{throw Error('io')},write:async()=>{throw Error('io')}};
+ await assert.rejects(createProxyLease({storage:broken,adapter:readOnly}).restore(),
+  error=>error.code==='PROXY_REGISTRY_READ_FAILED');
+});
+test('killProcess 对已退出/非法 pid 直接成功，不需要调用方先判活',async()=>{
+ assert.equal(await killProcess(0),true);
+ assert.equal(await killProcess(-1),true);
+ assert.equal(await killProcess(2147483646,{timeoutMs:200,step:20}),true,'不存在的 pid 视为已结束');
+});
 // 出口 IP 查询能力必须由 runtime 交出去：service 用 runtime.proxiedGet 判断
 // 「运行时是否支持查询出口 IP」。漏了这一项，页面就永远显示那句话。
 test('runtime 暴露 proxiedGet，service 才能真正经代理查询出口 IP',()=>{
@@ -175,4 +205,14 @@ test('runtime 暴露 proxiedGet，service 才能真正经代理查询出口 IP',
  const runtime=createRuntime(context);
  assert.equal(typeof runtime.proxiedGet,'function');
  assert.equal(runtime.proxiedGet,proxiedGet);
+});
+// 插件重载后 attach 到的内核不是本实例 spawn 的，只能按 pid 结束：runtime 必须交出这个能力。
+test('runtime 交出 kill/processAlive，service 才能结束残留内核',()=>{
+ const context={dataDirectory:'D:/synthetic/.fishplugin-clash',storage:{read:async()=>null,write:async()=>{}},tun:null};
+ const runtime=createRuntime(context);
+ assert.equal(typeof runtime.kill,'function');
+ assert.equal(runtime.kill,killProcess);
+ assert.equal(typeof runtime.processAlive,'function');
+ assert.equal(runtime.processAlive(process.pid),true);
+ assert.equal(runtime.processAlive(2147483646),false);
 });
