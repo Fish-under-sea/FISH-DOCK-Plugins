@@ -85,6 +85,23 @@ const params=new URLSearchParams(location.search);
 document.documentElement.dataset.theme=params.get('theme')==='dark'?'dark':'light';
 document.documentElement.lang='zh-CN';
 for(const el of document.querySelectorAll('[data-zh]'))el.textContent=el.dataset.zh;
+// 版本号由渲染器从 catalog/stable.json 传入（?version=），不在这里写死：
+// 之前硬编码 2.1.0，发 2.1.2 时文档改了、图片还挂在旧版本上。
+{
+  const v=params.get('version');
+  if(v){
+    const card=document.querySelector('#stat-version');
+    if(card){
+      const number=card.querySelector('.number');if(number)number.textContent=v;
+      const label=card.querySelector('.metric-label');
+      if(label){
+        label.dataset.zh=`Clash · Magpie ${v}`;
+        label.dataset.en=`CLASH · MAGPIE ${v}`;
+        label.textContent=document.documentElement.lang==='en'?label.dataset.en:label.dataset.zh;
+      }
+    }
+  }
+}
 </script>
 </body>
 </html>
