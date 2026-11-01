@@ -501,6 +501,25 @@ test('原始 message 恰好是原型键名时也不当成文案，仍落到「�
   assert.ok(alertsOf(f.root.innerHTML).includes(`系统代理失败：${errorMessages.UNKNOWN_ERROR}`),`${message} 落到兜底`);
  }
 });
+// t14（Clash 校验补码）用到的 28 个码：页面必须原话照旧，不能落到「未识别错误」。
+test('Clash 校验码沿用原话原文，按码查表而不是落到「未识别错误」',async()=>{
+ const codes=['KERNEL_NOT_RUNNING','KERNEL_RUNNING_LOCK','PORT_RANGE_INVALID','SUBSCRIPTION_URL_INVALID',
+  'NODE_UNAVAILABLE','TUN_UNSUPPORTED','SUBSCRIPTION_UPDATING'];
+ for(const code of codes){
+  const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+  const error=new Error('raw backend text');error.code=code;
+  f.throwOn('clash.proxy',error);f.click('proxy');await flush();
+  const alerts=alertsOf(f.root.innerHTML);
+  assert.ok(alerts.includes(`系统代理失败：${errorMessages[code]}`),`${code} 显示原话`);
+  assert.equal(alerts.some(text=>text.includes(errorMessages.UNKNOWN_ERROR)),false,`${code} 不再兜底`);
+ }
+ // 用户看到的话与原实现逐字一致（旧页面上最常见的几句）
+ assert.equal(errorMessages.KERNEL_RUNNING_LOCK,'请先停止内核再更改配置');
+ assert.equal(errorMessages.KERNEL_NOT_RUNNING,'内核尚未启动');
+ assert.equal(errorMessages.PORT_RANGE_INVALID,'端口应为 1024–65535');
+ assert.equal(errorMessages.DETAIL_SECTION_INVALID,'详情类别无效');
+ assert.equal(errorMessages.PLUGIN_STOPPING,'插件正在停用');
+});
 test('IP 查询与测速失败同样按码呈现，无码异常退到「未识别错误」',async()=>{
  const f=fixture();await flush();f.row.running=true;
  const coded=new Error('controller said nothing');coded.code='CONTROLLER_TIMEOUT';
