@@ -17,7 +17,7 @@ function fixture(disk=new Map(),options={}) {
  const external=options.external?{alive:true,...options.external}:null;
  const controllerUp=options.controller!==false;
  // 夹具层的 options 在 request(path,options) 里会被参数遮蔽，先取出来再用。
- const externalDown=options.externalController===false;
+ let externalDown=options.externalController===false;
  const kernelPid=options.pid??4242;
  const context={dataDirectory:'D:/synthetic/.fishplugin-clash',
   storage:{read:async(c,n)=>disk.get(`${c}/${n}`)??null,write:async(c,n,v)=>disk.set(`${c}/${n}`,v)},
@@ -72,6 +72,8 @@ function fixture(disk=new Map(),options={}) {
   return null;
  }});
  return {service,disk,requests,updates,runtime,context,external,stats:()=>({starts,stops,up,owned,kills}),fail:()=>{fail=true},
+  // 模拟「残留内核的控制器从不通恢复为可达」。
+  setExternalController:on=>{externalDown=on===false},
   breakDelay:error=>{delayError=error},
   block:()=>{let release;blocked=new Promise(r=>release=r);return release}};
 }
@@ -426,6 +428,32 @@ test('残留回收遇到被复用的 pid：不杀外部进程，照常起自己�
  assert.deepEqual(g.stats().kills,[],'回收路径也不得对外部进程发信号');
  assert.equal(g.stats().starts,1,'确认不是残留内核之后才拉起新内核');
  assert.equal(state.running,true);
+});
+// 复审 t19 #2：stop() 在 attach 冷却窗口内走到 record 分支时，必须先接管成句柄再停（不盲杀）。
+test('停止时 attach 还在冷却：先接管再停，仍按句柄结束内核',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const record=JSON.parse(f.disk.get('config/run-state.json'));
+ // 先让一次 view() 的 attach 失败（控制器不通），进入冷却窗口。
+ const g=fixture(f.disk,{external:{pid:record.pid},externalController:false,attachCooldownMs:5000});
+ const first=await g.service.view();
+ assert.equal(first.running,false,'冷却期间不能谎报运行中');
+ // 控制器恢复可达，但冷却还没到：stop 必须重新接管成句柄，再走正常停止路径。
+ g.setExternalController(true);
+ const stopped=await g.service.stop();
+ assert.deepEqual(g.stats().kills,[record.pid],'接管成句柄后才结束它');
+ assert.equal(stopped.stop.kernel,'stopped');
+ assert.equal(g.disk.get('config/run-state.json'),'','停完记录要清掉');
+});
+// 复审 t19 #3：取不到进程启动时刻时保守不杀，但页面要能说明「无法确认残留内核」。
+test('取不到启动时刻时不杀残留进程，并把原因交给页面显示',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const record=JSON.parse(f.disk.get('config/run-state.json'));
+ const g=fixture(f.disk,{external:{pid:record.pid},controller:false,attachCooldownMs:0,externalStartedAt:null});
+ const stopped=await g.service.stop();
+ assert.deepEqual(g.stats().kills,[],'取不到启动时刻就不发信号');
+ assert.equal(stopped.stop.kernel,'absent');
+ assert.equal(stopped.attachError.code,'KERNEL_ATTACH_FAILED');
+ assert.match(stopped.error,/无法确认残留内核/,'页面要能看到原因，而不是显示成已停止');
 });
 // 现象 B：系统代理恢复失败不该让整次停止失败，更不该拦住杀内核。
 test('系统代理恢复记录无效只降级为警告，内核照样停干净',async()=>{

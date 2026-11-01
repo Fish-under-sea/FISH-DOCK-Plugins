@@ -412,6 +412,24 @@ test('系统信息补齐处理器、内存、内核来源与插件版本',async(
  assert.ok(html.includes('内置 mihomo'),'内核来源');
  assert.ok(html.includes('插件 v2.0.3'));
 });
+// 换节点会换出口：页面必须重新查一次 IP（#14 现象 D 的页面半边）。服务端 select() 已清 ipCache，
+// 页面这层若不清 ip/ipAsked，bind() 末尾的自动查询条件永远不成立，面板会一直显示旧出口。
+test('换节点成功后重新查询出口 IP 并替换面板',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ f.click('view');await flush();await flush();
+ const ipCalls=()=>f.calls.filter(c=>c.method==='clash.ipInfo').length;
+ assert.equal(ipCalls(),1,'首次进概览查一次出口 IP');
+ assert.ok(f.root.innerHTML.includes('203.0.113.***'),'先显示旧出口（脱敏）');
+ // 换到另一个节点，服务端会给出新的出口。
+ f.setIpReply({available:true,ip:'198.51.100.23',country:'美国',countryCode:'US',
+  asn:'AS64500',isp:'ExampleNet',location:'美国 · 洛杉矶',timezone:'America/Los_Angeles'});
+ f.element('node-pick').onchange({target:{value:'[sub-00000000-0000-0000-0000-000000000001] 香港节点'}});
+ await flush();await flush();
+ assert.equal(ipCalls(),2,'换节点后必须再查一次出口 IP');
+ assert.ok(f.root.innerHTML.includes('198.51.100.***'),'面板换成新出口');
+ assert.equal(f.root.innerHTML.includes('203.0.113.***'),false,'旧出口不再显示');
+ assert.ok(f.root.innerHTML.includes('AS64500'),'ASN 也跟着新结果走');
+});
 // 出口 IP 查不到不是错误：能力缺失或代理不通都属于「暂时没有」，不该顶一条红字告警。
 test('出口 IP 不可用时按普通提示显示，不用红色告警',async()=>{
  const f=fixture();await flush();f.row.running=true;

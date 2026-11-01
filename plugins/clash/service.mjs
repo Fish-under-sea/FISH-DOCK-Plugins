@@ -21,26 +21,41 @@ const defaultPidAlive=pid=>{
   try{process.kill(pid,0);return true}catch{return false}
 };
 // pid 复用只能靠「这个 pid 的实际启动时刻」挡住：与宿主 plugin_runtime.rs 的 running_for(pid)+
-// ORPHAN_SLACK_MS 同口径。取不到（无权限、进程已退、平台不认）就返回 null，
+// ORPHAN_SLACK_MS 同口径。取不到（无权限、进程已退、平台不认、PowerShell 全不可用）就返回 null，
 // 调用方一律当作「不是本插件的内核」，不发信号。
 const PID_REUSE_SLACK_MS=5000;
+// 解释器候选：FISH_PWSH 覆盖（tun.mjs 也用这个）→ powsh → Windows PowerShell 5.1
+// （5.1 同样能算 Get-Process 的 StartTime；没有 pwsh 的机器不能让清理能力整个失效）。
+function powershellCandidates() {
+  const list=[process.env.FISH_PWSH,'pwsh','powershell.exe'].filter(value=>typeof value==='string'&&value.trim());
+  return [...new Set(list)];
+}
 function defaultProcessStartedAt(pid) {
-  return new Promise(resolve=>{
-    const done=value=>resolve(Number.isFinite(value)&&value>0?value:null);
-    if(!Number.isInteger(pid)||pid<=0)return done(null);
-    const windows=process.platform==='win32';
-    // 不把 pid 拼进脚本源码以外的地方；PowerShell 只回「已运行毫秒」，由这里换算成启动时刻。
-    const args=windows
-      ?['-NoProfile','-NonInteractive','-Command',`[long]((Get-Date).ToUniversalTime()-(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime()).TotalMilliseconds`]
-      :['-o','etimes=','-p',String(pid)];
-    execFile(windows?'pwsh':'ps',args,{windowsHide:true,timeout:3000},(error,stdout)=>{
-      if(error)return done(null);
-      const text=String(stdout??'').trim();
-      if(windows)return done(Date.now()-Number(text));
-      const seconds=Number(text.split(/\s+/)[0]);
-      return done(Number.isFinite(seconds)?Date.now()-seconds*1000:null);
-    });
+  if(!Number.isInteger(pid)||pid<=0)return Promise.resolve(null);
+  const windows=process.platform==='win32';
+  const startedAtOf=output=>{
+    const text=String(output??'').trim();
+    if(windows){
+      const elapsed=Number(text);
+      return Number.isFinite(elapsed)&&elapsed>=0?Date.now()-elapsed:null;
+    }
+    const seconds=Number(text.split(/\s+/)[0]);
+    return Number.isFinite(seconds)?Date.now()-seconds*1000:null;
+  };
+  const run=(file,args)=>new Promise(resolve=>{
+    execFile(file,args,{windowsHide:true,timeout:3000},(error,stdout)=>resolve(error?null:startedAtOf(stdout)));
   });
+  const valid=value=>Number.isFinite(value)&&value>0;
+  if(!windows)return run('ps',['-o','etimes=','-p',String(pid)]).then(value=>valid(value)?value:null);
+  const script=`[long]((Get-Date).ToUniversalTime()-(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime()).TotalMilliseconds`;
+  const candidates=powershellCandidates();
+  return (async()=>{
+    for(const file of candidates){
+      const value=await run(file,['-NoProfile','-NonInteractive','-Command',script]);
+      if(valid(value))return value;
+    }
+    return null;
+  })();
 }
 // 落盘记录必须自证完整才可信：字段不全就当作「没有残留内核」，不能让坏记录冒充运行中。
 function runStateValue(value) {
@@ -189,7 +204,12 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       catch{/* 控制器不通：接着用启动时刻判定是不是同一个进程 */}
     }
     const actual=await pidStartedAt(record.pid);
-    if(!Number.isFinite(actual))return 'foreign';
+    if(!Number.isFinite(actual)){
+      // 连启动时刻都取不到：保守地不杀，但要让页面能说清楚，别让用户以为「已停止」。
+      attachError={code:'KERNEL_ATTACH_FAILED',
+        message:'无法确认残留内核的启动时刻，已保守地不结束该进程；如确认是 mihomo 残留内核，请在任务管理器中结束它'};
+      return 'foreign';
+    }
     return Math.abs(actual-record.startedAt)<=PID_REUSE_SLACK_MS?'reclaim':'foreign';
   }
   // attach 三重校验：pid 存活（服务托管模式看控制器）、secret 指纹一致、/version 可达。
@@ -569,7 +589,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       // 插件重载过就只剩落盘记录：先尝试 attach，才能认出「内核其实还在跑」。
       await ready();
       const result={kernel:'absent',proxy:'skipped',code:null,message:'',ok:true};
-      let kernelError=null,keepRecord=false;
+      let kernelError=null,keepRecord=false,keepAttachError=false;
       try{
         if(running){await running.stop();result.kernel='stopped'}
         else{
@@ -592,6 +612,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
               }
             }
             // verdict==='foreign'：pid 的启动时刻对不上（多半已被系统复用给别的程序），不杀。
+            // 如果是「取不到启动时刻」，residualKernel 已把原因写进 attachError：留给页面说明白。
+            else if(verdict==='foreign'&&attachError?.code==='KERNEL_ATTACH_FAILED'){
+              keepAttachError=true;result.message=attachError.message;
+            }
           }
         }
       }catch(error){
@@ -605,7 +629,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       // 可接管的活内核要留住记录，否则下次启动就把它当成没有内核、再起一个。
       if(!keepRecord)await clearRunState();
       attachTask=null;attachRetryAt=0;
-      if(!keepRecord)attachError=null;
+      if(!keepRecord&&!keepAttachError)attachError=null;
       // 系统代理恢复：只有带 code 的适配层错误才降级为警告；
       // 没有 code 的异常说明不是已知状况，保持原有「停止失败」语义，但带上结构化结果。
       let proxyError=null;

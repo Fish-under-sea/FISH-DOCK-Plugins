@@ -126,7 +126,9 @@
    if(method==='reload')say('已开始更新，完成后显示节点数与结果','ok');
    if(method==='installTunService')say('TUN 服务已安装','ok');
    if(method==='uninstallTunService')say('TUN 服务已卸载','ok');
-   if(method==='select')sites=null;
+   // 换节点也会换出口：站点测试与出口 IP 的旧值都不能留。ipAsked 必须一起清掉，
+   // 否则 bind() 末尾的自动查询条件不成立，面板会一直显示上一个节点的出口（#14 现象 D）。
+   if(method==='select'){sites=null;ip=null;ipAsked=false;ipError=''}
    // 内核重启后出口 IP 会变，缓存不能沿用。
    if(method==='start'||method==='stop'){ip=null;ipAsked=false;ipError='';sites=null;nodeDelays={}}
    return true;
