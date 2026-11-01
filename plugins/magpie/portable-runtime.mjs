@@ -8,6 +8,35 @@ import {serviceError} from '../../shared/errors.mjs';
 async function exists(file){try{await fs.stat(file);return true}catch(error){if(error.code==='ENOENT')return false;throw error}}
 async function digest(file){const hash=createHash('sha256');for await(const chunk of createReadStream(file))hash.update(chunk);return hash.digest('hex')}
 
+// 回选缓存只留一份：上一版留给「换回旧原生版本」（upgrade.test.mjs 的契约），
+// 再往前的历史副本一律算堆积。复制临时名（.binary-* / .data-*）比宽限期新的
+// 可能是另一个准备者正在写，不碰。
+const KEEP_PREVIOUS=1,STAGING_GRACE=10*60*1000;
+async function aged(entry,grace=0){
+ try{const stat=await fs.stat(entry);return Date.now()-stat.mtimeMs>grace}catch{return false}
+}
+// 历史副本每次更新都多一个 70MB，复制临时名随强杀堆积。发布并校验当前副本成功
+// 后清掉它们；正在被占用的旧副本本就删不掉（EBUSY/EPERM），尽力而为，绝不因
+// 清理失败拦下启动，也不碰 data 与 marker。
+async function pruneRuntime(directory,current){
+ let names;try{names=await fs.readdir(directory)}catch{return}
+ const previous=[];
+ for(const name of names){
+  if(name===current||name==='data'||name==='.portable')continue;
+  const entry=path.join(directory,name);
+  if(/^magpie-[0-9a-f]{64}\.exe$/.test(name)){
+   try{previous.push({entry,time:(await fs.stat(entry)).mtimeMs})}catch{}
+   continue;
+  }
+  if(!/^\.(?:binary|data)-/.test(name))continue;
+  if(await aged(entry,STAGING_GRACE))await fs.rm(entry,{recursive:true,force:true}).catch(()=>{});
+ }
+ // 最新的那一个留在回选缓存里，其余历史副本立即清理。
+ previous.sort((left,right)=>right.time-left.time);
+ for(const {entry} of previous.slice(KEEP_PREVIOUS))
+  await fs.rm(entry,{recursive:true,force:true}).catch(()=>{});
+}
+
 // 新旧程序并存，原便携 data 位置固定，旧客户端的程序路径始终保留。
 export async function preparePortableRuntime(source,credentials,{signal,onPhase=()=>{}}={}) {
  const directory=path.join(credentials,'magpie-runtime'),data=path.join(directory,'data');
@@ -62,5 +91,6 @@ export async function preparePortableRuntime(source,credentials,{signal,onPhase=
   throw serviceError('RUNTIME_PREPARE_FAILED');
  }
  signal?.throwIfAborted();
+ await pruneRuntime(directory,path.basename(executable));
  return {executable,data,sha256:sourceHash};
 }

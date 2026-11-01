@@ -30,3 +30,36 @@ test('便携启动复制独立服务并迁移旧资料，重复启动保留新�
  assert.equal(await fs.readFile(path.join(ready.data,'providers.json'),'utf8'),'synthetic-edited');
  assert.deepEqual(await fs.readdir(path.dirname(source)),['magpie.exe']);
 });
+
+test('成功准备后清掉过期副本与过期复制残留：目录只剩当前副本',async()=>{
+ const root=await fs.mkdtemp(path.join(process.env.FISH_TEST_TMP||os.tmpdir(),['magpie','prune'].join('-')));
+ const source=path.join(root,'package','magpie.exe'),credentials=path.join(root,'plugin','credentials');
+ await fs.mkdir(path.dirname(source),{recursive:true});await fs.writeFile(source,'binary-v1');
+ const first=await preparePortableRuntime(source,credentials);
+ const directory=path.dirname(first.executable);
+ const agedCopy=path.join(directory,`magpie-${'f'.repeat(64)}.exe`);
+ const agedBinary=path.join(directory,`.binary-${'1'.repeat(8)}`);
+ const agedData=path.join(directory,`.data-${'2'.repeat(8)}`);
+ const inflight=path.join(directory,`.binary-${'3'.repeat(8)}`);
+ const cached=path.join(directory,`magpie-${'4'.repeat(64)}.exe`);
+ await fs.writeFile(agedCopy,'old-copy');await fs.writeFile(agedBinary,'partial');
+ await fs.mkdir(agedData);await fs.writeFile(path.join(agedData,'providers.json'),'partial');
+ await fs.writeFile(inflight,'copying');await fs.writeFile(cached,'previous-build');
+ // 历史副本堆了 4 个（含 agedCopy），成功启动后只该留「当前 + 一个回选缓存」。
+ const stacked=Array.from({length:3},(_,index)=>path.join(directory,`magpie-${String(index+5).repeat(64)}.exe`));
+ for(const entry of stacked)await fs.writeFile(entry,'old-copy');
+ const past=new Date(Date.now()-60*60*1000);
+ for(const entry of [agedCopy,agedBinary,agedData,...stacked])await fs.utimes(entry,past,past);
+ await fs.writeFile(source,'binary-v2');
+ const next=await preparePortableRuntime(source,credentials);
+ const names=await fs.readdir(directory);
+ // 过期的历史副本与复制残留清掉，正在回选的上一版与正在写的临时名原样保留。
+ for(const gone of [agedCopy,agedBinary,agedData,...stacked])assert.equal(names.includes(path.basename(gone)),false,path.basename(gone));
+ assert.ok(names.includes(path.basename(inflight)));
+ assert.ok(names.includes(path.basename(cached)));
+ assert.ok(names.includes(path.basename(next.executable)));
+ const copies=names.filter(name=>/^magpie-[0-9a-f]{64}\.exe$/.test(name));
+ assert.deepEqual(copies.sort(),[path.basename(next.executable),path.basename(cached)].sort());
+ assert.match(path.basename(next.executable),/^magpie-[0-9a-f]{64}\.exe$/);
+ assert.equal(await fs.readFile(next.executable,'utf8'),'binary-v2');
+});
