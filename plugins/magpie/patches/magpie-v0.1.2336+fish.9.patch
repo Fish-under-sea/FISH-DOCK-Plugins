@@ -1785,16 +1785,14 @@ index b7d4d23..460b0db 100644
  
 diff --git a/internal/provider/brand_icon.go b/internal/provider/brand_icon.go
 new file mode 100644
-index 0000000..7c7d966
+index 0000000..0e876df
 --- /dev/null
 +++ b/internal/provider/brand_icon.go
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,195 @@
 +package provider
 +
 +import (
-+	"crypto/sha256"
 +	"embed"
-+	"encoding/hex"
 +	"os"
 +	"path/filepath"
 +	"sort"
@@ -1970,12 +1968,11 @@ index 0000000..7c7d966
 +		if err != nil {
 +			continue
 +		}
-+		ext := iconExt(b)
-+		if ext == "" {
-+			continue
++		// 与 StoreIcon 同一处规则（iconStoredName）：算出来的名字必须就是写盘
++		// 那个名字，否则 pruneIcons 的 keep 集合会跟盘上对不上。
++		if name, ok := iconStoredName(b); ok {
++			out[id] = name
 +		}
-+		sum := sha256.Sum256(b)
-+		out[id] = hex.EncodeToString(sum[:8]) + "." + ext
 +	}
 +	return out
 +})
@@ -1987,13 +1984,12 @@ index 0000000..7c7d966
 +	defer brandCache.Unlock()
 +	f()
 +}
-\ No newline at end of file
 diff --git a/internal/provider/brand_icon_prune_test.go b/internal/provider/brand_icon_prune_test.go
 new file mode 100644
-index 0000000..9199f46
+index 0000000..74e2fb5
 --- /dev/null
 +++ b/internal/provider/brand_icon_prune_test.go
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,122 @@
 +package provider
 +
 +import (
@@ -2088,7 +2084,34 @@ index 0000000..9199f46
 +		t.Errorf("关着时不该有名字：%v", names)
 +	}
 +}
-\ No newline at end of file
++
++// 内嵌素材算名与 StoreIcon 写盘算名必须同源：同一份字节 → 同一个文件名。
++// 这两边一旦各写一遍规则，改了一边就会让 pruneIcons 的 keep 集合跟盘上对不上，
++// 把刚写下去的图当没人用删掉——那正是 #16 里图标抖动的成因。
++func TestBrandIconNamesMatchWhatStoreIconWrites(t *testing.T) {
++	brandHome(t)
++	if err := SetBrand(true); err != nil {
++		t.Fatalf("打开：%v", err)
++	}
++	names := brandStoredNames()
++	for id, src := range brandFiles() {
++		b, err := brandIconFS.ReadFile(src)
++		if err != nil {
++			t.Fatalf("%s：读内嵌素材：%v", id, err)
++		}
++		ic, err := StoreIcon(b)
++		if err != nil {
++			t.Fatalf("%s：StoreIcon：%v", id, err)
++		}
++		name, ok := strings.CutPrefix(ic, iconPrefix)
++		if !ok {
++			t.Fatalf("%s：%q 不是 file: 值", id, ic)
++		}
++		if got := names[id]; got != name {
++			t.Fatalf("%s：内嵌素材算出 %q，StoreIcon 写下的是 %q（两处规则必须同源）", id, got, name)
++		}
++	}
++}
 diff --git a/internal/provider/brand_icon_test.go b/internal/provider/brand_icon_test.go
 new file mode 100644
 index 0000000..60afb57
@@ -4029,10 +4052,46 @@ index 0000000..5c2f86f
 +	}
 +}
 diff --git a/internal/provider/icon.go b/internal/provider/icon.go
-index 66b7553..94dff5f 100644
+index 66b7553..a11cc00 100644
 --- a/internal/provider/icon.go
 +++ b/internal/provider/icon.go
-@@ -281,26 +281,35 @@ func iconExt(b []byte) string {
+@@ -57,8 +57,10 @@ func StoreIcon(data []byte) (string, error) {
+ 	if ext == "" {
+ 		return "", errors.New("not a picture magpie can show: use PNG, JPEG, GIF, WebP, ICO or SVG")
+ 	}
+-	sum := sha256.Sum256(data)
+-	name := hex.EncodeToString(sum[:8]) + "." + ext
++	name, ok := iconStoredName(data)
++	if !ok {
++		return "", errors.New("not a picture magpie can show: use PNG, JPEG, GIF, WebP, ICO or SVG")
++	}
+ 	if err := os.MkdirAll(IconDir(), 0o755); err != nil {
+ 		return "", err
+ 	}
+@@ -68,6 +70,22 @@ func StoreIcon(data []byte) (string, error) {
+ 	return iconPrefix + name, nil
+ }
+ 
++// iconStoredName 是一份图片落盘时的文件名：内容哈希前 8 字节 + 按内容认出的
++// 扩展名，不是 magpie 认得的图片时 false。
++//
++// **这条规则只有这一处实现**：StoreIcon 写盘与品牌素材（brand_icon.go 的
++// brandStoredNames）算名字都走它。两边各写一遍的话，将来改了一边，pruneIcons
++// 的 keep 集合就跟盘上的真实文件名对不上，会把刚写下去的图当没人用删掉——
++// 那正是 #16 里图标抖动的成因。
++func iconStoredName(b []byte) (string, bool) {
++	ext := iconExt(b)
++	if ext == "" {
++		return "", false
++	}
++	sum := sha256.Sum256(b)
++	return hex.EncodeToString(sum[:8]) + "." + ext, true
++}
++
+ // FetchIcon downloads the picture an import link named and keeps it like
+ // any other, returning the Icon value that points at it. It runs when the
+ // user confirms the import, never at parse time; the URL is re-checked here
+@@ -281,26 +299,35 @@ func iconExt(b []byte) string {
  // picked in the editor is stored before its provider is saved, so a fresh
  // one stays.
  func pruneIcons(f file) {
