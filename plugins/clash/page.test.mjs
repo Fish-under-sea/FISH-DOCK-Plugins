@@ -38,7 +38,7 @@ test('圆角只保留 14 与 999 两档',()=>{
 });
 test('弹层用 position:fixed（不被 .pane 的 overflow 裁切）且具备 listbox 八态样式',()=>{
  assert.match(pageCss,/\.listbox\{position:fixed/,'弹层固定定位');
- for(const cls of ['\\.listbox','\\.lb-filter','\\.lb-option','\\.lb-option\\[aria-selected=true\\]','\\.lb-option\\[data-active=true\\]','\\.lb-option\\[aria-disabled=true\\]','\\.lb-empty','\\.lb-loading'])
+ for(const cls of ['\\.listbox','\\.lb-filter','\\.lb-option','\\.lb-option\\[aria-selected=true\\]','\\.lb-option\\[data-active=true\\]','\\.lb-option\\[aria-disabled=true\\]','\\.lb-empty'])
   assert.ok(new RegExp(cls).test(pageCss),'缺少 '+cls);
 });
 test('页面结构含 role=listbox/option/combobox 与 aria 契约',()=>{
@@ -485,4 +485,68 @@ test('IP 查询失败按码呈现，无码异常退到「未识别错误」',asy
  f.throwOn('clash.ipInfo',coded);f.click('view');await flush();await flush();
  assert.ok(f.root.innerHTML.includes(`查询出口 IP 失败：${errorMessages.CONTROLLER_TIMEOUT}`));
  assert.equal(f.root.innerHTML.includes('controller said nothing'),false);
+});
+
+// ───────── t12 修复（t5 findings）回归 ─────────
+// F1：过滤框键入不能被 key() 的 type-ahead 吞掉；可打印键交还原生 input，special 键仍归 listbox。
+test('F1 过滤框键入不吞字符：可打印键交还原生 input，输入后列表按 query 过滤',()=>{
+ const f=fixture();const k=f.hooks();
+ const filterTarget={closest:sel=>sel==='.lb-filter'?{}:null};
+ for(const ch of ['h','k',' ']) assert.equal(k.keyRoute(filterTarget,ch),'native',`过滤框可打印键 ${JSON.stringify(ch)} 应放行`);
+ for(const key of ['ArrowDown','ArrowUp','Home','End','Enter','Escape','Tab']) assert.equal(k.keyRoute(filterTarget,key),'list',`过滤框 ${key} 仍归 listbox`);
+ assert.equal(k.keyRoute(null,'h'),'list','弹层自身仍可 type-ahead');
+ const items=[{label:'HK-03 香港 03'},{label:'JP-01 东京 01'},{label:'HK-09 香港 09'}];
+ // 键入 'hk'：输入框保留 hk（放行给原生），oninput 用 filterItems 过滤后只剩含 hk 的项。
+ assert.deepEqual(k.filterItems(items,'hk').map(i=>i.label),['HK-03 香港 03','HK-09 香港 09']);
+});
+// F2/F3/F6：结构重绘先收弹层；逐条更新用与 UI 判定一致的 ops 键；焦点可见 + 无 loading 死分支。
+test('F2/F3/F6 结构重绘先 closeListbox、逐条更新键一致、焦点可见且无 loading 死分支',()=>{
+ const drawHead=/function draw\(\)\{[\s\S]*?const active=document\.activeElement/.exec(pageJs)?.[0]??'';
+ assert.ok(drawHead.includes('closeListbox(false)'),'draw 入口先 closeListbox(false)');
+ assert.ok(pageJs.includes("{key:'update:'+id}"),'逐条更新传 opts.key=update:id');
+ assert.match(pageCss,/\.combo-trigger:focus-visible/,'combo-trigger 有 focus-visible');
+ assert.match(pageCss,/\.lb-option:focus-visible/,'lb-option 有 focus-visible');
+ assert.equal(/cfg\.loading/.test(pageJs),false,'cfg.loading 死分支已删除');
+});
+// F4：dark 三态对 --layer-1 对比度 ≥6:1（值从 page.css token 读取，不引外部依赖）。
+test('F4 dark 三态对 layer-1 对比度 ≥6:1',()=>{
+ const darkStart=pageCss.indexOf('\n:root{');
+ assert.ok(darkStart>=0,'定位 dark token 块');
+ const lightStart=pageCss.indexOf('\n:root[data-dock-theme=light]',darkStart);
+ assert.ok(lightStart>darkStart,'定位 light token 块');
+ const dark=pageCss.slice(darkStart,lightStart);
+ const get=n=>{const m=new RegExp('--'+n.replace('-','\\-')+':\\s*(#[0-9a-fA-F]{6})').exec(dark);assert.ok(m,`缺少 token --${n}`);return m[1]};
+ const chl=c=>{const v=parseInt(c,16)/255;return v<=0.03928?v/12.92:((v+0.055)/1.055)**2.4};
+ const Lum=hex=>{const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);return 0.2126*chl(r)+0.7152*chl(g)+0.0722*chl(b)};
+ const ratio=(a,b)=>(Math.max(a,b)+0.05)/(Math.min(a,b)+0.05);
+ const layer=Lum(get('layer-1'));
+ for(const tok of ['c-ok','c-warn','c-bad']){
+  const r=ratio(Lum(get(tok)),layer);
+  assert.ok(r>=6,`dark --${tok} 对 layer-1 对比度 ${r.toFixed(2)} < 6`);
+ }
+ assert.equal(get('c-bad').toLowerCase(),'#ff5a4f','dark c-bad 已调亮');
+});
+// F5：stale 时给真切「重试」按钮，点它重放 clash.view（不再是死文本）。
+test('F5 stale 的「重试」是真按钮，点击重放 clash.view',async()=>{
+ const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+ assert.ok(f.buttons().some(b=>b.dataset.action==='retry-view'),'重试是真按钮(data-action)');
+ assert.ok(f.root.innerHTML.includes('retry-inline'),'重试按钮带 retry-inline');
+ const before=f.calls.filter(c=>c.method==='clash.view').length;
+ f.click('retry-view');await flush();await flush();
+ assert.ok(f.calls.filter(c=>c.method==='clash.view').length>before,'点重试重放 clash.view');
+});
+// F7：额度条 .usage-fill 参与局部更新（width 与 hot/warm 随轮询同步，不再冻结）。
+test('F7 额度条随局部更新同步宽度与 hot/warm',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ const id='sub-00000000-0000-0000-0000-000000000001';
+ f.row.subscriptions[0].userInfo={total:1000,used:100,upload:0,download:100,expire:0};
+ f.click('view');await flush();
+ const bar=()=>f.live().find(e=>e.dataset.live==='trafficbar'&&e.dataset.liveId===id);
+ assert.ok(bar(),'额度条带 data-live=trafficbar');
+ const before=f.htmlSets;
+ f.row.subscriptions[0].userInfo={total:1000,used:950,upload:0,download:950,expire:0};
+ await f.fire();await flush();await flush();
+ assert.equal(f.htmlSets,before,'走局部更新，不重建 DOM');
+ assert.match(String(bar().style.width||''),/^95%$/,'宽度更新到 95%');
+ assert.ok(String(bar().className).includes('hot'),'≥90% 用 hot 色');
 });

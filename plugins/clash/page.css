@@ -13,7 +13,8 @@
   --layer-2:#1c1c1e;          /* 卡内次级块：确认条、TUN 框、弹层内行 */
   --hi:rgba(255,255,255,.06); /* dark 专用内高光，替代纯黑上不可见的投影 */
   --shadow:0 0 0 1px var(--line-hair);
-  --c-ok:#30d158;--c-warn:#ffd60a;--c-bad:#ff453a;
+  /* dark 三态对 --layer-1(#0f0f11) 需 ≥6:1；旧 #ff453a 只有 5.62，调亮为 #ff5a4f（≈6.14:1）。 */
+  --c-ok:#30d158;--c-warn:#ffd60a;--c-bad:#ff5a4f;
   --c-ok-bg:rgba(48,209,88,.16);
   --c-bad-bg:rgba(255,69,58,.12);
   --sel-bg:rgba(94,155,255,.16);
@@ -166,6 +167,8 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 .combo-trigger[aria-expanded=true] .chev{transform:rotate(180deg)}
 .combo-trigger .trigger-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .combo-trigger .trigger-delay{margin-left:auto;font-variant-numeric:tabular-nums}
+/* F6：下拉触发器与选项的键盘焦点必须可见（无障碍底线）。 */
+.combo-trigger:focus-visible,.lb-option:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px}
 .listbox{position:fixed;z-index:70;max-height:320px;overflow:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--line-hair);border-radius:14px;
  background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(1.6);backdrop-filter:blur(30px) saturate(1.6);box-shadow:var(--shadow);outline:0}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.listbox{background:var(--layer-1)}}
@@ -184,15 +187,11 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 .lb-option .lb-delay{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dock-muted)}
 .lb-option .check{margin-left:0;color:var(--dock-accent)}
 .lb-empty{padding:8px 12px;font-size:12px;color:var(--dock-muted)}
-.lb-loading{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;color:var(--dock-muted)}
-.spin{width:14px;height:14px;border:2px solid var(--line-hair);border-top-color:var(--dock-accent);border-radius:999px;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
 
-/* 收起箭头在 reduced-motion 下不转，加载环换静态三点 */
+/* 收起箭头在 reduced-motion 下不转 */
 @media(prefers-reduced-motion:reduce){
  .combo-trigger .chev{transition:none}
  .combo-trigger[aria-expanded=true] .chev{transform:none}
- .spin{animation:none;border-top-color:var(--line-hair)}
 }
 
 /* Windows 高对比度：改用系统色，关掉 blur 与内高光 */

@@ -152,6 +152,13 @@
   for(let k=1;k<=len;k++){const i=(base+k)%len;if(String(items[i].label??'').toLowerCase().startsWith(q))return i}
   return -1;
  }
+ // 过滤输入框里：方向键/Home/End/Enter/Escape/Tab 归 listbox 处理；其余按键（可打印字符、退格等）
+ // 一律交还原生 input，不 preventDefault、不跑 type-ahead——否则过滤框里打字会被吞、oninput 不触发。
+ function keyRoute(target,key){
+  const inFilter=!!(target&&target.closest&&target.closest('.lb-filter'));
+  if(!inFilter)return 'list';
+  return ['ArrowDown','ArrowUp','Home','End','Enter','Escape','Tab'].includes(key)?'list':'native';
+ }
 
  // ── 弹层（position:fixed 挂 body，不能被 .pane 的 overflow:auto 裁切） ──
  const LB={active:null};
@@ -177,9 +184,9 @@
   function paint(){
    filtered=filterItems(cfg.items,query);
    let html='';
-   if(cfg.loading){html+='<div class="lb-loading"><span class="spin" aria-hidden="true"></span>正在读取…</div>'}
+   // 过滤输入：>12 项时给出；可打印键交还原生 input（见 keyRoute），过滤由下面的 oninput 负责。
    if(cfg.items.length>12){html+=`<input class="lb-filter" type="text" role="textbox" aria-label="过滤选项" value="${esc(query)}" placeholder="输入以过滤">`}
-   if(!filtered.length&&!cfg.loading){html+='<div class="lb-empty" role="status">没有匹配的节点</div>'}
+   if(!filtered.length){html+='<div class="lb-empty" role="status">没有匹配的节点</div>'}
    else{let last=null;filtered.forEach((it,i)=>{
     if(it.group&&it.group!==last){last=it.group;html+=`<div class="lb-group" role="presentation">${esc(it.group)}</div>`}
     const sel=it.selected?'true':'false',d=it.delay;
@@ -195,7 +202,7 @@
    });
    const f=pop.querySelector?.('.lb-filter');
    if(f){f.oninput=()=>{query=f.value;active=0;paint();const nf=pop.querySelector('.lb-filter');nf?.focus?.()};f.focus?.()}
-   if(!cfg.items.length||cfg.loading)pop.focus?.();
+   if(!cfg.items.length)pop.focus?.();
    if(filtered.length)pop.setAttribute?.('aria-activedescendant',`${pop.id}-opt-${active}`);
   }
   function choose(i){
@@ -205,6 +212,7 @@
   let buffer='',bufferAt=0;
   function key(e){
    const k=e.key;
+   if(keyRoute(e.target,k)==='native')return; // 过滤框里的可打印字符交还原生 input
    if(k==='Escape'){e.preventDefault?.();closeListbox(true);return}
    if(k==='Tab'){closeListbox(false);return}
    if(k==='ArrowDown'||k==='ArrowUp'||k==='Home'||k==='End'){
@@ -368,7 +376,7 @@
   const left=Math.max(0,u.total-u.used);
   const expire=u.expire?fmtExpire(u.expire):'';
   return `<div class="usage" role="figure" aria-label="流量额度">
-   <div class="usage-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span class="usage-fill ${pct>=90?'hot':pct>=70?'warm':''}" style="width:${pct}%"></span></div>
+   <div class="usage-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span class="usage-fill ${pct>=90?'hot':pct>=70?'warm':''}" data-live="trafficbar" data-live-id="${esc(s.id)}" style="width:${pct}%"></span></div>
    <p class="usage-text" data-live="traffic" data-live-id="${esc(s.id)}">已用 ${fmtBytes(u.used)} / ${fmtBytes(u.total)} · 剩余 ${fmtBytes(left)} · ${pct}%</p>${expire?`<p class="usage-text">${expire} 到期</p>`:''}
   </div>`;
  }
@@ -424,7 +432,7 @@
      <span class="readout-bar" aria-hidden="true"><span class="readout-fill ${dv.kind}" data-live="delaybar" style="width:${dv.width}%"></span></span>
      <span class="n-delay ${dv.kind}" data-live="delay">${esc(dv.text)}</span>
     </div>
-    <p class="stamp ${pollFails>=3?'stale':''}" data-live="stamp">${pollFails>=3?'数据已停止更新 · 重试':(lastUpdatedAt?'更新于 '+clock(lastUpdatedAt):'尚未更新')}</p>
+    <p class="stamp ${pollFails>=3?'stale':''}"><span data-live="stamp">${pollFails>=3?'数据已停止更新':(lastUpdatedAt?'更新于 '+clock(lastUpdatedAt):'尚未更新')}</span> ${button('retry-view','重试',`class="retry-inline"${pollFails>=3?'':' hidden'}`,false)}</p>
    </div>`,
    {wide:true,footer:`${button('node-test',nodeTesting?'测速中…':'测速',`aria-busy="${nodeTesting}"`,anyOp()||nodeTesting||!view.running)}${nodeTesting?button('cancel-test','取消测速','',false):''}`});
  }
@@ -593,6 +601,8 @@
  function draw(){
   // H2：组合输入期间挂起重绘；compositionend 后补。
   if(composing){pendingDraw=true;return}
+  // F2：整块重绘前先收弹层，避免重绘后弹层还挂在旧 trigger/旧 cfg 上。
+  closeListbox(false);
   const active=document.activeElement,focus=active?.id;
   const caret=active&&typeof active.selectionStart==='number'?[active.selectionStart,active.selectionEnd]:null;
   const pane=root.querySelector('#pane');
@@ -649,7 +659,7 @@
  function updateLive(){
   if(composing||!view)return;
   const dv=nodeDelayView();
-  const stamp=pollFails>=3?'数据已停止更新 · 重试':(lastUpdatedAt?('更新于 '+clock(lastUpdatedAt)):'尚未更新');
+  const stamp=pollFails>=3?'数据已停止更新':(lastUpdatedAt?('更新于 '+clock(lastUpdatedAt)):'尚未更新');
   for(const el of root.querySelectorAll?.('[data-live]')??[]){
    const key=el.dataset?.live;
    if(key==='delay'){el.textContent=dv.text;el.className='n-delay '+dv.kind}
@@ -659,12 +669,17 @@
    else if(key==='rules'){el.textContent=Number.isFinite(view.rulesCount)?`${view.rulesCount} 条`:'—'}
    else if(key==='port'){el.textContent=String(view.mixedPort)}
    else if(key==='cport'){el.textContent=String(view.controllerPort)}
-   else if(key==='stamp'){el.textContent=stamp;el.className='stamp'+(pollFails>=3?' stale':'')}
+   else if(key==='stamp'){el.textContent=stamp}
    else if(key==='state'){el.textContent=`${view.running?'内核运行中':'内核已停止'}${view.version?' · 内核 '+view.version:''}${view.pluginVersion?' · 插件 v'+view.pluginVersion:''}`}
    else if(key==='traffic'){const s=(view.subscriptions??[]).find(x=>x.id===el.dataset?.liveId);if(s){const u=s.userInfo;if(u&&Number.isFinite(u.total)&&Number.isFinite(u.used)&&u.total>0){const pct=Math.min(100,Math.round(u.used/u.total*100)),left=Math.max(0,u.total-u.used);el.textContent=`已用 ${fmtBytes(u.used)} / ${fmtBytes(u.total)} · 剩余 ${fmtBytes(left)} · ${pct}%`}}}
+   // F7：额度条宽度与 hot/warm 色随局部更新同步（此前轮询只更新文本，进度条是冻的）。
+   else if(key==='trafficbar'){const s=(view.subscriptions??[]).find(x=>x.id===el.dataset?.liveId);if(s){const u=s.userInfo;if(u&&Number.isFinite(u.total)&&Number.isFinite(u.used)&&u.total>0){const pct=Math.min(100,Math.round(u.used/u.total*100));el.className='usage-fill'+(pct>=90?' hot':pct>=70?' warm':'');if(el.style)el.style.width=pct+'%'}}}
    else if(key==='substate'){const s=(view.subscriptions??[]).find(x=>x.id===el.dataset?.liveId);if(s){el.textContent=`${s.updating?`更新中 ${elapsed(updateSince[s.id])}s`:({pending:'等待更新',ready:'缓存可用',error:'更新失败'}[s.status]||'等待更新')} · ${s.nodeCount} 个节点`}}
   }
   const area=root.querySelector?.('.readout-area');if(area)area.setAttribute?.('data-stale',pollFails>=3?'true':'false');
+  // F5：stale 时把「重试」按钮显出来（真按钮，data-action=retry-view→run('view')），不 stale 时隐藏。
+  const rb=root.querySelector?.('.retry-inline');if(rb)rb.hidden=pollFails<3;
+  const stampP=root.querySelector?.('.stamp');if(stampP&&stampP.classList)stampP.classList.toggle?.('stale',pollFails>=3);
  }
 
  // ── 表单与业务动作 ──
@@ -806,8 +821,9 @@
    if(a==='undo-delete')return undoDelete();
    if(a==='toggle-sub')return toggleSub(id);
    if(a==='cancel-update')return cancelUpdate(id);
-   if(a==='update')return run('reload',{id});
+   if(a==='update')return run('reload',{id},{key:'update:'+id});
    if(a==='reload')return run('reload',{});
+   if(a==='retry-view')return run('view');
    if(a==='retry'){if(lastError){const {method,params}=lastError;return run(method,params,{key:method+':retry'})}return false}
    if(a==='tun-install'){confirmTun='install';draw();focusConfirm();return}
    if(a==='tun-uninstall'){confirmTun='uninstall';draw();focusConfirm();return}
@@ -856,7 +872,7 @@
 
  // 供单测读取纯逻辑（仅测试上下文注入时挂载，生产不产生全局副作用）。
  if(typeof globalThis!=='undefined'&&typeof globalThis.__CLASH_TEST_HOOKS__==='function')
-  globalThis.__CLASH_TEST_HOOKS__({moveActive,resolveActive,filterItems,typeAheadNext,nodeDelayView,run});
+  globalThis.__CLASH_TEST_HOOKS__({moveActive,resolveActive,filterItems,typeAheadNext,nodeDelayView,keyRoute,run});
 
  run('view');
 })();
