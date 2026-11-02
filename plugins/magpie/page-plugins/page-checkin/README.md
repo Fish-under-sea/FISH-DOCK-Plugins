@@ -4,19 +4,27 @@ magpie 窗口里的一个页面：按厂商分组显示每个已登录账号今�
 
 - 包名：`@magpie-community/page-checkin`
 - 页面标题：`自动签到`（`en`：Check-in）
-- 版本：0.2.5（配合 magpie 1.2.1 的 `checkin:state` 读取，以及 `brand:*` 的预装插件美化开关）
+- 版本：0.2.6（配合 magpie 1.2.1 的 `checkin:state` 读取，以及 `brand:*` 的预装插件美化开关）
 
 ## 宿主需要提供什么
 
 | 能力 | 用途 |
 | --- | --- |
-| 读 `checkin:state` | `{providers, accounts, today, credits, running}` |
+| 读 `checkin:state` | `{providers, accounts, today, credits, creditEstimate}`，另可选 `dailyCredits`、`refreshedAt`、`source`（见下） |
 | 写 `checkin:set-provider` | 落到 `settings.pluginCheckins`（与设置页「每日自动签到」同一个开关） |
 | 写 `checkin:set-account` | 落到 `settings.checkinOff`（账号级排除） |
 | 写 `checkin:run` | 调 `provider.CheckInPlugins`；`provider` 省略表示全部账号 |
-| 写 `checkin:refresh` | 重新读取额度与今日积分 |
-| 读 `brand:status` | `{on, vendors, count}`：预装插件美化开着没有、覆盖哪几家 |
+| 写 `checkin:refresh` | 重新读取额度（`RefreshUsage`，只重读额度，不重新签到） |
+| 读 `brand:status` | `{on, vendors, count}`，可选 `pendingPlugins`：预装插件美化开着没有、覆盖哪几家、还有几个供应商插件在装 |
 | 写 `brand:set` | `{on}`：翻这个开关，返回新状态 |
+
+`checkin:state` 的字段口径：
+
+- `providers[]` 除 `{id, name, on}` 外可选 `collector`：`ledger` / `plugin` / `none`。`none` 表示这家没有自动采集能力，页面显示「不支持自动采集」。
+- `dailyCredits`（按账号 Key）是宿主回报的今日额度原值；页面只透传，不补固定值。缺这个键时依次退回 `credits`、`today[].credit`，都没有就显示「未告知」。
+- `refreshedAt` + `source`（`ledger` / `live`）用于表头「数据截至 HH:MM · 台账 / 实时」。
+
+以上新增字段在旧版 exe（fish.8 及以前）上都不存在：页面一律当可选字段，缺失时按旧口径渲染，不报错、不显示假数。
 
 页面不缓存开关状态：每次进入与每 60 秒重新读取一次，因此和设置页永远同源。宿主没有 `magpie.act` 时，写动作退回同源的 `/api/settings/plugin-checkin`、`/api/settings/checkin-account`、`/api/usage/plugin-checkin`、`/api/usage/quotas/refresh`，行为一致。
 

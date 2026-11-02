@@ -13,16 +13,17 @@
   <div class="head">
     <h1 data-t="title">Check-in</h1>
     <p class="total" id="total"></p>
+    <p class="freshness" id="freshness" hidden></p>
   </div>
   <div class="acts">
     <button type="button" id="run" data-t="run">Check in now</button>
-    <button type="button" id="refresh" class="ghost" data-t="refresh">Refresh credits</button>
+    <button type="button" id="refresh" class="ghost" data-t="refresh">Re-read credits</button>
   </div>
 </header>
 <section class="look" id="look" hidden>
   <div class="looktext">
     <b data-t="lookTitle">Preinstalled plugin artwork</b>
-    <small data-t="lookNote">Each shipped vendor's own icon, in every list magpie draws.</small>
+    <small id="lookNote" data-t="lookNote">Each shipped vendor's own icon, in every list magpie draws.</small>
   </div>
   <div class="seg" id="lookSeg"></div>
 </section>
