@@ -150,14 +150,20 @@
 
   // creditNote is the header / card-head credit slot. When some accounts checked
   // in but the vendor never reported an amount (unknown > 0), saying "0 积分" would
-  // be a number nobody claimed: show「N 项未告知」instead. Only when every amount is
-  // known does it print the summed credits. value is the sum, suffix is the noun
-  // (points for the header, today for a card).
+  // be a number nobody claimed. So:
+  //   - partial known (value > 0) + unknown > 0 → 「<known 总额> · <N 项未告知>」两段都在；
+  //   - all unknown (value === 0) + unknown > 0 → 只给「N 项未告知」，不写假 0；
+  //   - unknown === 0 → 原总额。
+  // value is the sum, suffix is the noun (points for the header, today for a card).
   function creditNote(value, unknown, lang, suffix) {
     const t = text(lang);
     const n = Number(unknown);
-    if (Number.isFinite(n) && n > 0) return t.unknownCount.replace("{n}", n);
-    return `${value} ${suffix}`;
+    const total = `${value} ${suffix}`;
+    if (Number.isFinite(n) && n > 0) {
+      const unknownText = t.unknownCount.replace("{n}", n);
+      return Number(value) > 0 ? `${total} · ${unknownText}` : unknownText;
+    }
+    return total;
   }
 
   // freshness is the header's「数据截至 HH:MM · 台账」. It is null when the host

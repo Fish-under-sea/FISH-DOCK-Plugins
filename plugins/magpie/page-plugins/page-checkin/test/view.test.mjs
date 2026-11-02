@@ -263,4 +263,7 @@ test('额度未知时表头/卡头显示未告知计数，不显示 0 积分 / 0
   assert.equal(V.creditNote(120, 0, 'zh', '积分'), '120 积分');
   assert.equal(V.creditNote(0, 0, 'zh', '今日'), '0 今日');
   assert.equal(V.creditNote(0, 2, 'en', 'points'), '2 not reported');
+  // 部分账号有额度 + 部分未告知：已知总额与未告知计数两段都在，不是二选一。
+  assert.equal(V.creditNote(120, 1, 'zh', '积分'), '120 积分 · 1 项未告知');
+  assert.equal(V.creditNote(120, 2, 'en', 'points'), '120 points · 2 not reported');
 });
