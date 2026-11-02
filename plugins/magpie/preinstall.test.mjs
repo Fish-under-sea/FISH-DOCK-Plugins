@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {PREINSTALLED,addPreinstalled,markerName,packageOf,preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
+import {PREINSTALLED,addPreinstalled,ensurePreinstallState,markerName,packageOf,pendingStems,preinstallEnabled,preinstallStateFile,readPreinstallState,recordPreinstallState,seedPreinstalled,stateRelativePath} from './preinstall.mjs';
 
 const utf8=file=>fs.readFile(file,'utf8');
 async function sandbox(){
@@ -149,4 +149,74 @@ test('已有清单里的其它条目在登记后字节不变，且留一份原�
  assert.equal(manifest.plugins[0].spec,'C:/data/plugins/page-checkin');
  assert.deepEqual(manifest.plugins[0].options,{collapsed:true});
  assert.equal(await utf8(`${list}.bak`),raw,'改动前的清单留在 .bak');
+});
+
+// #16：首启登记要落一份可读状态（config/preinstall-state.json），让「登记已发生、
+// 还在等安装」这件事可判定，而不是只剩一个看不见的标记文件。
+test('首启登记写状态文件：13 家包名 + registeredAt，内容可读回',async()=>{
+ const {data}=await sandbox();
+ const result=await seedPreinstalled({data});
+ assert.equal(result.registered.length,13);
+ const file=preinstallStateFile(data);
+ assert.equal(file.replaceAll('\\','/').endsWith(stateRelativePath),true,'状态文件落在 config/ 下');
+ const state=await readPreinstallState({data});
+ assert.equal(state.schema,1);
+ assert.equal(state.status,'registered');
+ assert.equal(typeof state.registeredAt,'string');
+ assert.equal(Number.isNaN(Date.parse(state.registeredAt)),false,'registeredAt 是合法时间');
+ assert.deepEqual(state.registered,PREINSTALLED.map(item=>item.package));
+ assert.equal(state.added.length,13);
+});
+
+test('状态文件缺失时读回 null，写入失败不产生半份临时文件',async()=>{
+ const {data}=await sandbox();
+ assert.equal(await readPreinstallState({data}),null);
+ await recordPreinstallState({data,registered:['a'],added:[],at:new Date('2026-11-02T08:00:00Z')});
+ const state=await readPreinstallState({data});
+ assert.deepEqual(state.registered,['a']);
+ assert.equal(state.registeredAt,'2026-11-02T08:00:00.000Z');
+ const left=(await fs.readdir(path.join(data,'config'))).filter(name=>name.endsWith('.tmp'));
+ assert.deepEqual(left,[],'没有 .tmp 残留');
+});
+
+// pendingStems 只做集合差：给已装 provider 就回还差哪几家，不猜、不编。
+test('pendingStems 按已装 provider 求差，装完为空',()=>{
+ assert.equal(pendingStems({installed:[]}).length,13);
+ assert.deepEqual(pendingStems({installed:['raccoon','cline','loomy']}).slice(0,2),['autoclaw','codearts']);
+ assert.deepEqual(pendingStems({installed:PREINSTALLED.map(item=>item.stem)}),[]);
+ assert.equal(pendingStems({installed:['loomy-plugin']}).includes('loomy'),true,'别名不算已装到 loomy');
+});
+// 启动那一步：标记文件只写一次，状态文件却可能缺（清过、写到一半、2.1.3 之前
+// 就登记过）。缺了补一份，已有就一个字都不动——不刷 registeredAt。
+test('ensurePreinstallState 补写缺失的状态文件，已有就不碰',async()=>{
+ const {data}=await sandbox();
+ const wrote=await ensurePreinstallState({data,seeded:{registered:['@scope/a@1'],added:['@scope/a@1']},at:new Date('2026-11-02T09:00:00Z')});
+ assert.equal(wrote,preinstallStateFile(data),'第一次补写要落成状态文件');
+ let state=await readPreinstallState({data});
+ assert.deepEqual(state.registered,['@scope/a@1']);
+ assert.equal(state.registeredAt,'2026-11-02T09:00:00.000Z');
+ const again=await ensurePreinstallState({data,seeded:{registered:['@scope/b@2']},at:new Date('2026-11-02T10:00:00Z')});
+ assert.equal(again,null,'已经有状态文件时不再写');
+ state=await readPreinstallState({data});
+ assert.deepEqual(state.registered,['@scope/a@1'],'已有内容不许被后来的登记覆盖');
+ assert.equal(state.registeredAt,'2026-11-02T09:00:00.000Z','registeredAt 不许被刷新');
+});
+
+// 首次登记没带得回名单（标记已存在的那种启动）也要写下完整的 13 家，
+// 否则 host 算不出「还差几个」。
+test('ensurePreinstallState 没有登记结果时按预装基线补齐',async()=>{
+ const {data}=await sandbox();
+ await ensurePreinstallState({data,seeded:null,at:new Date('2026-11-02T09:00:00Z')});
+ const state=await readPreinstallState({data});
+ assert.deepEqual(state.registered,PREINSTALLED.map(item=>item.package));
+});
+
+// 接线守卫：65549f0 的教训就是实现了却没人调。runtime.mjs 必须在
+// seedPreinstalled 之后真的调 ensurePreinstallState。
+test('runtime.mjs 在 seedPreinstalled 之后调 ensurePreinstallState',async()=>{
+ const source=await fs.readFile(new URL('./runtime.mjs',import.meta.url),'utf8');
+ const seed=source.indexOf('seedPreinstalled({data:portable.data');
+ const ensure=source.indexOf('ensurePreinstallState({data:portable.data,seeded');
+ assert.ok(seed>=0,'runtime.mjs 没有调 seedPreinstalled');
+ assert.ok(ensure>seed,'runtime.mjs 没在 seedPreinstalled 之后调 ensurePreinstallState');
 });

@@ -9,7 +9,7 @@ import {magpieEnvironment} from './environment.mjs';
 import {preparePortableRuntime} from './portable-runtime.mjs';
 import {gatewayAddr,gatewayHost,gatewayPortCandidates,readMagpiePrefs} from './network.mjs';
 import {registerSeedPage,syncPageDirectory} from './page-seed.mjs';
-import {preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
+import {ensurePreinstallState,preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
 import {serviceError} from '../../shared/errors.mjs';
 
 // 只有「换个时机就可能成功」的失败值得重试：端口被短暂占住、复制被文件占用、
@@ -126,7 +126,14 @@ export function createRuntime(context){
     // 出厂预装的社区供应商插件只登记包名（preinstall.mjs）：首次启动由 magpie 自己
     // 的更新循环按 spec 装进 <data>/plugins。登记失败不拦启动——它是锦上添花，写不
     // 进去就下次再试，用户的服务照常起来。
-    if(preinstallEnabled())try{await seedPreinstalled({data:portable.data,onPhase:track,signal})}catch(error){if(error.name==='AbortError')throw error}
+    //
+    // 登记本身只写一次（标记文件兜底），状态文件却可能缺：清过、写到一半，或者在
+    // 还没有这份文件的 2.1.3 之前就登记过。缺了补一次，host 的 brand:status 才有
+    // 「正在准备 N 个供应商插件」可算（#16 的后端一半；N 由 Go 侧按真实安装算）。
+    if(preinstallEnabled())try{
+     const seeded=await seedPreinstalled({data:portable.data,onPhase:track,signal});
+     await ensurePreinstallState({data:portable.data,seeded});
+    }catch(error){if(error.name==='AbortError')throw error}
     track('start-process');
     try{
      child=await startChild({executable:portable.executable,args:['web','--addr',`127.0.0.1:${upstreamPort}`,'--no-open'],cwd:root,signal,
