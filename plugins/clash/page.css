@@ -47,9 +47,9 @@ header>div:first-child{display:flex;align-items:center;gap:8px}
 /* ── 内容区：各页签共用一个内滚高度 ──
    上限 560px，同时不超过面板可视高度；任何尺寸下都只在这里滚。 */
 .pane{max-height:min(560px,calc(100vh - 120px));overflow:auto;overscroll-behavior:contain;padding-right:4px;padding-bottom:64px}
-/* 概览与内核设置按内容长高（不再被 560 内部滚高裁掉整行卡片 / 压住吸底条）；订阅页仍保留内滚。 */
-.pane.plain{background:transparent;padding:0 4px 4px 0;max-height:none;overflow:visible}
-.pane.settings{max-height:none;overflow:visible}
+/* 三个 pane 统一内滚契约（上限 560 / 视口高）；卡片已改内容高 + overflow:visible，不再靠 pane 长高避免裁切。 */
+.pane.plain{background:transparent;padding:0 4px 4px 0}
+.pane.settings{max-height:min(560px,calc(100vh - 120px));overflow:auto}
 
 /* ── 控件边界统一走 --line-control（宿主 --dock-line 在 dark 只有 1.5:1） ── */
 button:not(.primary):not([type=submit]),input:not([type=checkbox]),textarea,select{border-color:var(--line-control)}
