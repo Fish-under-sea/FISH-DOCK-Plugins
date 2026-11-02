@@ -81,6 +81,8 @@ activate:async context=>{
 - 自启动开关只有宿主插件卡一处：插件页里不要再放开关，也不要去调 `dock.autostart`，否则两处状态会打架。
 - `view()` 是异步的（如 Clash 要读控制器状态）时，先等它再判断，别把 Promise 当对象读 `.state`。
 
+完整契约（清单值 ↔ 卡面 ↔ 环境变量三者的边界、`activate()` 的正确写法、首启为什么会"看起来失败"、提交前四条自测）见 **[自启动按钮钩子](autostart-hook.md)**。本节只留结论，改动请改那份文档。
+
 ## 页面 SDK
 
 页面只使用宿主注入的 `window.FishDock.call(method,params)`：
