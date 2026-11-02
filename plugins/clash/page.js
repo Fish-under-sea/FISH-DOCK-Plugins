@@ -622,7 +622,7 @@
   root.innerHTML=`<header><div><h1>Clash</h1><span class="muted" data-live="state">${view.running?'内核运行中':'内核已停止'}${view.version?' · 内核 '+esc(view.version):''}${view.pluginVersion?' · 插件 v'+esc(view.pluginVersion):''}</span></div></header>
    ${feedbackBlock()}
    <div class="toolbar headbar" id="headbar" aria-label="页面分区与内核操作">${nav}${toggle}${button('view','刷新')}</div>
-   <section class="pane${section==='overview'?' plain':''}" id="pane" aria-live="off">${body}</section>${snackbarBlock()}`;
+   <section class="pane${section==='overview'?' plain':''}${section==='settings'?' settings':''}" id="pane" aria-live="off">${body}</section>${snackbarBlock()}`;
   bind();
   const form=root.querySelector('#config');
   if(form){

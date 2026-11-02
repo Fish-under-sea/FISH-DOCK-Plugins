@@ -46,8 +46,10 @@ header>div:first-child{display:flex;align-items:center;gap:8px}
 
 /* ── 内容区：各页签共用一个内滚高度 ──
    上限 560px，同时不超过面板可视高度；任何尺寸下都只在这里滚。 */
-.pane{max-height:min(560px,calc(100vh - 120px));overflow:auto;overscroll-behavior:contain;padding-right:4px}
+.pane{max-height:min(560px,calc(100vh - 120px));overflow:auto;overscroll-behavior:contain;padding-right:4px;padding-bottom:64px}
+/* 三个 pane 统一内滚契约（上限 560 / 视口高）；卡片已改内容高 + overflow:visible，不再靠 pane 长高避免裁切。 */
 .pane.plain{background:transparent;padding:0 4px 4px 0}
+.pane.settings{max-height:min(560px,calc(100vh - 120px));overflow:auto}
 
 /* ── 控件边界统一走 --line-control（宿主 --dock-line 在 dark 只有 1.5:1） ── */
 button:not(.primary):not([type=submit]),input:not([type=checkbox]),textarea,select{border-color:var(--line-control)}
@@ -101,8 +103,9 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 .reason{font-size:12px;color:var(--dock-muted)}
 
 /* ── 概览：信息卡网格 ── */
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:12px;align-items:stretch;margin:0}
-.cards>.card{margin:0;display:flex;flex-direction:column;gap:8px;height:100%;min-width:0}
+/* D1：卡片按本行最高对齐（align-items:stretch）；因已删 height:100% 且 overflow:visible，拉伸不裁内容。 */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));grid-auto-rows:min-content;gap:12px;align-items:stretch;margin:0}
+.cards>.card{margin:0;display:flex;flex-direction:column;gap:8px;min-width:0;overflow:visible}
 .cards>.card.wide{grid-column:1/-1}
 .split{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 20px}
 .split>label{margin:8px 0}
@@ -146,8 +149,11 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 .confirm-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;
  border:1px solid var(--line-control);border-radius:14px;padding:8px 12px;margin:8px 0;font-size:12px;background:var(--layer-2)}
 .confirm-bar p{margin:0;font-size:12px}
-.save-bar{position:sticky;bottom:0;display:flex;justify-content:flex-end;padding:8px 0 4px;
- background:linear-gradient(transparent,var(--layer-1) 45%)}
+/* D3：吸底保存条用不透明底 + 分隔线；内核设置页按内容长高、保存条回到文末静态位置，
+   滚动到底时 TUN 服务按钮行不再被压住。 */
+.save-bar{position:sticky;bottom:0;display:flex;justify-content:flex-end;padding:8px 0 4px;margin-top:8px;
+ background:var(--layer-1);border-top:1px solid var(--line-hair)}
+.pane.settings .save-bar{position:static}
 
 /* ── 撤销 snackbar：删除后 5 秒内可撤销 ── */
 .snackbar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:12px;
@@ -169,8 +175,11 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 .combo-trigger .trigger-delay{margin-left:auto;font-variant-numeric:tabular-nums}
 /* F6：下拉触发器与选项的键盘焦点必须可见（无障碍底线）。 */
 .combo-trigger:focus-visible,.lb-option:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px}
+/* D2：弹层默认用不透明 --layer-1 底 + 边框——headless/禁 GPU 时 backdrop-filter 不被渲染
+   （@supports 仍报支持），只靠 92% 的 --glass 会让后面文字清晰透出。opaque 底保证任何情况下都不透字；
+   支持 blur 的真实环境仍叠加 backdrop-filter 做质感。 */
 .listbox{position:fixed;z-index:70;max-height:320px;overflow:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--line-hair);border-radius:14px;
- background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(1.6);backdrop-filter:blur(30px) saturate(1.6);box-shadow:var(--shadow);outline:0}
+ background:var(--layer-1);-webkit-backdrop-filter:blur(30px) saturate(1.6);backdrop-filter:blur(30px) saturate(1.6);box-shadow:var(--shadow);outline:0}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.listbox{background:var(--layer-1)}}
 .lb-filter{width:100%;min-height:30px;margin:0 0 4px;padding:4px 8px;border:1px solid var(--line-control);border-radius:999px;background:var(--dock-bg);font-size:12.5px}
 .lb-group{padding:8px 8px 4px;font-size:12px;font-weight:600;color:var(--dock-muted)}
