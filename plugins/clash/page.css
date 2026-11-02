@@ -1,111 +1,212 @@
-/* Clash 页面：概览（信息卡网格）、订阅（卡片列表 + 表单）、内核设置（表单）。
-   字号只有三档——标题 13px、正文 12.5px、次要 12px——同一类文本永远用同一档，
-   不做 12/12.5/13 之外的微调。所有颜色走 dock.css 的 token，避免与宿主主题脱节。 */
+/* Clash 页面：概览（读数卡网格）、订阅（卡片列表 + 表单）、内核设置（表单）。
+   深/浅双主题：:root 是 dark 基准，:root[data-dock-theme=light] 覆盖。
+   主题只认宿主写入的 data-dock-theme（bridge 注入），不读 prefers-color-scheme：
+   Dock 可以深色而系统浅色，用系统偏好会与宿主打架。
+   颜色全部走 token：本文件里出现色值的地方只允许在这两段 token 定义里。 */
+
+:root{
+  color-scheme:dark;
+  /* 语义 token（dark 基准） */
+  --line-hair:#333336;        /* 装饰性分隔线：卡片内分组、表格行 */
+  --line-control:#6b6b70;     /* 控件边界：下拉触发器、输入框、开关槽，对卡底 ≥3:1 */
+  --layer-1:#0f0f11;          /* 卡片底，比 #000 亮两档 */
+  --layer-2:#1c1c1e;          /* 卡内次级块：确认条、TUN 框、弹层内行 */
+  --hi:rgba(255,255,255,.06); /* dark 专用内高光，替代纯黑上不可见的投影 */
+  --shadow:0 0 0 1px var(--line-hair);
+  --c-ok:#30d158;--c-warn:#ffd60a;--c-bad:#ff453a;
+  --c-ok-bg:rgba(48,209,88,.16);
+  --c-bad-bg:rgba(255,69,58,.12);
+  --sel-bg:rgba(94,155,255,.16);
+  --sel-line:var(--dock-accent);
+  --glass:rgba(28,29,34,.92);
+}
+:root[data-dock-theme=light]{
+  color-scheme:light;
+  --line-hair:#e3e3e6;
+  --line-control:#8e8e93;
+  --layer-1:#ffffff;
+  --layer-2:#f7f7f8;
+  --hi:transparent;
+  --shadow:0 1px 2px rgba(0,0,0,.06),0 0 0 1px var(--line-hair);
+  --c-ok:#0f7b33;--c-warn:#8a6100;--c-bad:#c0392b;
+  --c-ok-bg:rgba(15,123,51,.10);
+  --c-bad-bg:rgba(192,57,43,.08);
+  --sel-bg:rgba(0,95,184,.10);
+  --glass:rgba(250,250,252,.94);
+}
 
 /* ── 顶部按钮行：页签 + 启停 + 刷新同处一行，不换行，窄了横向滚 ── */
-header>div:first-child{display:flex;align-items:center;gap:10px}
+header>div:first-child{display:flex;align-items:center;gap:8px}
 .toolbar>label{display:flex;align-items:center;gap:8px;margin:0}
-.toolbar>label select{width:auto}
 .toolbar{margin:0 8px 12px}
 .headbar{flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;padding-bottom:2px;scrollbar-width:thin}
 .headbar button{flex:0 0 auto}
 .headbar button[aria-pressed=true]{background:var(--dock-line);border-color:var(--dock-line);color:var(--dock-text)}
 
 /* ── 内容区：各页签共用一个内滚高度 ──
-   上限 560px，同时不超过面板可视高度（iframe 是 100% 面板，减掉标题与按钮行），
-   于是任何面板尺寸下都只在这里滚，不会多出一层宿主滚动。
-   内边距沿用 dock.css 给 section 的 16px，只有概览（.plain）自己清零。 */
+   上限 560px，同时不超过面板可视高度；任何尺寸下都只在这里滚。 */
 .pane{max-height:min(560px,calc(100vh - 120px));overflow:auto;overscroll-behavior:contain;padding-right:4px}
-.pane.plain{background:transparent;padding:0 4px 4px 0;border-radius:0}
+.pane.plain{background:transparent;padding:0 4px 4px 0}
 
-/* ── 订阅：整张卡可点，启用态高亮 ── */
+/* ── 控件边界统一走 --line-control（宿主 --dock-line 在 dark 只有 1.5:1） ── */
+button:not(.primary):not([type=submit]),input:not([type=checkbox]),textarea,select{border-color:var(--line-control)}
+button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── 读数条容器与新鲜度：读数区是唯一 aria-live 的地方 ── */
+.readout{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0;font-size:12.5px}
+.readout-label{color:var(--dock-muted)}
+.readout-node{min-width:0;overflow-wrap:anywhere}
+.readout-bar{position:relative;flex:1 1 120px;min-width:80px;height:3px;background:var(--dock-control);overflow:hidden}
+.readout-fill{display:block;height:100%;background:var(--c-ok)}
+.readout-fill.warm{background:var(--c-warn)}
+.readout-fill.bad{background:var(--c-bad)}
+.readout-fill.neutral{background:var(--dock-muted)}
+.stamp{margin:4px 0 0;font-size:12px;color:var(--dock-muted);font-variant-numeric:tabular-nums}
+.stamp.stale{color:var(--c-bad)}
+.readout-area[data-stale=true]{opacity:.55}
+
+/* ── 订阅：卡片可点＝查看/选中；启用/停用只由卡内开关承担 ── */
 .subscriptions{display:grid;gap:12px;margin:12px 0}
-.subscription{border:1px solid var(--dock-line);border-radius:12px;padding:16px;min-width:0;overflow-wrap:anywhere;
- cursor:pointer;transition:border-color .12s ease,background .12s ease}
-.subscription[aria-checked=true]{border-color:#0a84ff;background:rgba(10,132,255,.10)}
-.subscription[aria-checked=false]{opacity:.8}
-.subscription[tabindex="-1"]{cursor:default}
+.subscription{border:1px solid var(--line-hair);border-radius:14px;padding:16px;min-width:0;overflow-wrap:anywhere;
+ background:var(--layer-1);box-shadow:inset 0 1px 0 var(--hi);cursor:pointer;transition:border-color .12s ease,background .12s ease}
+.subscription[data-active=true]{border-color:var(--dock-accent);box-shadow:inset 2px 0 0 var(--sel-line),inset 0 1px 0 var(--hi);background:var(--sel-bg)}
+.subscription[aria-disabled=true]{cursor:default}
 .subscription:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px}
 .subscription-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .subscription .toolbar{margin:0;flex-wrap:wrap}
 .sub-hint{margin:8px 0 0;font-size:12px;color:var(--dock-muted)}
-.sub-state{margin:6px 0;font-size:12.5px;font-weight:600}
+.sub-state{margin:8px 0;font-size:12.5px;font-weight:600}
 .sub-row{display:grid;gap:4px;min-width:0}
 .sub-row>button{justify-self:start}
 .sub-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 #subscription-form{margin-top:16px}
 #subscription-form h3{margin:0 0 8px;font-size:13px}
 .tag{font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap}
-.tag.on{background:rgba(48,209,88,.16);color:#30d158}
-.tag.off{background:var(--dock-card);color:var(--dock-muted);border:1px solid var(--dock-line)}
-.empty-card{border:1px dashed var(--dock-line);border-radius:12px;padding:16px;margin:12px 0}
-.empty-card p{margin:0 0 6px}
+.tag.on{background:var(--c-ok-bg);color:var(--c-ok)}
+.tag.off{background:var(--layer-2);color:var(--dock-muted);border:1px solid var(--line-hair)}
+.empty-card{border:1px dashed var(--line-hair);border-radius:14px;padding:16px;margin:12px 0;background:var(--layer-1)}
+.empty-card p{margin:0 0 8px}
 .empty-card p:last-child{margin:0}
 
-/* ── 反馈条：成功绿、失败红，一律 12.5px ── */
-.banner{margin:8px 8px 12px;padding:9px 12px;border-radius:12px;border:1px solid var(--dock-line);background:var(--dock-card);font-size:12.5px}
-.banner p{margin:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.banner.bad{border-color:rgba(255,69,58,.55);background:rgba(255,69,58,.12);color:#ff8a80}
-.banner.good{border-color:rgba(48,209,88,.5);background:rgba(48,209,88,.10)}
-.field-error{margin:4px 0 0;font-size:12px;color:#ff6b7a}
-.good{color:#30d158}
-.bad{color:#ff453a}
+/* ── 反馈条：成功绿、失败红 ── */
+.banner{margin:8px 8px 12px;padding:8px 12px;border-radius:14px;border:1px solid var(--line-hair);background:var(--layer-2);font-size:12.5px}
+.banner p{margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.banner.bad{border-color:var(--c-bad);background:var(--c-bad-bg);color:var(--c-bad)}
+.banner.good{border-color:var(--c-ok);background:var(--c-ok-bg);color:var(--c-ok)}
+.field-error{margin:4px 0 0;font-size:12px;color:var(--c-bad)}
+.good{color:var(--c-ok)}
+.bad{color:var(--c-bad)}
 .small{font-size:12px}
+.reason{font-size:12px;color:var(--dock-muted)}
 
-/* ── 概览：信息卡网格。列宽 268 起，620 宽度出两列，更窄才退回单列。
-   同一行卡片等高（stretch），底部操作区 margin-top:auto 压到底 → 按钮横向对齐。 ── */
+/* ── 概览：信息卡网格 ── */
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:12px;align-items:stretch;margin:0}
 .cards>.card{margin:0;display:flex;flex-direction:column;gap:8px;height:100%;min-width:0}
 .cards>.card.wide{grid-column:1/-1}
 .split{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 20px}
 .split>label{margin:8px 0}
-.card-title{margin:0;font-size:13px;line-height:19px;min-height:19px;display:flex;align-items:center;gap:8px}
+.card{background:var(--layer-1);border:1px solid var(--line-hair);border-radius:14px;box-shadow:inset 0 1px 0 var(--hi)}
+.card-title{margin:0;font-size:12.5px;font-weight:600;line-height:19px;min-height:19px;display:flex;align-items:center;gap:8px;letter-spacing:.02em}
 .card-foot{margin-top:auto;padding-top:4px;display:flex;flex-wrap:wrap;gap:8px}
 .kv{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:22px;font-size:12.5px;min-width:0}
 .kv>.k{color:var(--dock-muted);white-space:nowrap}
-.kv>.v{display:flex;align-items:center;justify-content:flex-end;gap:6px;text-align:right;overflow-wrap:anywhere}
-.kv code{font:12px/1.5 "Cascadia Mono",Consolas,monospace}
+.kv>.v{display:flex;align-items:center;justify-content:flex-end;gap:8px;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.kv code{font:12px/1.5 "Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
 .status-line{margin:0;font-size:12px;color:var(--dock-muted)}
 .switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
 .switch-row strong{font-size:12.5px}
-.switch-row p{margin:2px 0 0}
-.segmented{display:flex;gap:4px;padding:3px;border-radius:999px;background:var(--dock-bg);border:1px solid var(--dock-line)}
+.switch-row p{margin:4px 0 0}
+.segmented{display:flex;gap:4px;padding:3px;border-radius:999px;background:var(--dock-bg);border:1px solid var(--line-control)}
 .segmented button{flex:1;border:0;background:transparent}
 .segmented button[aria-pressed=true]{background:var(--dock-line);color:var(--dock-text)}
-.site-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:22px;font-size:12.5px}
-/* 延迟三态：正常绿/黄/红，「已超时」红，「未测速」灰。 */
-.n-delay{white-space:nowrap;font-size:12px}
-.n-delay.good{color:#30d158}
-.n-delay.warm{color:#ffd60a}
-.n-delay.bad{color:#ff453a}
+.site-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:22px;font-size:12.5px;font-variant-numeric:tabular-nums}
+/* 延迟三态：正常绿/黄/红，「已超时」红，「未测速」灰。色 + 文字双通道，不只靠颜色。 */
+.n-delay{white-space:nowrap;font-size:12px;font-variant-numeric:tabular-nums}
+.n-delay.good{color:var(--c-ok)}
+.n-delay.warm{color:var(--c-warn)}
+.n-delay.bad{color:var(--c-bad)}
 .n-delay.neutral{color:var(--dock-muted)}
 
-/* ── 订阅卡流量额度条：服务器在 subscription-userinfo 回报时显示 ── */
-.usage{margin:8px 0 2px}
-.usage-bar{height:6px;border-radius:999px;background:var(--dock-card);border:1px solid var(--dock-line);overflow:hidden}
-.usage-fill{display:block;height:100%;background:#0a84ff;border-radius:999px}
-.usage-fill.warm{background:#ffd60a}
-.usage-fill.hot{background:#ff453a}
-.usage-text{margin:4px 0 0;font-size:12px;color:var(--dock-muted)}
+/* ── 订阅卡流量额度条 ── */
+.usage{margin:8px 0 4px}
+.usage-bar{height:6px;border-radius:999px;background:var(--dock-control);border:1px solid var(--line-hair);overflow:hidden}
+.usage-fill{display:block;height:100%;background:var(--dock-accent);border-radius:999px}
+.usage-fill.warm{background:var(--c-warn)}
+.usage-fill.hot{background:var(--c-bad)}
+.usage-text{margin:4px 0 0;font-size:12px;color:var(--dock-muted);font-variant-numeric:tabular-nums}
 
-/* ── 内核设置：表单 + TUN 段 + 吸底保存 ──
-   dock.css 把 legend 设为 float:left + width:100%，会把字段集的内容挤成一大块空白，
-   这里收回默认流，字段从上往下排。 */
+/* ── 内核设置：表单 + TUN 段 + 吸底保存 ── */
 .columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.tun-box{border:1px solid var(--dock-line);border-radius:14px;padding:12px 16px;margin:12px 0;background:var(--dock-card)}
-.tun-box legend{float:none;width:auto;padding:0 8px 0 0;margin:0 0 6px;color:var(--dock-muted);font-size:12px}
+.tun-box{border:1px solid var(--line-hair);border-radius:14px;padding:12px 16px;margin:12px 0;background:var(--layer-2)}
+.tun-box legend{float:none;width:auto;padding:0 8px 0 0;margin:0 0 8px;color:var(--dock-muted);font-size:12px}
 .tun-box label{margin:8px 0}
-.tun-service{margin-top:8px;padding-top:8px;border-top:1px solid var(--dock-line)}
+.tun-service{margin-top:8px;padding-top:8px;border-top:1px solid var(--line-hair)}
 .svc-log{margin:8px 0;max-height:120px;font-size:12px;color:var(--dock-muted)}
-.confirm-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
- border:1px solid var(--dock-line);border-radius:12px;padding:8px 12px;margin:8px 0;font-size:12px}
+.confirm-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;
+ border:1px solid var(--line-control);border-radius:14px;padding:8px 12px;margin:8px 0;font-size:12px;background:var(--layer-2)}
 .confirm-bar p{margin:0;font-size:12px}
-.save-bar{position:sticky;bottom:0;display:flex;justify-content:flex-end;padding:10px 0 6px;
- background:linear-gradient(transparent,var(--dock-card) 45%)}
+.save-bar{position:sticky;bottom:0;display:flex;justify-content:flex-end;padding:8px 0 4px;
+ background:linear-gradient(transparent,var(--layer-1) 45%)}
+
+/* ── 撤销 snackbar：删除后 5 秒内可撤销 ── */
+.snackbar{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:12px;
+ padding:12px 16px;border:1px solid var(--line-hair);border-radius:999px;background:var(--glass);color:var(--dock-text);
+ box-shadow:var(--shadow);font-size:12.5px;max-width:calc(100% - 24px)}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.snackbar{background:var(--layer-2)}}
+
+/* ── 下拉 / listbox（弹层 position:fixed 挂 body，不被 .pane 的 overflow 裁切） ── */
+.combo{display:flex;flex-direction:column;gap:4px;min-width:0}
+.combo>.combo-label{font-size:12px;color:var(--dock-muted)}
+.combo-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:32px;
+ padding:4px 12px;border:1px solid var(--line-control);border-radius:999px;background:var(--dock-control);
+ font-size:12.5px;font-weight:600;cursor:pointer;text-align:left;color:var(--dock-text)}
+.combo-trigger:hover:not(:disabled){filter:brightness(1.15)}
+.combo-trigger[aria-expanded=true]{border-color:var(--dock-accent)}
+.combo-trigger .chev{flex:none;transition:transform .12s ease}
+.combo-trigger[aria-expanded=true] .chev{transform:rotate(180deg)}
+.combo-trigger .trigger-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.combo-trigger .trigger-delay{margin-left:auto;font-variant-numeric:tabular-nums}
+.listbox{position:fixed;z-index:70;max-height:320px;overflow:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--line-hair);border-radius:14px;
+ background:var(--glass);-webkit-backdrop-filter:blur(30px) saturate(1.6);backdrop-filter:blur(30px) saturate(1.6);box-shadow:var(--shadow);outline:0}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.listbox{background:var(--layer-1)}}
+.lb-filter{width:100%;min-height:30px;margin:0 0 4px;padding:4px 8px;border:1px solid var(--line-control);border-radius:999px;background:var(--dock-bg);font-size:12.5px}
+.lb-group{padding:8px 8px 4px;font-size:12px;font-weight:600;color:var(--dock-muted)}
+.lb-option{display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;font-size:12.5px;cursor:pointer;color:var(--dock-text)}
+.lb-option:hover{filter:brightness(1.12)}
+.lb-option[aria-selected=true]{background:var(--sel-bg);box-shadow:inset 2px 0 0 var(--sel-line)}
+.lb-option[data-active=true]{background:var(--dock-control)}
+.lb-option[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+.lb-option .dot{flex:none;width:8px;height:8px;border-radius:999px;border:1px solid var(--line-control);background:transparent}
+.lb-option .dot.good{background:var(--c-ok);border-color:var(--c-ok)}
+.lb-option .dot.warm{background:var(--c-warn);border-color:var(--c-warn)}
+.lb-option .dot.bad{background:var(--c-bad);border-color:var(--c-bad)}
+.lb-option .lb-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb-option .lb-delay{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dock-muted)}
+.lb-option .check{margin-left:0;color:var(--dock-accent)}
+.lb-empty{padding:8px 12px;font-size:12px;color:var(--dock-muted)}
+.lb-loading{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;color:var(--dock-muted)}
+.spin{width:14px;height:14px;border:2px solid var(--line-hair);border-top-color:var(--dock-accent);border-radius:999px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 收起箭头在 reduced-motion 下不转，加载环换静态三点 */
+@media(prefers-reduced-motion:reduce){
+ .combo-trigger .chev{transition:none}
+ .combo-trigger[aria-expanded=true] .chev{transform:none}
+ .spin{animation:none;border-top-color:var(--line-hair)}
+}
+
+/* Windows 高对比度：改用系统色，关掉 blur 与内高光 */
+@media(forced-colors:active){
+ .card,.subscription,.listbox,.snackbar,.tun-box,.empty-card{border:1px solid CanvasText;box-shadow:none;background:Canvas}
+ .combo-trigger,.lb-option[aria-selected=true],.lb-option[data-active=true]{forced-color-adjust:none;background:Highlight;color:HighlightText}
+ .readout-fill,.usage-fill{background:Highlight}
+}
 
 @media(max-width:650px){.columns{grid-template-columns:1fr}header>div:first-child{display:block}}
-/* 更窄的窗口（宿主缩到 560 以下）才退回单列，620 的布局保持两列。 */
 @media(max-width:560px){.cards{grid-template-columns:1fr}.split{grid-template-columns:1fr}}
 
 /* 桌面 WebView 里没有 300ms 点击延迟，但显式声明可避免宿主启用触控模拟时退化。 */
-button,input,select,summary,a{touch-action:manipulation}
+button,input,select,summary,a,.combo-trigger,.lb-option{touch-action:manipulation}
+
+/* 读屏只播读数区；结构区不重复播报 */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
