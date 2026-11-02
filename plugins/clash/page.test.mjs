@@ -64,9 +64,78 @@ test('page.html 增加浮层容器（挂 body 的弹层根）',()=>{
  assert.ok(pageHtml.includes('id="popover-root"'),'浮层容器');
 });
 
+// ───────── 2.1.4 尺寸刻度表 / 弹层尺寸 / 复制按钮移除 / 箭头 SVG / 滚轮守卫 ─────────
+// 用户原话「ux 美化都要做视觉化调整大小与对齐」：先立刻度表，再逐处套用，禁止手写孤值。
+test('尺寸刻度表落地：字号 13/12.5/12、行高 26/28、图标 16 盒、圆角 14/999，无孤值',()=>{
+ const bare=pageCss.replace(/\/\*[\s\S]*?\*\//g,'');
+ const values=re=>[...new Set([...bare.matchAll(re)].map(m=>m[1].trim()))];
+ for(const v of values(/font-size:([^;}]+)/g))
+  assert.ok(['13px','12.5px','12px','14px'].includes(v),`字号档外 ${v}（14px 只给 .lb-ico 图标盒）`);
+ for(const v of values(/min-height:([^;}]+)/g))
+  assert.ok(['26px','28px','44px','0'].includes(v),`行高档外 ${v}（0 是复位，不是档位）`);
+ for(const v of values(/border-radius:([^;}]+)/g))
+  assert.ok(['14px','999px'].includes(v),`圆角档外 ${v}`);
+ assert.match(pageCss,/\.lb-option\{[^}]*min-height:28px[^}]*padding:2px 8px[^}]*font-size:12\.5px[^}]*line-height:18px/,'列表项按刻度 28 行高');
+ assert.match(pageCss,/\.lb-ico\{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:16px\}/,'emoji 关进 16px 盒子');
+ assert.match(pageCss,/\.kv\{[^}]*align-items:baseline[^}]*min-height:26px[^}]*line-height:26px/,'详情卡行高 26 + 基线对齐');
+ assert.match(pageCss,/\.kv>\.k\{[^}]*line-height:26px/,'k 与 v 同一行高');
+ assert.match(pageCss,/\.kv>\.v\{[^}]*line-height:26px/,'k 与 v 同一行高');
+ assert.match(pageCss,/\.lb-option \.check\{[^}]*width:16px;height:16px/,'勾占固定盒，不随文字漂移');
+ assert.match(pageCss,/\.listbox\{[^}]*padding:4px/,'弹层内边距 4，行距＝行高');
+ assert.equal(/\.lb-option\{[^}]*margin/.test(pageCss),false,'选项之间不加 margin');
+ assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(pageCss.slice(pageCss.indexOf('\n\n/* ── 顶部按钮行'))),false,'刻度表改写不动颜色 token');
+});
+test('emoji 前缀拆进 .lb-ico 图标盒，正文只留文字（整串符号保留原文）',()=>{
+ const k=fixture().hooks();
+ const ic=x=>{const r=k.splitIcon(x);return [r.icon,r.text]};
+ assert.deepEqual(ic('🔵 微软服务'),['🔵','微软服务']);
+ assert.deepEqual(ic('♻️ 自动选择'),['♻️','自动选择']);
+ assert.deepEqual(ic('🇭🇰 香港 01'),['🇭🇰','香港 01']);
+ assert.deepEqual(ic('Ⓜ️ 微软服务'),['Ⓜ️','微软服务']);
+ assert.deepEqual(ic('DIRECT'),['','DIRECT']);
+ assert.deepEqual(ic('香港 01'),['','香港 01']);
+ assert.deepEqual(ic('🚀'),['','🚀'],'整串都是符号时保留原文，别把标签清空');
+});
+test('详情卡「复制」按钮全链移除，不留死代码',()=>{
+ for(const gone of ['copyBtn','copyText','data-copy','已复制到剪贴板','复制失败，请手动全选后按 Ctrl+C'])
+  assert.equal(pageJs.includes(gone),false,`复制链残留：${gone}`);
+ assert.equal((pageJs.match(/data-action="copy"/g)||[]).length,0,'没有 copy 动作');
+ assert.ok(pageJs.includes("button('ip-reveal'"),'IP 卡的显示/隐藏保留');
+});
+test('下拉箭头是 12×12 内联 SVG，两个触发器共用同一个盒子',()=>{
+ assert.match(pageJs,/const CHEV='<svg class="chev" viewBox="0 0 12 12" width="12" height="12"/,'箭头是内联 SVG');
+ assert.equal(/<span class="chev"[^>]*>⌄/.test(pageJs),false,'不再用文本字形当箭头（基线随回退字体漂移）');
+ assert.equal((pageJs.match(/\$\{CHEV\}/g)||[]).length,1,'只有一处箭头模板，两个触发器共用');
+ assert.match(pageCss,/\.combo-trigger \.chev\{flex:none;display:block;width:12px;height:12px/,'箭头盒子固定');
+ assert.match(pageCss,/\.combo-trigger\{[^}]*align-items:center/,'箭头与文字同一行内居中');
+});
+test('弹层内滚轮不关闭弹层：onWheel 有 pop.contains 守卫，弹层自带 overscroll-behavior',()=>{
+ assert.match(pageJs,/const onWheel=e=>\{const t=e\?\.target;if\(pop\.contains\?\.\(t\)\)return;closeListbox\(false\)\}/,'弹层内滚轮放行');
+ assert.match(pageCss,/\.listbox\{[^}]*overscroll-behavior:contain/,'阻断滚动链外传');
+});
+// 反面清单（docs/developers/design-language.md）：grid/flex 容器被外层 stretch 拉高后，
+// align-content:normal(=stretch) 会把多余高度均摊给每一行 → 同一容器里「一个高一个低」。
+test('被 stretch 拉高的容器不把多余高度摊给各行：grid 一律 align-content:start',()=>{
+ for(const sel of ['.cards','.split','.subscriptions','.columns'])
+  assert.match(pageCss,new RegExp(`${sel.replace('.','\\.')}\\{[^}]*align-content:start`),`${sel} 缺 align-content:start`);
+ assert.match(pageCss,/\.cards>\.card\{[^}]*justify-content:flex-start/,'卡内 flex 不把多余高度摊给子行');
+ assert.match(pageCss,/\.combo\{[^}]*justify-content:flex-start/,'下拉列不摊 gap（label 与触发器高度只由刻度表决定）');
+});
+test('详情卡行距只由行高决定：.kv 行包在 .kv-list 里，不吞 .card 的 8px 块间距',()=>{
+ assert.equal((pageJs.match(/class="kv-list"/g)||[]).length,4,'Clash 信息 / 系统信息 / IP / 网站测试四处都用同一行组件');
+ assert.match(pageCss,/\.kv-list\{[^}]*gap:0[^}]*align-content:start/,'行列表内不加 gap，行距＝行高');
+});
+test('描边口径：卡片与容器用 --line-hair，--line-control 只留给输入框/按钮/触发器',()=>{
+ for(const sel of ['.card','.subscription','.listbox','.tun-box','.empty-card','.confirm-bar','.banner'])
+  assert.match(pageCss,new RegExp(`${sel.replace('.','\\.')}\\{[^}]*border:1px (?:solid|dashed) var\\(--line-hair\\)`),`${sel} 应该用 hair 描边`);
+ assert.match(pageCss,/\.combo-trigger\{[^}]*var\(--line-control\)/,'触发器属于控件，保留 control 描边');
+ assert.match(pageCss,/\.lb-filter\{[^}]*var\(--line-control\)/,'输入框保留 control 描边');
+ assert.match(pageCss,/\.segmented\{[^}]*var\(--line-control\)/,'分段控件是控件组，保留 control 描边');
+});
+
 // ───────────────────────── 测试夹具 ─────────────────────────
 function fixture(prepare) {
- const calls=[],timers=new Map();let serial=0,html='',elements={},buttons=[],cards=[],liveEls=[],hooks=null;
+ const calls=[],timers=new Map(),popped=[];let serial=0,html='',elements={},buttons=[],cards=[],liveEls=[],hooks=null;
  let blocked=null,fail=false,ipReply=null,nodeTestReply=null,thrown=null;const failMethods=new Set();
  const listeners={compositionstart:[],compositionend:[]};
  const docListeners={keydown:[]};
@@ -93,7 +162,11 @@ function fixture(prepare) {
     if(a['data-sub'])cards.push({dataset:{sub:a['data-sub']},enabled:a['aria-checked']==='true',active:a['data-active'],onclick:null,onkeydown:null});
    }
    for(const m of value.matchAll(/<button\b[^>]*>/g)){
-    const a=attrs(m[0]);if(a['data-action'])buttons.push({dataset:{action:a['data-action'],id:a['data-id'],node:a['data-node'],group:a['data-group'],mode:a['data-mode'],section:a['data-section']},disabled:m[0].includes('disabled')});
+    const a=attrs(m[0]);
+    // 带 id 的按钮也要可按 id 取到：下拉触发器（#group-pick / #node-pick / #tunStack）是 button，
+    // mountCombo 把 onclick 挂在 elements[id] 上，这里缺了就永远测不到弹层内部。
+    if(a.id)elements[a.id]={...a,tagName:'BUTTON',value:'',disabled:m[0].includes('disabled'),scrollTop:0,scrollLeft:0,focus(){},setAttribute(){},getBoundingClientRect:()=>({left:0,top:0,bottom:28,width:280}),contains:()=>true};
+    if(a['data-action'])buttons.push({dataset:{action:a['data-action'],id:a['data-id'],node:a['data-node'],group:a['data-group'],mode:a['data-mode'],section:a['data-section']},disabled:m[0].includes('disabled')});
    }
    for(const m of value.matchAll(/<(\w+)\b[^>]*\bdata-live="([^"]*)"[^>]*>([\s\S]*?)<\/\1>/g)){
     const a=attrs(m[0]);const inner=decode(m[3].replace(/<[^>]*>/g,''));
@@ -106,13 +179,15 @@ function fixture(prepare) {
    return null;
   },
   querySelectorAll:q=>q==='[data-sub]'?cards:q==='[data-live]'?liveEls:buttons,
-  addEventListener:(type,fn)=>{if(listeners[type])listeners[type].push(fn)}
+  addEventListener:(type,fn)=>{if(listeners[type])listeners[type].push(fn)},
+  appendChild(){},removeChild(){},insertBefore(){}
  };
  class FormData {
   constructor(form){this.id=form.id}
   get(key){return elements[this.id==='subscription-form'?`subscription-${key}`:key]?.value??null}
  }
- const context={document:{querySelector:()=>root,querySelectorAll:q=>root.querySelectorAll(q),createElement:()=>({style:{},setAttribute(){},appendChild(){},remove(){},focus(){},querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){}}),activeElement:null,addEventListener:(t,fn)=>{(docListeners[t]||(docListeners[t]=[])).push(fn)},removeEventListener(){},documentElement:{clientHeight:800}},
+ const context={document:{querySelector:()=>root,querySelectorAll:q=>root.querySelectorAll(q),createElement:()=>{const pop={style:{},setAttribute(){},appendChild(){},remove(){},focus(){},querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){},
+    set innerHTML(value){this._html=value;popped.push(value)},get innerHTML(){return this._html??''}};return pop},activeElement:null,addEventListener:(t,fn)=>{(docListeners[t]||(docListeners[t]=[])).push(fn)},removeEventListener(){},documentElement:{clientHeight:800}},
   window:{addEventListener(){},removeEventListener(){},getSelection:()=>({isCollapsed:true}),innerHeight:800},
   navigator:{},AbortController,FormData,URL,structuredClone,
   setTimeout:(fn,ms)=>{const id=++serial;timers.set(id,{fn,ms});return id},clearTimeout:id=>timers.delete(id),
@@ -121,6 +196,9 @@ function fixture(prepare) {
    if(failMethods.has(method)){const e=Error('backend said: PRIVATE');e.code='CONTROLLER_TIMEOUT';throw e}
    if(thrown&&thrown.method===method){const error=thrown.error;thrown=null;throw error}
    if(method==='clash.subscriptionSave'){await blocked;if(fail)throw Error('PRIVATE');}
+   // 切换启用：假后端要真的改启用集（单选互斥），否则成功后的视图与真实内核不一致。
+   if(method==='clash.subscriptionToggle'){const {id,enabled}=params;
+    row.subscriptions=row.subscriptions.map(s=>s.id===id?{...s,enabled}:{...s,enabled:enabled?false:s.enabled})}
    if(method==='clash.ipInfo')return ipReply??{available:true,ip:'203.0.113.7',country:'日本',countryCode:'JP',
     asn:'AS2516',isp:'KDDI',org:'KDDI Corporation',location:'日本 · 东京 · 千代田',timezone:'Asia/Tokyo'};
    if(method==='clash.nodeTest')return nodeTestReply??{group:params.group??'',tested:2,delays:[
@@ -139,6 +217,8 @@ function fixture(prepare) {
  const fire=async()=>{const pending=[...timers.values()];timers.clear();for(const t of pending)await t.fn();await flush()};
  return {calls,row,root,element:id=>elements[id],buttons:()=>buttons,cards:()=>cards,live:()=>liveEls,get htmlSets(){return htmlSets},
   hooks:()=>hooks,setActive:el=>{context.document.activeElement=el},
+  // 弹层 HTML：createElement 的桩记录每次 paint() 写进去的 innerHTML。
+  pops:()=>popped,
   compositionStart:()=>{for(const fn of listeners.compositionstart)fn()},
   compositionEnd:()=>{for(const fn of listeners.compositionend)fn()},
   click:(action,section)=>{const button=buttons.find(b=>b.dataset.action===action&&(section===undefined||b.dataset.section===section));assert.ok(button,`${action}${section?`(${section})`:''}`);return button.onclick()},
@@ -170,6 +250,29 @@ test('listbox 过滤与 type-ahead：子串过滤、中文首字与字母前缀�
  assert.equal(k.filterItems(items,'').length,3,'空串不过滤');
  assert.equal(k.typeAheadNext(items,-1,'日'),2,'首字匹配中文');
  assert.equal(k.typeAheadNext(items,-1,'h'),1,'字母前缀匹配');
+});
+// 代理组弹层是用户实测截图里「选中咋这么大、很丑」的地方：emoji 撑高行 + 图标与文字不齐。
+test('代理组弹层：每行都是 [16px 图标盒][固定勾盒][文字]，emoji 不再撑高行',async()=>{
+ const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+ const trigger=f.element('group-pick');assert.ok(trigger,'代理组触发器存在');
+ trigger.onclick();await flush();
+ const html=f.pops().at(-1);assert.ok(html,'弹层生成了选项');
+ const options=(html.match(/class="lb-option"/g)||[]).length;
+ assert.ok(options>0,'至少一行选项');
+ assert.equal((html.match(/class="lb-ico"/g)||[]).length,options,'每行都有 16px 图标盒');
+ assert.equal((html.match(/class="check"/g)||[]).length,options,'每行都有固定勾盒（勾不出现也不让文字移位）');
+ assert.match(html,/class="lb-ico" aria-hidden="true">🚀</,'emoji 进了图标盒');
+ assert.equal(/<span class="lb-label">🚀/.test(html),false,'正文不再带 emoji');
+ assert.ok(html.includes('<span class="check" aria-hidden="true">✓</span>'),'选中项有勾');
+});
+test('节点弹层：延迟数字与状态点贴在一起靠右，读数不会被挤出去',async()=>{
+ const f=fixture();await flush();f.row.running=true;f.click('view');await flush();
+ const trigger=f.element('node-pick');assert.ok(trigger,'节点触发器存在');
+ trigger.onclick();await flush();
+ const html=f.pops().at(-1);assert.ok(html,'节点弹层生成了选项');
+ assert.match(html,/class="lb-delay"><span class="dot good"/,'状态点跟着延迟数字');
+ assert.ok(html.includes('20 ms'),'延迟文本仍在');
+ assert.ok(html.includes('class="lb-ico"'),'节点名里的 emoji 同样进图标盒');
 });
 
 // ───────────────────────── 表单 / 订阅 / 概览回归 ─────────────────────────
@@ -293,19 +396,58 @@ test('概览只显示当前节点所用订阅，其余折叠成一行',async()=>
  assert.ok(f.root.innerHTML.includes('另有 1 个已启用订阅'));
  assert.ok(f.root.innerHTML.includes('>Two<'));
 });
-test('订阅卡点卡片＝查看/选中（不改启用态）；启用/停用只由卡内开关承担（H5）',async()=>{
+// 2.1.4 双向联动（H5 的口径已废止）：点卡＝高亮 + 切换启用，卡内开关等价，
+// 高亮与启用态始终同步，失败一起回滚。四条用例把 ①卡→切换 ②开关→高亮 ③失败回滚 ④运行中可用 钉住。
+test('点卡片＝高亮该卡＋切换启用（双向联动之一）',async()=>{
  const f=fixture();await flush();
- const first='sub-00000000-0000-0000-0000-000000000001';
- f.row.subscriptions.push({id:'sub-00000000-0000-0000-0000-000000000002',name:'Two',enabled:false,status:'ready',nodeCount:3,hasCache:true});
+ const first='sub-00000000-0000-0000-0000-000000000001',second='sub-00000000-0000-0000-0000-000000000002';
+ f.row.subscriptions.push({id:second,name:'Two',enabled:false,status:'ready',nodeCount:3,hasCache:true});
  f.click('view');await flush();f.click('section-providers');
- assert.ok(new RegExp(`data-sub="${first}"[^>]*data-active=`).test(f.root.innerHTML));
- assert.ok(/data-action="toggle-sub"[^>]*role="switch" aria-checked="true"/.test(f.root.innerHTML),'启用态由卡内开关表达');
- f.cardClick(first);await flush();
- assert.equal(f.calls.some(c=>c.method==='clash.subscriptionToggle'),false,'点卡片不下发切换');
- assert.ok(/data-sub="[^"]+" data-active="true"/.test(f.root.innerHTML),'点后成为活动卡');
- f.clickWhere('toggle-sub',b=>b.dataset.id===first);await flush();
+ f.cardClick(second);await flush();
  const call=f.calls.find(c=>c.method==='clash.subscriptionToggle');
- assert.ok(call,'开关发切换');assert.equal(call.params.enabled,false);
+ assert.ok(call,'点卡片必须发切换，不能只高亮');
+ assert.equal(call.params.id,second);assert.equal(call.params.enabled,true);
+ assert.ok(new RegExp(`data-sub="${second}" data-active="true"`).test(f.root.innerHTML),'新启用项成为高亮卡');
+ assert.ok(new RegExp(`data-action="toggle-sub" data-id="${first}"[^>]*aria-checked="false"`).test(f.root.innerHTML),'其余订阅被自动关掉');
+ assert.ok(new RegExp(`data-action="toggle-sub" data-id="${second}"[^>]*aria-checked="true"`).test(f.root.innerHTML),'卡内标签与启用态一致');
+});
+test('卡内开关改启用态时高亮跟随（双向联动之二）',async()=>{
+ const f=fixture();await flush();
+ const first='sub-00000000-0000-0000-0000-000000000001',second='sub-00000000-0000-0000-0000-000000000002';
+ f.row.subscriptions.push({id:second,name:'Two',enabled:false,status:'ready',nodeCount:3,hasCache:true});
+ f.click('view');await flush();f.click('section-providers');
+ f.clickWhere('toggle-sub',b=>b.dataset.id===second);await flush();
+ const tc=f.calls.find(c=>c.method==='clash.subscriptionToggle');
+ assert.equal(tc.params.id,second);assert.equal(tc.params.enabled,true);
+ assert.ok(new RegExp(`data-sub="${second}" data-active="true"`).test(f.root.innerHTML),'高亮跟随到新启用项');
+ assert.ok(new RegExp(`data-sub="${first}" data-active="false"`).test(f.root.innerHTML),'旧卡不再高亮');
+});
+test('切换失败：启用态与高亮一起回滚，不留「高亮但已停用」（双向联动之三）',async()=>{
+ const f=fixture();await flush();
+ const first='sub-00000000-0000-0000-0000-000000000001',second='sub-00000000-0000-0000-0000-000000000002';
+ f.row.subscriptions.push({id:second,name:'Two',enabled:false,status:'ready',nodeCount:3,hasCache:true});
+ f.click('view');await flush();f.click('section-providers');
+ f.throwOn('clash.subscriptionToggle',Object.assign(Error('PRIVATE'),{code:'SUBSCRIPTION_SWITCH_FAILED'}));
+ f.cardClick(second);await flush();
+ assert.ok(alertsOf(f.root.innerHTML).some(t=>t.includes(errorMessages.SUBSCRIPTION_SWITCH_FAILED)),'按码给文案');
+ assert.equal(f.root.innerHTML.includes('PRIVATE'),false,'不漏后端原文');
+ assert.ok(new RegExp(`data-sub="${second}" data-active="false"`).test(f.root.innerHTML),'高亮回滚');
+ assert.ok(new RegExp(`data-action="toggle-sub" data-id="${second}"[^>]*aria-checked="false"`).test(f.root.innerHTML),'启用态回滚');
+ assert.ok(new RegExp(`data-action="toggle-sub" data-id="${first}"[^>]*aria-checked="true"`).test(f.root.innerHTML));
+});
+test('内核运行中也允许点卡热切换：只有局部「切换中…」，不整页禁用（双向联动之四）',async()=>{
+ const f=fixture();await flush();f.row.running=true;
+ const second='sub-00000000-0000-0000-0000-000000000002';
+ f.row.subscriptions.push({id:second,name:'Two',enabled:false,status:'ready',nodeCount:3,hasCache:true});
+ f.click('view');await flush();f.click('section-providers');
+ assert.equal(f.buttons().find(b=>b.dataset.action==='toggle-sub'&&b.dataset.id===second).disabled,false,'运行中开关不再置灰');
+ const pending=f.cardClick(second);
+ assert.ok(f.root.innerHTML.includes('切换中…'),'只显示局部 busy');
+ assert.ok(f.root.innerHTML.includes('aria-busy="true"'),'卡片带 aria-busy');
+ assert.equal(f.buttons().find(b=>b.dataset.action==='section-overview').disabled,false,'页面其余部分没有被禁用');
+ await pending;await flush();
+ assert.ok(f.calls.some(c=>c.method==='clash.subscriptionToggle'),'运行中也发热切换');
+ assert.ok(new RegExp(`data-sub="${second}" data-active="true"`).test(f.root.innerHTML));
 });
 test('删除先删后撤销：5 秒内撤销不落盘；超时才真正删除（H6）',async()=>{
  const f=fixture();await flush();f.click('section-providers');

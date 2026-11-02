@@ -462,13 +462,45 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   }
   // 订阅是单选的：同时只能启用一条。多条一起启用等于把几家机场的节点混进同一个
 // 组树，出问题时也说不清是谁的节点——所以启用一条就把其余的关掉。
+// 2.1.4：内核运行中也直接生效——热重载配置，不 stop/start 内核。三步走：
+//   ① 持久化新启用集；② 生成候选配置 + PUT /configs?force=true 让内核就地换配置；③ 成功 rename 成正式配置。
+// 失败则启用集与配置文件一起回滚，抛 SUBSCRIPTION_SWITCH_FAILED——绝不停在「UI 说切了、内核还是旧配置」的中间态。
   async function subscriptionToggle({id,enabled}) {
     return exclusive(async()=>{
-      await config();editable();rowFor(id);
+      const c=await config();
       if(typeof enabled!=='boolean')throw serviceError('SUBSCRIPTION_STATE_INVALID');
-      await persist(subscriptions.map(s=>s.id===id?{...s,enabled}:(enabled?{...s,enabled:false}:s)));
-      return view({controller:false});
+      if(closing)throw serviceError('PLUGIN_STOPPING');
+      // 切 TUN 正在后台重启内核：这时的启用集写盘会和重启撞车，明确要求稍后重试。
+      if(operation||tunBusy)throw serviceError('KERNEL_SWITCHING');
+      if(jobs.size)throw serviceError('SUBSCRIPTION_UPDATING');
+      rowFor(id);
+      const previous=subscriptions;
+      const next=previous.map(s=>s.id===id?{...s,enabled}:(enabled?{...s,enabled:false}:s));
+      await persist(next);
+      // 内核没跑：只落盘启用集，下次启动用新的一套（现状语义不变）。
+      if(!alive())return view({controller:false});
+      // 启用了没有缓存的订阅，内核会拿到空 provider：拒绝并回滚，别让它带着空组跑起来。
+      if(next.filter(s=>s.enabled).some(s=>!s.hasCache)){
+        await rollbackSwitch(previous);
+        throw serviceError('SUBSCRIPTION_NO_CACHE');
+      }
+      try{
+        if(typeof runtime.swapConfig!=='function')throw coded('SUBSCRIPTION_SWITCH_FAILED','当前运行时不支持热切换配置');
+        const key=secret||await context.secrets.read('keys','controller.key')||'';
+        await runtime.swapConfig({settings:c,subscriptions:next,secret:key,
+          apply:path=>request('/configs?force=true',{method:'PUT',body:{path}})});
+      }catch(error){
+        await rollbackSwitch(previous);
+        // 目标内核不认 PUT /configs 时也走这里：页面文案直接告诉用户重启内核，不静默失败。
+        throw coded('SUBSCRIPTION_SWITCH_FAILED',`订阅切换没能热生效（${error?.code??'UNKNOWN'}）`,{cause:error?.code??null});
+      }
+      // 换完配置立刻回读视图：代理组已经是新启用集的，页面才不会显示旧组树。
+      try{return await view()}catch{return view({controller:false})}
     });
+  }
+  // 热切换失败回滚启用集：磁盘写失败也要把内存复原，不能留下两套状态。
+  async function rollbackSwitch(previous){
+    try{await persist(previous)}catch{subscriptions=previous}
   }
   async function subscriptionRemove({id}) {
     return exclusive(async()=>{
