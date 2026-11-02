@@ -93,6 +93,8 @@ const view=await window.FishDock.call('weather.view');
 
 Magpie、OFM 的 `gateway.open` 是宿主提供的特定管理页入口，地址只接收当前服务的回环端口。普通插件不借用该入口。网关页面按需加载，其原生账号与用量仍由各自服务处理。
 
+**视觉规范见 [设计语言](design-language.md)**：主题只有 `data-dock-theme` 与 `--dock-*` 两个来源（不许用 `prefers-color-scheme`）、两层 token、尺寸刻度表、控件八态、列表与弹层、emoji 必须包 16px 盒子、文案与数据口径、无障碍底线，以及一张"真踩过的反面清单"。新写页面先过那张尺寸刻度表再谈配色——2.1.3/2.1.4 里被投诉的"丑"多数出在孤值与 emoji 撑高，不是配色能力。
+
 ## Magpie 的页面插件
 
 `plugins/magpie/page-plugins/` 下是随 Magpie 包一起分发、首启装进 magpie 插件清单的页面插件（`page-checkin`、`page-relay-probe`）。它们不是本仓的发行单元，但代码在这里维护。
