@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {PREINSTALLED,addPreinstalled,markerName,packageOf,preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
+import {PREINSTALLED,addPreinstalled,markerName,packageOf,pendingStems,preinstallEnabled,preinstallStateFile,readPreinstallState,recordPreinstallState,seedPreinstalled,stateRelativePath} from './preinstall.mjs';
 
 const utf8=file=>fs.readFile(file,'utf8');
 async function sandbox(){
@@ -149,4 +149,40 @@ test('已有清单里的其它条目在登记后字节不变，且留一份原�
  assert.equal(manifest.plugins[0].spec,'C:/data/plugins/page-checkin');
  assert.deepEqual(manifest.plugins[0].options,{collapsed:true});
  assert.equal(await utf8(`${list}.bak`),raw,'改动前的清单留在 .bak');
+});
+
+// #16：首启登记要落一份可读状态（config/preinstall-state.json），让「登记已发生、
+// 还在等安装」这件事可判定，而不是只剩一个看不见的标记文件。
+test('首启登记写状态文件：13 家包名 + registeredAt，内容可读回',async()=>{
+ const {data}=await sandbox();
+ const result=await seedPreinstalled({data});
+ assert.equal(result.registered.length,13);
+ const file=preinstallStateFile(data);
+ assert.equal(file.replaceAll('\\','/').endsWith(stateRelativePath),true,'状态文件落在 config/ 下');
+ const state=await readPreinstallState({data});
+ assert.equal(state.schema,1);
+ assert.equal(state.status,'registered');
+ assert.equal(typeof state.registeredAt,'string');
+ assert.equal(Number.isNaN(Date.parse(state.registeredAt)),false,'registeredAt 是合法时间');
+ assert.deepEqual(state.registered,PREINSTALLED.map(item=>item.package));
+ assert.equal(state.added.length,13);
+});
+
+test('状态文件缺失时读回 null，写入失败不产生半份临时文件',async()=>{
+ const {data}=await sandbox();
+ assert.equal(await readPreinstallState({data}),null);
+ await recordPreinstallState({data,registered:['a'],added:[],at:new Date('2026-11-02T08:00:00Z')});
+ const state=await readPreinstallState({data});
+ assert.deepEqual(state.registered,['a']);
+ assert.equal(state.registeredAt,'2026-11-02T08:00:00.000Z');
+ const left=(await fs.readdir(path.join(data,'config'))).filter(name=>name.endsWith('.tmp'));
+ assert.deepEqual(left,[],'没有 .tmp 残留');
+});
+
+// pendingStems 只做集合差：给已装 provider 就回还差哪几家，不猜、不编。
+test('pendingStems 按已装 provider 求差，装完为空',()=>{
+ assert.equal(pendingStems({installed:[]}).length,13);
+ assert.deepEqual(pendingStems({installed:['raccoon','cline','loomy']}).slice(0,2),['autoclaw','codearts']);
+ assert.deepEqual(pendingStems({installed:PREINSTALLED.map(item=>item.stem)}),[]);
+ assert.equal(pendingStems({installed:['loomy-plugin']}).includes('loomy'),true,'别名不算已装到 loomy');
 });
