@@ -57,9 +57,10 @@
     </div>
     <div id="clear-confirm" hidden role="group" aria-label="确认清除机器人">
      <p>清除保存的 Webhook 和签名密钥，并关闭自动通知。事件筛选设置保留。</p>
+     <p class="irreversible">清除后需重新填写 Webhook 与密钥才能再次通知，此操作不可撤销。</p>
      <div class="actions">
       <button type="button" id="cancel-clear">取消</button>
-      <button type="button" id="confirm-clear" class="danger-solid">确认清除</button>
+      <button type="button" id="confirm-clear" class="danger">确认清除</button>
      </div>
     </div>
    </fieldset>

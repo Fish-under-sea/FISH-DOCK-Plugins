@@ -115,14 +115,19 @@ input[type=checkbox]{width:var(--ico);height:var(--ico);flex:none;accent-color:v
 /* ── 按钮语义：保存=primary，测试/刷新=默认，清除=危险色 ──
    primary 的前景色取 --dock-bg：dark 亮蓝底黑字、light 深蓝底浅字，两档都够对比。 */
 button.primary,button[type=submit]{background:var(--dock-accent);border-color:var(--dock-accent);color:var(--dock-bg)}
-.danger{border-color:var(--c-bad);background:var(--c-bad-bg);color:var(--c-bad)}
-.danger-solid{border-color:var(--c-bad);background:var(--c-bad);color:var(--layer-1)}
-.danger:hover:not(:disabled),.danger-solid:hover:not(:disabled){filter:brightness(1.12)}
+/* 危险按钮：描边与文字走 --c-bad，底沿用按钮自己的 --dock-control（不铺红底）。
+   面板里若把按钮底也染成 --c-bad-bg，它就跟面板融为一体、只剩一根红边；
+   保持控件底才让「取消 / 确认清除」仍是两个独立控件，红色只承担"破坏性"这一层信息。 */
+.danger{border-color:var(--c-bad);color:var(--c-bad)}
+.danger:hover:not(:disabled){filter:brightness(1.12)}
 
-/* ── 清除两步确认：Esc 取消、焦点回退由 page.js 负责 ── */
+/* ── 清除两步确认：红边承载「破坏性操作」这条信息，不是「可点」提示，所以不用 control。
+   色不能是唯一信号：面板里把后果写清（需重新填写 / 不可撤销），forced-colors 下红边被
+   系统色吃掉时文字仍交代同一件事。内部按钮保持 control 权重，只有确认按钮用 .danger。 ── */
 #clear-confirm{display:grid;gap:var(--gap-md);margin-top:var(--gap-lg);padding:var(--gap-md);
  border:1px solid var(--c-bad);border-radius:var(--r-card);background:var(--c-bad-bg)}
 #clear-confirm p{margin:0;font-size:var(--fs-body);line-height:var(--lh-line);color:var(--dock-text)}
+#clear-confirm .irreversible{font-weight:600}
 #clear-confirm .actions{margin-top:0}
 
 /* ── 最近发送：状态点走 16 盒子；空态给可行动引导 ── */
@@ -141,7 +146,7 @@ button.primary,button[type=submit]{background:var(--dock-accent);border-color:va
 @media(forced-colors:active){
  .card,#clear-confirm{border:1px solid CanvasText;box-shadow:none;background:Canvas}
  #clear-confirm p{color:CanvasText}
- .danger,.danger-solid{forced-color-adjust:none;border-color:Highlight;color:Highlight}
+ .danger{forced-color-adjust:none;border-color:Highlight;color:Highlight}
  #status[data-tone=ok],#status[data-tone=bad]{border-color:CanvasText;background:Canvas;color:CanvasText}
  .record::before{forced-color-adjust:none;color:CanvasText}
 }
