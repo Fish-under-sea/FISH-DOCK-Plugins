@@ -9,10 +9,10 @@
         "WTStarMark",
         "FISH"
       ],
-      "version": "2.1.0",
+      "version": "2.1.4",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.0/feishu.fish-plugin",
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.4/feishu.fish-plugin",
       "sha256": "b5c35eebf74406cea4582a521960f88f353e68e84a23959f180cebaf467836ac",
       "bytes": 23977,
       "dependencies": [
@@ -28,10 +28,10 @@
         "Elysia395",
         "FISH"
       ],
-      "version": "2.1.3",
+      "version": "2.1.4",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.3/clash.fish-plugin",
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.4/clash.fish-plugin",
       "sha256": "3dd9812f9aa39a6d10be214911f90eb0ce8c6f1ed8ee842c232cad949e428b6f",
       "bytes": 17163619,
       "dependencies": [
@@ -47,10 +47,10 @@
         "FISH",
         "Jassdingk"
       ],
-      "version": "2.1.3",
+      "version": "2.1.4",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.3/magpie.fish-plugin",
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.4/magpie.fish-plugin",
       "sha256": "7e0609389110a36be6e32c8e104bda6435af9fb8a96e0aeda8ebdb82e3d60aef",
       "bytes": 30969110,
       "dependencies": [

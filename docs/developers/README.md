@@ -1,6 +1,6 @@
 # 插件开发者指南
 
-当前协议为 v1。已发布的四个：飞书 **2.1.0**、Clash **2.1.3**、Magpie **2.1.3**（exe `v0.1.2336+fish.8`）、OFM **2.0.1**（暂停维护）；作者用数组、不再有维护者字段。`plugins/relay-probe` 是开发中的中转站行为探针，尚未进入发行目录；`plugins/magpie/page-plugins/` 下的页面插件随 Magpie 包分发，也不单独发行。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1。已发布的四个：飞书 **2.1.4**、Clash **2.1.4**、Magpie **2.1.4**（exe `v0.1.2732+fish.9`）、OFM **2.0.1**（暂停维护）；作者用数组、不再有维护者字段。`plugins/relay-probe` 是开发中的中转站行为探针，尚未进入发行目录；`plugins/magpie/page-plugins/` 下的页面插件随 Magpie 包分发，也不单独发行。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
@@ -113,7 +113,7 @@ Magpie、OFM 的 `gateway.open` 是宿主提供的特定管理页入口，地址
 - `magpie.page.icon` —— **侧边栏那个页面入口**的图标，写包内的相对路径（如 `page/icon.svg`）；
 - `magpie.icon` —— **插件列表那一行**的图标，写 `data:image/…`、`https://…`，或者包内相对路径（后者由 magpie 的 `LocalIcon` 读出来存成图标）。
 
-预装厂商在插件页、供应商页、侧边栏、路由与用量卡片上的图标由 magpie 侧接管，不在插件包里：素材编进 exe（`internal/provider/brandicons/`，21 份，覆盖 13 个插件注册的 21 个 provider id），开关是数据目录下 `icons/brand/on` 一个标记文件，页面那两颗按钮是 `brand:status` / `brand:set`。之所以不放插件包，是因为社区插件一升级 `magpie.icon` 就回原样——那正是「更新完图标就掉」的成因。改素材要重编 exe，步骤见 [自编译 Magpie](../../plugins/magpie/tools/README.md)。
+预装厂商在插件页、供应商页、侧边栏、路由与用量卡片上的图标由 magpie 侧接管，不在插件包里：素材编进 exe（`internal/provider/brandicons/`，22 份，覆盖 13 个插件注册的 22 个 provider id；含 2.1.4 移出预装但素材保留的 `opencode-zen-free` 与新增的 `meoo-agent`），开关是数据目录下 `icons/brand/on` 一个标记文件，页面那两颗按钮是 `brand:status` / `brand:set`。之所以不放插件包，是因为社区插件一升级 `magpie.icon` 就回原样——那正是「更新完图标就掉」的成因。改素材要重编 exe，步骤见 [自编译 Magpie](../../plugins/magpie/tools/README.md)。
 
 ## 事件与数据
 
