@@ -220,8 +220,12 @@ export function createRuntime(context){
   try{await apply(candidate)}
   catch(error){await unlink(candidate).catch(()=>{});throw error}
   try{await rename(candidate,join(context.dataDirectory,'tmp',RUNTIME_CONFIG))}
-  // 转正失败不影响已经在跑的内核：内容直接再写一份正式配置即可。
-  catch{await writeConfig({settings,subscriptions,secret,geo})}
+  catch{
+   // 转正失败不影响已经在跑的内核：内容直接再写一份正式配置；
+   // 候选文件同样按「失败不留痕」清掉（与上面 apply 失败分支保持一致）。
+   await unlink(candidate).catch(()=>{});
+   await writeConfig({settings,subscriptions,secret,geo});
+  }
  }
  async function start(c){
   c.signal?.throwIfAborted();

@@ -25,6 +25,15 @@
  let lastError=null; // {method,params}——错误横幅的「重试」重放它
  const updateSince={};
 
+ // 设置 view 的唯一出口：整体替换视图时顺手把高亮校正到「真实启用项」。
+ // 加载（首屏/刷新）、轮询、操作成功、操作回滚四条路径都走这里——只覆盖操作路径，
+ // 首屏就会出现「标签写着已启用、卡片却没高亮」（t5 实测），以后每加一个入口还会再漏一次。
+ function applyView(next){
+  view=next??null;
+  activeSub=(next?.subscriptions??[]).find(s=>s.enabled)?.id??'';
+  return view;
+ }
+
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const updating=()=>view?.subscriptions?.some(s=>s.updating);
  // locked：必须停内核才能做的动作（订阅增删改、改内核设置、装/卸 TUN 服务），界面同步禁用，
@@ -316,7 +325,7 @@
   draw();schedule();
   try{
    const result=await FishDock.call(`clash.${method}`,params);
-   view=result;afterSuccess(method,params);
+   applyView(result);afterSuccess(method,params);
    return true;
   }catch(e){
    if(e&&e.__cancelled){/* 取消不走错误横幅 */}
@@ -331,8 +340,8 @@
   const controller=new AbortController();
   ops.set(key,{controller,since:Date.now(),label,method,params});
   const prev=view;apply();error='';say('');lastError=null;revision++;draw();
-  try{const result=await FishDock.call(`clash.${method}`,params);view=result;return true}
-  catch(e){revert?.();view=prev;error=`${label}失败：${reason(e)}；未生效，已回到原状态`;lastError=null;return false}
+  try{const result=await FishDock.call(`clash.${method}`,params);applyView(result);return true}
+  catch(e){revert?.();applyView(prev);error=`${label}失败：${reason(e)}；未生效，已回到原状态`;lastError=null;return false}
   finally{ops.delete(key);draw();schedule()}
  }
 
@@ -346,7 +355,7 @@
   try{
    const next=await FishDock.call('clash.view');
    if(requestedRevision===revision){
-    view=next;lastUpdatedAt=Date.now();pollFails=0;
+    applyView(next);lastUpdatedAt=Date.now();pollFails=0;
     // H1：结构性变化才整块重绘，否则只改进读数节点。
     if(structSig()!==lastStructSig)requestDraw();else updateLive();
    }
@@ -793,20 +802,18 @@
   const row=view?.subscriptions?.find(s=>s.id===id);
   if(!row||subEditLocked()||anyOp())return false;
   const want=typeof next==='boolean'?next:!row.enabled;
-  const prevView=view,prevRows=view.subscriptions,prevActive=activeSub;
+  const prevView=view,prevRows=view.subscriptions;
   ops.set('sub:'+id,{since:Date.now(),label:'切换订阅启用',method:'subscriptionToggle',params:{id,enabled:want}});
   // 乐观：先切 UI（高亮跟着启用项走），RPC 回来再以服务端视图为准；失败整块回滚。
-  view={...view,subscriptions:prevRows.map(s=>s.id===id?{...s,enabled:want}:{...s,enabled:want?false:s.enabled})};
-  activeSub=want?id:'';
+  applyView({...view,subscriptions:prevRows.map(s=>s.id===id?{...s,enabled:want}:{...s,enabled:want?false:s.enabled})});
   error='';say('');lastError=null;revision++;draw();schedule();
   try{
    const result=await FishDock.call('clash.subscriptionToggle',{id,enabled:want});
-   view=result;
-   activeSub=want?id:((result?.subscriptions??[]).find(s=>s.enabled)?.id??'');
+   applyView(result);
    say(want?'已启用该订阅，内核已就地切换':'已停用该订阅','ok');
    return true;
   }catch(e){
-   view=prevView;activeSub=prevActive;
+   applyView(prevView);
    error=`切换订阅启用失败：${reason(e)}；未生效，已回到原状态`;lastError=null;
    return false;
   }finally{ops.delete('sub:'+id);draw();schedule()}
@@ -825,6 +832,8 @@
   const row=view.subscriptions.find(s=>s.id===id);if(!row)return false;
   pendingDelete.add(id);
   if(draft.id===id)draft={id:'',name:'',url:''};
+  // pendingDelete 只是 UI 过滤、view 没变（applyView 不会动高亮），这里显式清掉被删那条的高亮；
+  // 真正落盘后由 applyView(commitDelete 的返回视图) 重新校正。
   if(activeSub===id)activeSub='';
   undo={id,name:row.name,timer:setTimeout(()=>commitDelete(id),5000)};
   say(`已删除「${row.name}」，5 秒内可撤销`,'ok');draw();return true;

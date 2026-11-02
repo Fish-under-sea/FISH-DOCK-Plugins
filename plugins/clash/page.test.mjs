@@ -435,6 +435,22 @@ test('切换失败：启用态与高亮一起回滚，不留「高亮但已停�
  assert.ok(new RegExp(`data-action="toggle-sub" data-id="${second}"[^>]*aria-checked="false"`).test(f.root.innerHTML),'启用态回滚');
  assert.ok(new RegExp(`data-action="toggle-sub" data-id="${first}"[^>]*aria-checked="true"`).test(f.root.innerHTML));
 });
+// t5 F1（high）回归：首屏渲染就要把高亮落在启用项上。
+// 这里此前只有「操作之后」的断言，加载路径没人测，所以 F1 能在 134 项全绿里活下来。
+test('首屏渲染：高亮落在启用项上，且不存在「标签已启用但无高亮」（t5 F1 回归）',async()=>{
+ const first='sub-00000000-0000-0000-0000-000000000001',second='sub-00000000-0000-0000-0000-000000000002';
+ // prepare 在页面脚本执行前改 canned 视图，这样断言的是真正的首屏（不是点过刷新之后）
+ const f=fixture(row=>{row.subscriptions.push({id:second,name:'Two',enabled:false,status:'ready',nodeCount:3,hasCache:true})});
+ await flush();await flush();
+ assert.equal(f.calls.filter(c=>c.method==='clash.subscriptionToggle').length,0,'首屏不允许出现切换动作');
+ f.click('section-providers');
+ const html=f.root.innerHTML;
+ const pairs=[...html.matchAll(/<article class="subscription" data-sub="([^"]+)" data-active="(true|false)"[\s\S]*?aria-checked="(true|false)"/g)]
+  .map(m=>({id:m[1],active:m[2],checked:m[3]}));
+ assert.equal(pairs.length,2,'两张订阅卡');
+ for(const card of pairs)assert.equal(card.active,card.checked,`${card.id}：高亮必须与启用态一致`);
+ assert.deepEqual(pairs.filter(c=>c.active==='true').map(c=>c.id),[first],'只有启用那条高亮');
+});
 test('内核运行中也允许点卡热切换：只有局部「切换中…」，不整页禁用（双向联动之四）',async()=>{
  const f=fixture();await flush();f.row.running=true;
  const second='sub-00000000-0000-0000-0000-000000000002';

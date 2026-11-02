@@ -96,6 +96,9 @@ async function settled(service) {
 }
 test('multiple subscriptions keep independent IDs but only one runs at a time',async()=>{
  const f=fixture();await f.service.save(kernel);const a=await add(f),b=await add(f,'B','https://example.test/b');
+ // 启用无缓存的订阅现在两条路径都拒绝（t5 F5），这里先把 A、B 的缓存都准备好，本用例只关心单选语义。
+ await f.service.reload();await settled(f.service);
+ await f.service.reload({id:b.id});await settled(f.service);
  assert.notEqual(a.id,b.id);
  assert.equal(a.enabled,true,'第一条默认启用');
  assert.equal(b.enabled,false,'之后再新增的默认停用');
@@ -129,11 +132,11 @@ test('multiple subscriptions keep independent IDs but only one runs at a time',a
  await f.service.select({group:'🚀 节点选择',name:sourceNodes[0].name});
  assert.ok(f.requests.some(r=>r.method==='PUT'&&r.body?.name===`[${a.id}] same`));
  assert.ok(!JSON.stringify(state).includes('PRIVATE'));assert.ok(!f.disk.get('config/subscriptions.json').includes('https:'));
- // 2.1.4：运行中改启用集不再抛 KERNEL_RUNNING_LOCK（改走内核热重载，见专门用例）。
- // 这里 B 还没有缓存：启用它会让内核拿到空 provider，明确拒绝并回滚。
- await assert.rejects(f.service.subscriptionToggle({id:b.id,enabled:true}),error=>error.code==='SUBSCRIPTION_NO_CACHE');
- const rolled=await f.service.view({controller:false});
- assert.deepEqual(rolled.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,true],[b.id,false]],'拒绝时启用集不变');
+ // 2.1.4：运行中改启用集不再抛 KERNEL_RUNNING_LOCK——B 已有缓存，这里直接走热重载。
+ // 「无缓存时拒绝」的路径由「无缓存的订阅两条路径都不许启用（t5 F5）」那一条单独覆盖。
+ const hot=await f.service.subscriptionToggle({id:b.id,enabled:true});
+ assert.deepEqual(hot.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,false],[b.id,true]],'运行中切换生效');
+ assert.ok(f.swaps.length>0,'走的是热重载路径，不是停内核');
  await f.service.stop();await f.service.subscriptionToggle({id:a.id,enabled:true});
  await f.service.start();assert.deepEqual(f.stats().owned.subscriptions.map(s=>s.id),[a.id]);
  await f.service.stop();await f.service.subscriptionRemove({id:a.id});
@@ -186,11 +189,26 @@ test('热切换失败：启用集与磁盘一起回滚，抛 SUBSCRIPTION_SWITCH
 test('内核没跑时切启用集只落盘，不生成配置也不碰控制器',async()=>{
  const f=fixture();await f.service.save(kernel);
  const a=await add(f),b=await add(f,'B','https://example.test/b');
+ // 先给 B 准备缓存（无缓存的订阅两条路径都拒绝，见下一条用例），本用例只关心"没跑内核只落盘"。
+ await f.service.reload({id:b.id});await settled(f.service);
  const state=await f.service.subscriptionToggle({id:b.id,enabled:true});
  assert.deepEqual(state.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,false],[b.id,true]]);
  assert.equal(f.swaps.length,0,'没跑内核就不生成新配置');
  assert.equal(f.requests.some(r=>r.path==='/configs?force=true'),false,'不碰控制器');
  assert.equal(JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions.find(s=>s.enabled).id,b.id);
+});
+test('无缓存的订阅两条路径都不许启用（t5 F5）：没跑内核时也不落盘',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ const a=await add(f),b=await add(f,'B','https://example.test/b');
+ // 内核没跑：同样拒绝，且绝不落盘（否则下次 start 会带着空 provider 起来）。
+ await assert.rejects(f.service.subscriptionToggle({id:b.id,enabled:true}),error=>error.code==='SUBSCRIPTION_NO_CACHE');
+ assert.deepEqual(JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions.map(s=>[s.id,s.enabled]),
+  [[a.id,true],[b.id,false]],'被拒时磁盘上的启用集不变');
+ // 跑起来以后同一条也拒绝（两条路径语义一致），并且不去写配置。
+ await f.service.reload();await settled(f.service);await f.service.start();
+ await assert.rejects(f.service.subscriptionToggle({id:b.id,enabled:true}),error=>error.code==='SUBSCRIPTION_NO_CACHE');
+ assert.equal(f.swaps.length,0,'被拒时不写配置');
+ assert.equal(f.stats().up,true,'内核照旧在原配置上跑');
 });
 test('订阅更新进行中不许切启用集：SUBSCRIPTION_UPDATING，且不动现有启用项',async()=>{
  const f=fixture();await f.service.save(kernel);

@@ -63,3 +63,13 @@
    失败回滚 / 运行中局部 busy）。要跑真实浏览器回归，需单开一条任务在有 playwright 的环境里重写这段。
 2. **`.lb-list` 命名**：施工单写「给 `.lb-list` 加 `overscroll-behavior:contain`」，本页的滚动容器叫 `.listbox`
    （弹层自身即滚动容器，已带 `overscroll-behavior:contain`），没有另建 `.lb-list` 元素。
+
+## 7. t14（t5 复审修复）追加登记
+
+1. **行为变化，要写进发行说明**：启用一条**没有缓存**的订阅现在直接拒绝（`SUBSCRIPTION_NO_CACHE`
+   「请先更新已启用订阅，获取可用缓存」），内核运行与否都一样。此前内核没跑时允许把它设为启用并落盘，
+   下次「启动内核」才失败——用户看到的是「启用成功、启动失败」两个状态。
+2. **`page.js` 的 `applyView(next)` 是设置 view 的唯一出口**（同时把 `activeSub` 校正到真实启用项）。
+   后续若再加「整体替换视图」的入口，必须走它；否则首屏/刷新会再次出现「标签写已启用、卡片无高亮」。
+3. `swapConfig` 的 rename 失败分支现在也删候选文件；`SUBSCRIPTION_SWITCH_FAILED` 的 `cause` 改为
+   **原始错误对象**（保留堆栈与 URL），日志侧取原始码请用 `error.cause.code`。

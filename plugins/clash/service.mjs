@@ -476,14 +476,12 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       rowFor(id);
       const previous=subscriptions;
       const next=previous.map(s=>s.id===id?{...s,enabled}:(enabled?{...s,enabled:false}:s));
+      // 启用没有缓存的订阅，内核会拿到空 provider：运行中要热重载、未运行下次 start 也会失败，
+      // 所以两条路径都直接拒绝、且一律不落盘（否则用户拿到「启用成功、启动失败」两个状态）。
+      if(next.filter(s=>s.enabled).some(s=>!s.hasCache))throw serviceError('SUBSCRIPTION_NO_CACHE');
       await persist(next);
-      // 内核没跑：只落盘启用集，下次启动用新的一套（现状语义不变）。
+      // 内核没跑：只落盘启用集，下次启动用新的一套。
       if(!alive())return view({controller:false});
-      // 启用了没有缓存的订阅，内核会拿到空 provider：拒绝并回滚，别让它带着空组跑起来。
-      if(next.filter(s=>s.enabled).some(s=>!s.hasCache)){
-        await rollbackSwitch(previous);
-        throw serviceError('SUBSCRIPTION_NO_CACHE');
-      }
       try{
         if(typeof runtime.swapConfig!=='function')throw coded('SUBSCRIPTION_SWITCH_FAILED','当前运行时不支持热切换配置');
         const key=secret||await context.secrets.read('keys','controller.key')||'';
@@ -492,7 +490,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       }catch(error){
         await rollbackSwitch(previous);
         // 目标内核不认 PUT /configs 时也走这里：页面文案直接告诉用户重启内核，不静默失败。
-        throw coded('SUBSCRIPTION_SWITCH_FAILED',`订阅切换没能热生效（${error?.code??'UNKNOWN'}）`,{cause:error?.code??null});
+        // cause 传原始错误（保留堆栈、URL 与原始 code），不把 code 字符串塞进标准字段。
+        throw coded('SUBSCRIPTION_SWITCH_FAILED',`订阅切换没能热生效（${error?.code??'UNKNOWN'}）`,{cause:error});
       }
       // 换完配置立刻回读视图：代理组已经是新启用集的，页面才不会显示旧组树。
       try{return await view()}catch{return view({controller:false})}
