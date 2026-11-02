@@ -148,6 +148,18 @@
     return {all, done, credit, unknown};
   }
 
+  // creditNote is the header / card-head credit slot. When some accounts checked
+  // in but the vendor never reported an amount (unknown > 0), saying "0 积分" would
+  // be a number nobody claimed: show「N 项未告知」instead. Only when every amount is
+  // known does it print the summed credits. value is the sum, suffix is the noun
+  // (points for the header, today for a card).
+  function creditNote(value, unknown, lang, suffix) {
+    const t = text(lang);
+    const n = Number(unknown);
+    if (Number.isFinite(n) && n > 0) return t.unknownCount.replace("{n}", n);
+    return `${value} ${suffix}`;
+  }
+
   // freshness is the header's「数据截至 HH:MM · 台账」. It is null when the host
   // sends no refreshedAt (old exe, fish.8 and earlier): the page then shows no
   // as-of line at all — it degrades quietly instead of inventing a time. Source
@@ -164,5 +176,5 @@
     return t.dataAsOf.replace("{time}", `${hh}:${mm}`).replace("{source}", source);
   }
 
-  globalThis.CheckinView = {text, todayOf, accountsOf, status, vendorGroups, totals, openIds, freshness};
+  globalThis.CheckinView = {text, todayOf, accountsOf, status, vendorGroups, totals, openIds, freshness, creditNote};
 })();

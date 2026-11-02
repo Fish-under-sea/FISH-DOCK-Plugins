@@ -242,3 +242,25 @@ test('刷新文案改为重新读取额度，与 RefreshUsage 语义一致', () 
   assert.equal(V.text('en').refresh, 'Re-read credits');
   assert.equal(V.text('zh').refreshing, '正在读取…');
 });
+
+// t4 R1：表头/卡头不能把「未告知」折成 0。creditNote 在 unknown>0 时给未告知计数，
+// 只有全部已知才显示总额；否则会出现「账号行说未告知、表头说 0 积分」的自相矛盾。
+test('额度未知时表头/卡头显示未告知计数，不显示 0 积分 / 0 今日', () => {
+  const s = {
+    providers: [{id: 'acme', name: 'Acme', on: true}],
+    accounts: [{key: 'acme|a', on: true, by: 'plugin:acme'}],
+    today: {'acme|a': {outcome: 'claimed'}},
+    credits: {},
+  };
+  const groups = V.vendorGroups(s, 'zh');
+  const totals = V.totals(groups);
+  assert.equal(totals.credit, 0);
+  assert.equal(totals.unknown, 1);
+  // 单账号 claimed 但宿主没报额度：表头不得出现「0 积分」，卡头不得出现「0 今日」。
+  assert.equal(V.creditNote(totals.credit, totals.unknown, 'zh', '积分'), '1 项未告知');
+  assert.equal(V.creditNote(groups[0].credit, groups[0].unknown, 'zh', '今日'), '1 项未告知');
+  // 全部已知时仍显示原总额（含真实的 0）。
+  assert.equal(V.creditNote(120, 0, 'zh', '积分'), '120 积分');
+  assert.equal(V.creditNote(0, 0, 'zh', '今日'), '0 今日');
+  assert.equal(V.creditNote(0, 2, 'en', 'points'), '2 not reported');
+});

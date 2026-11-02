@@ -40,28 +40,15 @@
     }
   }
 
-  // 写动作优先走宿主的调用桥。0.1.1709 的页面桥只有 read，没有 act：magpie.call
-  // 是新加的通用通道（按 package.json 的 magpie.calls 白名单分派）；再退回旧
-  // 桥 magpie.act，最后退回宿主自己的设置端点。三层都留着，宿主旧时行为不变。
+  // 写动作只走宿主的调用桥：magpie.call 是新加的通用通道（按 package.json 的
+  // magpie.calls 白名单分派）；再退回旧桥 magpie.act。旧的 fetch 回退在 CSP
+  // connect-src 'none' 下永远不可达，报错还会误导成网络错误，已删除——两个桥
+  // 都没有就是宿主版本过低，直接按 NEED_HOST 报，不假装会发一次注定失败的请求。
   async function act(action, params) {
     if (typeof magpie.call === "function") return magpie.call(action, params);
     if (typeof magpie.act === "function") return magpie.act(action, params);
-    const paths = {
-      "checkin:set-provider": "/api/settings/plugin-checkin",
-      "checkin:set-account": "/api/settings/checkin-account",
-      "checkin:run": "/api/usage/plugin-checkin",
-      "checkin:refresh": "/api/usage/quotas/refresh",
-    };
-    const path = paths[action];
-    if (!path) throw new Error(`no such action: ${action}`);
-    const response = await fetch(path, {
-      method: "POST",
-      headers: {"content-type": "application/json"},
-      body: JSON.stringify(params || {}),
-      credentials: "same-origin",
-    });
-    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
-    return response.json().catch(() => null);
+    const error = new Error(V.text(lang).needsHost);
+    throw tagKind(error, "NEED_HOST");
   }
 
   function failure(error) {
@@ -156,6 +143,8 @@
   // 服务起来后这行自己出来；只有根本没有页面桥（NEED_HOST）时才整行不显示。
   function lookUnsupported(error) {
     if (needHost()) return true;
+    // act() 在两条调用桥都缺失时已按 NEED_HOST 标记：宿主版本过低，这行整块不出现。
+    if (error && error.checkinKind === "NEED_HOST") return true;
     const msg = String((error && error.message) || "");
     return /no such action|unknown action|not supported|does not support|没有.*(动作|接口)/i.test(msg);
   }
@@ -213,7 +202,7 @@
     const totals = V.totals(groups);
     if (!state.seeded && groups.length) { for (const id of V.openIds(groups, opts)) state.open.add(id); state.seeded = true; }
     $("total").textContent = groups.length
-      ? `${t.total.replace("{done}", totals.done).replace("{all}", totals.all)} · ${totals.credit} ${t.points}`
+      ? `${t.total.replace("{done}", totals.done).replace("{all}", totals.all)} · ${V.creditNote(totals.credit, totals.unknown, lang, t.points)}`
       : "";
     // #15：宿主给了 refreshedAt 才显示「数据截至 HH:MM · 台账」；老 exe 没这字段就整行不出现。
     const fresh = V.freshness(data || {}, lang);
@@ -240,7 +229,7 @@
       head.append(logo(group.id, group.name));
       head.append(row("span", "vcaret", open ? "▾" : "▸"));
       head.append(row("div", "vname", group.name));
-      head.append(row("div", "vmeta", `${t.accounts.replace("{n}", group.total)} · ${group.done}/${group.total} · ${group.credit} ${t.credits}`));
+      head.append(row("div", "vmeta", `${t.accounts.replace("{n}", group.total)} · ${group.done}/${group.total} · ${V.creditNote(group.credit, group.unknown, lang, t.credits)}`));
       head.append(switchFor(group.on, async (on) => {
         await act("checkin:set-provider", {provider: group.id, on});
         await load();
