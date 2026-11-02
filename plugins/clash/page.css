@@ -189,7 +189,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 /* ── 下拉 / listbox（弹层 position:fixed 挂 body，不被 .pane 的 overflow 裁切） ── */
 .combo{display:flex;flex-direction:column;justify-content:flex-start;gap:4px;min-width:0}
 .combo>.combo-label{font-size:12px;line-height:18px;color:var(--dock-muted)}
-.combo-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:28px;
+.combo-trigger{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:100%;min-height:28px;
  padding:2px 12px;border:1px solid var(--line-control);border-radius:999px;background:var(--dock-control);
  font-size:12.5px;line-height:18px;font-weight:600;cursor:pointer;text-align:left;color:var(--dock-text)}
 .combo-trigger:hover:not(:disabled){filter:brightness(1.15)}
@@ -198,7 +198,12 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 .combo-trigger .chev{flex:none;display:block;width:12px;height:12px;transition:transform .12s ease}
 .combo-trigger[aria-expanded=true] .chev{transform:rotate(180deg)}
 .combo-trigger .trigger-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 首列恒定左靠，两个触发器同一左偏移：图标盒永远在（哪怕没有 emoji），文字紧跟其后；
+   右侧那组（延迟 + 箭头）整体贴右——有延迟时由延迟吃 auto，没有延迟时由箭头吃。
+   不用 space-between 分配空余（代理组只有 [图标][文字][箭头]，文字会被推到中间），
+   也不给代理组补假元素凑宽度。 */
 .combo-trigger .trigger-delay{margin-left:auto;flex:0 0 auto;font-variant-numeric:tabular-nums}
+.combo-trigger:not(:has(.trigger-delay)) .chev{margin-left:auto}
 /* F6：下拉触发器与选项的键盘焦点必须可见（无障碍底线）。 */
 .combo-trigger:focus-visible,.lb-option:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px}
 /* D2：弹层默认用不透明 --layer-1 底 + 边框——headless/禁 GPU 时 backdrop-filter 不被渲染

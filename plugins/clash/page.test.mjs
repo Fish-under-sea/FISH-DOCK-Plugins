@@ -113,6 +113,16 @@ test('弹层内滚轮不关闭弹层：onWheel 有 pop.contains 守卫，弹层�
  assert.match(pageJs,/const onWheel=e=>\{const t=e\?\.target;if\(pop\.contains\?\.\(t\)\)return;closeListbox\(false\)\}/,'弹层内滚轮放行');
  assert.match(pageCss,/\.listbox\{[^}]*overscroll-behavior:contain/,'阻断滚动链外传');
 });
+// 两个触发器并排放在同一行：首列文字必须同一起点（代理组只有 [图标][文字][箭头]，
+// 节点多一个延迟——用 space-between 时前者的文字会被推到中间，两个框文字起点差一大截）。
+test('两个下拉触发器首列对齐：图标盒恒在、文字固定左靠、右侧元素贴右',()=>{
+ assert.match(pageCss,/\.combo-trigger\{[^}]*justify-content:flex-start/,'触发器不许用 space-between 分配空余');
+ assert.match(pageCss,/\.combo-trigger \.trigger-delay\{[^}]*margin-left:auto/,'有延迟时由延迟贴右');
+ assert.match(pageCss,/\.combo-trigger:not\(:has\(\.trigger-delay\)\) \.chev\{[^}]*margin-left:auto/,'无延迟时由箭头贴右');
+ const trigger=pageJs.slice(pageJs.indexOf('function comboTrigger'),pageJs.indexOf('function subscriptionCard'));
+ assert.ok(trigger.includes('class="lb-ico"'),'触发器必须有图标盒（哪怕没有 emoji）');
+ assert.equal(/icon\?`<span class="lb-ico"/.test(trigger),false,'图标盒不许按条件省略，否则首列随 emoji 有无而漂移');
+});
 // 反面清单（docs/developers/design-language.md）：grid/flex 容器被外层 stretch 拉高后，
 // align-content:normal(=stretch) 会把多余高度均摊给每一行 → 同一容器里「一个高一个低」。
 test('被 stretch 拉高的容器不把多余高度摊给各行：grid 一律 align-content:start',()=>{
