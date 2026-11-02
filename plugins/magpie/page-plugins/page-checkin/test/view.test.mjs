@@ -117,23 +117,6 @@ test('厂商不给数额且无固定值时不计积分，仍按已签到计入�
   assert.equal(group.unknown, 1);
 });
 
-// 已知每天固定 +100 的厂商（CodeArts、商汤小浣熊）：账号不回报数额时用固定值，
-// 计入今日积分，不再出现未告知。
-test('固定每日额度的厂商按 +100 记', () => {
-  for (const id of ['codearts', 'raccoon']) {
-    const s = {
-      providers: [{id, name: id, on: true}],
-      accounts: [{key: `${id}|a`, on: true, by: `plugin:${id}`}],
-      today: {[`${id}|a`]: {outcome: 'done', msg: '今天已领取'}},
-      credits: {},
-    };
-    const g = V.vendorGroups(s, 'zh')[0];
-    assert.equal(g.accounts[0].credit, 100, id);
-    assert.equal(g.credit, 100, id);
-    assert.equal(g.unknown, 0, id);
-  }
-});
-
 // 宿主按额度面板反推出的数：单独给一格，不并进「实得」汇总。
 test('宿主给出反推值时用它，且不并入实得积分', () => {
   const guessed = {
@@ -182,4 +165,105 @@ test('厂商分组默认收起，只有包选项明确要求才全展开', () =>
   assert.deepEqual(V.openIds(groups, undefined), []);
   assert.deepEqual(V.openIds(groups, {collapsed: false}), ['workbuddy', 'qoder']);
   assert.deepEqual(V.openIds([], {collapsed: false}), []);
+});
+
+// issue #15 ①：宿主没有 dailyCredits / credits 时不补固定额度，也不再用老的
+// DEFAULT_DAILY（CodeArts / 商汤小浣熊 +100）。缺值一律 null，页面据此显示未告知。
+test('无 dailyCredits 时额度不补固定值，缺值记为未告知', () => {
+  for (const id of ['codearts', 'raccoon']) {
+    const s = {
+      providers: [{id, name: id, on: true}],
+      accounts: [{key: `${id}|a`, on: true, by: `plugin:${id}`}],
+      today: {[`${id}|a`]: {outcome: 'done', msg: '今天已领取'}},
+      credits: {},
+    };
+    const g = V.vendorGroups(s, 'zh')[0];
+    assert.equal(g.accounts[0].credit, null, `${id} 不再 +100`);
+    assert.equal(g.credit, 0, id);
+    assert.equal(g.unknown, 1, `${id} 计一条未告知`);
+  }
+  assert.equal(V.text('zh').unknown, '未告知');
+});
+
+// issue #15 ①：宿主回了 dailyCredits 就按原值透传，不做任何补偿或改写。
+test('有 dailyCredits 时按宿主原值显示，不并入估算', () => {
+  const s = {
+    providers: [{id: 'codearts', name: 'CodeArts', on: true}],
+    accounts: [{key: 'codearts|a', on: true, by: 'plugin:codearts'}],
+    today: {'codearts|a': {outcome: 'done'}},
+    credits: {},
+    dailyCredits: {'codearts|a': 321},
+  };
+  const g = V.vendorGroups(s, 'zh')[0];
+  assert.equal(g.accounts[0].credit, 321);
+  assert.equal(g.accounts[0].estimate, null);
+  assert.equal(g.credit, 321);
+  assert.equal(g.unknown, 0);
+});
+
+// issue #15 ③：provider 带 collector=none 表示这家不支持自动采集：页面如实说
+// 「不支持自动采集」，而不是永远「今日尚未签到」。缺 collector（老 exe）按旧口径。
+test('collector=none 的厂商显示「不支持自动采集」', () => {
+  const s = {
+    providers: [{id: 'kiro', name: 'Kiro', on: true, collector: 'none'}],
+    accounts: [{key: 'kiro|a', on: true, by: 'plugin:kiro'}],
+    today: {}, credits: {},
+  };
+  const row = V.vendorGroups(s, 'zh')[0].accounts[0];
+  assert.equal(row.status.key, 'collectorNone');
+  assert.match(row.status.text, /不支持自动采集/);
+  assert.equal(V.text('en').collectorNone, 'No automatic collection');
+  // 老宿主没有 collector 字段：仍说「今日尚未签到」，不误判成不支持采集
+  const old = {...s, providers: [{id: 'kiro', name: 'Kiro', on: true}]};
+  assert.equal(V.vendorGroups(old, 'zh')[0].accounts[0].status.key, 'pending');
+});
+
+// 降级：旧 exe（fish.8）没有 refreshedAt/source。缺字段时 freshness 返回 null，
+// 页面不显示「数据截至」，而不是画一个假时间。
+test('无 refreshedAt 时按旧口径：不显示数据截至', () => {
+  assert.equal(V.freshness({}, 'zh'), null);
+  assert.equal(V.freshness(state, 'zh'), null);
+  assert.equal(V.freshness({refreshedAt: 'not-a-date'}, 'zh'), null);
+});
+
+// 新口径：refreshedAt 存在时显示「数据截至 HH:MM · 台账」，source=live 显示实时。
+test('有 refreshedAt 时显示数据截至 HH:MM，并按 source 区分台账/实时', () => {
+  const ledger = V.freshness({refreshedAt: '2026-11-02T14:05:00+08:00', source: 'ledger'}, 'zh');
+  assert.match(ledger, /^数据截至 \d{2}:\d{2} · 台账$/);
+  const live = V.freshness({refreshedAt: '2026-11-02T14:05:00+08:00', source: 'live'}, 'zh');
+  assert.match(live, /^数据截至 \d{2}:\d{2} · 实时$/);
+  const en = V.freshness({refreshedAt: '2026-11-02T14:05:00+08:00', source: 'ledger'}, 'en');
+  assert.match(en, /^Data as of \d{2}:\d{2} · ledger$/);
+});
+
+// issue #15 ⑤：刷新按钮语义是「重新读取额度」（RefreshUsage），不是「刷新今日积分」。
+test('刷新文案改为重新读取额度，与 RefreshUsage 语义一致', () => {
+  assert.equal(V.text('zh').refresh, '重新读取额度');
+  assert.equal(V.text('en').refresh, 'Re-read credits');
+  assert.equal(V.text('zh').refreshing, '正在读取…');
+});
+
+// t4 R1：表头/卡头不能把「未告知」折成 0。creditNote 在 unknown>0 时给未告知计数，
+// 只有全部已知才显示总额；否则会出现「账号行说未告知、表头说 0 积分」的自相矛盾。
+test('额度未知时表头/卡头显示未告知计数，不显示 0 积分 / 0 今日', () => {
+  const s = {
+    providers: [{id: 'acme', name: 'Acme', on: true}],
+    accounts: [{key: 'acme|a', on: true, by: 'plugin:acme'}],
+    today: {'acme|a': {outcome: 'claimed'}},
+    credits: {},
+  };
+  const groups = V.vendorGroups(s, 'zh');
+  const totals = V.totals(groups);
+  assert.equal(totals.credit, 0);
+  assert.equal(totals.unknown, 1);
+  // 单账号 claimed 但宿主没报额度：表头不得出现「0 积分」，卡头不得出现「0 今日」。
+  assert.equal(V.creditNote(totals.credit, totals.unknown, 'zh', '积分'), '1 项未告知');
+  assert.equal(V.creditNote(groups[0].credit, groups[0].unknown, 'zh', '今日'), '1 项未告知');
+  // 全部已知时仍显示原总额（含真实的 0）。
+  assert.equal(V.creditNote(120, 0, 'zh', '积分'), '120 积分');
+  assert.equal(V.creditNote(0, 0, 'zh', '今日'), '0 今日');
+  assert.equal(V.creditNote(0, 2, 'en', 'points'), '2 not reported');
+  // 部分账号有额度 + 部分未告知：已知总额与未告知计数两段都在，不是二选一。
+  assert.equal(V.creditNote(120, 1, 'zh', '积分'), '120 积分 · 1 项未告知');
+  assert.equal(V.creditNote(120, 2, 'en', 'points'), '120 points · 2 not reported');
 });
