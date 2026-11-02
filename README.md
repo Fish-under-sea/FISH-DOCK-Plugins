@@ -12,18 +12,18 @@
 </picture>
 
 <p>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.4"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：三插件 2.1.4" width="23%"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.5"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：三插件 2.1.4" width="23%"></picture></a>
   <a href="#plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-desktop-zh-dark.png"><img src="assets/readme/config-stat-desktop-zh-light.png" alt="PLUGINS：三个独立插件" width="23%"></picture></a>
   <a href="#packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-mail-zh-dark.png"><img src="assets/readme/config-stat-mail-zh-light.png" alt="PACKAGES：三个 npm 单包" width="23%"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-Dock"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-channels-zh-dark.png"><img src="assets/readme/config-stat-channels-zh-light.png" alt="HOST API：1，兼容 FISH Dock 2.0.0+" width="23%"></picture></a>
 </p>
 
-<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="插件适配代码许可 MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="随包 mihomo 许可 GPL-3.0"> <img src="https://img.shields.io/badge/Plugins-2.1.4-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="三插件 2.1.4"></p>
+<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="插件适配代码许可 MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="随包 mihomo 许可 GPL-3.0"> <img src="https://img.shields.io/badge/Plugins-2.1.5-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="三插件 2.1.4"></p>
 <p><strong>FISH Plugins &amp; Configuration · 插件配置仓</strong><br>官方插件、配置说明与发行入口；按需安装，独立运行。</p>
 
 <p>
   <a href="#get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-download-zh-dark.png"><img src="assets/readme/key-download-zh-light.png" alt="下载 / Releases" height="40"></picture></a>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.4"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.5"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-issues-zh-dark.png"><img src="assets/readme/key-issues-zh-light.png" alt="反馈 / Issues" height="40"></picture></a>
 </p>
 
@@ -35,14 +35,16 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-本版是**三插件 2.1.4**：**Clash 2.1.3 → 2.1.4**、**Magpie 2.1.3 → 2.1.4**、**飞书 2.1.0 → 2.1.4**。要求 **FISH Dock ≥ 2.0.0**。完整改动见 [2.1.4 发行说明](docs/releases/2.1.4.md)。
+本版是**三插件 2.1.5**（2.1.4 的补丁重发：Clash 的触发器对齐修复在 2.1.4 里漏合，本版一并补上）。三插件版本一致：**Clash 2.1.4 → 2.1.5**、**Magpie 2.1.4 → 2.1.5**、**飞书 2.1.4 → 2.1.5**。要求 **FISH Dock ≥ 2.0.0**。完整改动见 [2.1.5 发行说明](docs/releases/2.1.4.md)。
 
-**2.1.4 改了什么**
+**2.1.5 改了什么**
 
 - **Clash：七项 UX 修复 + 订阅运行中热切换**：胶囊按钮不再被长文案压成竖排圆块（禁用原因拆成按钮下方小字）；详情卡「复制」按钮移除、左右两卡行高基线对齐；**点订阅卡 = 高亮 + 切换启用**（同时只允许一条启用，卡内开关与卡片高亮双向联动）；内核运行中切换订阅**热重载配置，不停内核**（失败自动回滚启用集与配置文件）；下拉弹层内滚轮不再误关闭；两个下拉箭头换成内联 SVG 垂直居中；读数行数值不再被裁。注意一条行为变化：**没有缓存的订阅现在直接拒绝启用**（此前是「启用成功、下次启动内核才失败」），避免内核带着空 provider 起来。
+- **Clash 两个下拉触发器首列对齐（2.1.5 补发）**：`justify-content:flex-start` + 图标盒恒在 + 右侧那组贴右（有延迟由延迟吃 `auto`，没有则由箭头吃），两个触发器的文字相对左边缘偏移实测 37px = 37px；顺带修掉「无 emoji 时首列少 24px」。
+- **以下为 2.1.4 首次引入、2.1.5 一并包含**：
 - **飞书页面按 2.1.4 设计语言重构**：单栏与双栏两套布局分别设计（不是一套挤成两列，720px 以下自动降单栏）；token 化自持深浅主题；布局切换器、卡片、按钮语义、状态 banner 与无障碍全部对齐 Clash 同款刻度。
 - **Magpie：exe 换上游基线 `v0.1.2732`（`+fish.9`）**，随包 exe 与 2.1.3 **不再逐字节相同**（74,019,840 → 79,512,064 B）。上游带来的用户可感知变化见[发行说明](docs/releases/2.1.4.md)；我们自己的改动：**新增内置 Meoo 秒悟（建站 Agent）**、**OpenCode Zen Free 移出预装**（已装用户不受影响，美化素材保留）、**#18 五项落地**——讯飞不再显示假 400（读不到真实积分就「未告知」）、签到数据带「截至时间/来源」、不支持采集的显示标记、首启「正在准备 N 个供应商插件」可用、首启图标不再抖动；`preinstall-state.json` 首启落盘接上线。
-- **包与版本**：三插件统一 2.1.4；`magpie.exe` 版本资源 `0.1.2732.9`（ProductName `magpie fish`）；内置页面插件 `page-checkin` 保持 0.2.6。
+- **包与版本**：三插件统一 2.1.5；`magpie.exe` 版本资源 `0.1.2732.9`（ProductName `magpie fish`）；内置页面插件 `page-checkin` 保持 0.2.6。
 
 > ℹ️ **2.1.3 的已知限制已在 2.1.4 修复**：讯飞今日积分显示 400 的问题（读取侧补偿）随 #18 的 B1 移除，读不到真实积分时显示「未告知」。
 
@@ -120,7 +122,7 @@
 
 <h2 id="get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-install-dark.png"><img src="assets/readme/section-install-light.png" alt="INSTALL · 安装使用" width="100%"></picture></h2>
 
-安装前先核对宿主版本：三个插件都是 2.1.4，**FISH Dock 需要 2.0.0 及以上**；1.2.3 及更早的宿主会因清单里的 `behaviors` 字段拒装。
+安装前先核对宿主版本：三个插件都是 2.1.5，**FISH Dock 需要 2.0.0 及以上**；1.2.3 及更早的宿主会因清单里的 `behaviors` 字段拒装。
 
 **方式一：Dock 内插件市场（推荐）**
 
@@ -130,7 +132,7 @@
 
 **方式二：npm 单包**
 
-1. `npm install @fish-under-sea/fish-dock-plugin-<插件>@2.1.4`（三个包名见下方「npm 单包」一节）。
+1. `npm install @fish-under-sea/fish-dock-plugin-<插件>@2.1.5`（三个包名见下方「npm 单包」一节）。
 2. `npx @fish-under-sea/fish-dock-plugin-<插件> --out C:/work/plugins`：把已校验的 `.fish-plugin` 复制到指定目录；目标已存在同名文件时命令会停下，不覆盖。
 3. 在 Dock 的「插件」页导入该 `.fish-plugin`，其余同方式一。
 
@@ -138,23 +140,23 @@
 
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
-| 飞书 2.1.4 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.4/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu) |
-| Clash 2.1.4 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.4/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.1.4) |
-| Magpie 2.1.4 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.4/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.1.4) |
+| 飞书 2.1.5 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.5/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu) |
+| Clash 2.1.5 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.5/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.1.4) |
+| Magpie 2.1.5 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.5/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.1.4) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-packages-dark.png"><img src="assets/readme/section-packages-light.png" alt="PACKAGES · npm 单包" width="100%"></picture></h2>
 
-每个 npm 包只包含一个对应的插件归档和下载 CLI（bin 名 `fish-dock-plugin-<插件>`），不运行安装后脚本，不修改 Dock 或系统设置。**三个插件都是 2.1.4**（OFM 单包停在 2.0.1，只供手动下载），要求 **Node.js ≥ 24** 与 **FISH Dock ≥ 2.0.0**。
+每个 npm 包只包含一个对应的插件归档和下载 CLI（bin 名 `fish-dock-plugin-<插件>`），不运行安装后脚本，不修改 Dock 或系统设置。**三个插件都是 2.1.5**（OFM 单包停在 2.0.1，只供手动下载），要求 **Node.js ≥ 24** 与 **FISH Dock ≥ 2.0.0**。
 
 | npm 单包（完整包名） | 版本 | bin | `npm pack` 体积 |
 | --- | --- | --- | --- |
-| `@fish-under-sea/fish-dock-plugin-feishu` | 2.1.4 | `fish-dock-plugin-feishu` | 27.7 kB（6 个文件） |
-| `@fish-under-sea/fish-dock-plugin-clash` | 2.1.4 | `fish-dock-plugin-clash` | 16.4 MB（7 个文件，含 mihomo 许可） |
-| `@fish-under-sea/fish-dock-plugin-magpie` | 2.1.4 | `fish-dock-plugin-magpie` | 29.5 MB（7 个文件，含 Magpie 许可） |
+| `@fish-under-sea/fish-dock-plugin-feishu` | 2.1.5 | `fish-dock-plugin-feishu` | 27.7 kB（6 个文件） |
+| `@fish-under-sea/fish-dock-plugin-clash` | 2.1.5 | `fish-dock-plugin-clash` | 16.4 MB（7 个文件，含 mihomo 许可） |
+| `@fish-under-sea/fish-dock-plugin-magpie` | 2.1.5 | `fish-dock-plugin-magpie` | 29.5 MB（7 个文件，含 Magpie 许可） |
 | `@fish-under-sea/fish-dock-plugin-ofm` | 2.0.1（暂停维护，仅手动） | `fish-dock-plugin-ofm` | 1.9 MB（6 个文件） |
 
 ```powershell
-npm install @fish-under-sea/fish-dock-plugin-clash@2.1.4
+npm install @fish-under-sea/fish-dock-plugin-clash@2.1.5
 npx @fish-under-sea/fish-dock-plugin-clash --out C:/work/plugins
 ```
 
@@ -182,7 +184,7 @@ node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.t
 | [自编译 Magpie](plugins/magpie/tools/README.md) | 补丁清单与每一处为什么补、构建命令、版本标识、跟着上游升级时会踩的坑 |
 | [签到页说明](plugins/magpie/page-plugins/page-checkin/README.md) | 宿主提供哪些读与调用、「预装插件美化」开关怎么工作、素材为什么编进 exe |
 | [厂商素材来源](plugins/magpie/page-plugins/page-checkin/page/logos/README.md) | 每张厂商图的来源、裁切范围与授权状况 |
-| [发行说明](docs/releases/) | 逐版本的改动与验证；最新是 [2.1.4](docs/releases/2.1.4.md) |
+| [发行说明](docs/releases/) | 逐版本的改动与验证；最新是 [2.1.5](docs/releases/2.1.5.md) |
 | [第三方许可](THIRD_PARTY_NOTICES.md) | 随包运行时的许可与来源（mihomo 的 GPL-3.0、Magpie 的随包许可等） |
 | [README 头图维护](assets/readme/MAINTAINING.md) | 头图怎么渲染、字号与卡片尺寸的约束、哪些东西不能换 |
 
