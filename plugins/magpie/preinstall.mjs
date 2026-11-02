@@ -10,6 +10,15 @@ import {writeManifest} from './page-seed.mjs';
 // 包」时会按 spec 自动安装（internal/plugin/plugin_missing_test.go 的
 // TestMissingPluginsInstalledAgain），所以这里只写包名：不下载、不占插件包体积，
 // 首次启动由 magpie 自己装，失败下次再试。
+//
+// 每条是 [stem, 显示名] 或 [stem, 显示名, 显式规格]。缺第三条时按
+// @magpie-community/opencode-<stem>-auth 拼；不在这条命名规则里的插件（Meoo 就是）
+// 用第三条 {package, spec} 写明：package 是「算不算同一个包」的键，spec 是真正
+// 写进 plugins.json 的安装串（npm 包名或 git 仓库都行）。
+//
+// `zen-free`（OpenCode Zen Free）本版**移出**预装基线：新装环境不再自动登记它，
+// 已装用户不动——不卸载、不禁用、不删数据；它的品牌图标素材也照旧保留（已装用户
+// 还有这个 provider，图标接管按 provider 生效）。
 const BASELINE = [
  ['raccoon', '商汤小浣熊'],
  ['autoclaw', 'AutoClaw'],
@@ -17,8 +26,15 @@ const BASELINE = [
  ['codearts', 'CodeArts / OfficeAce'],
  ['kiro', 'Kiro'],
  ['loomy', 'Loom'],
+ ['meoo-agent', 'Meoo 秒悟（建站 Agent）', {
+  // npm 上查不到这个包：主仓 package.json 是 private，没有发布（registry 404）。
+  // 上游主仓是 RexVane/magpie-plugin-meoo-agent，所以按 git spec 装；
+  // 它哪天发了 npm 包，把 spec 换成 'magpie-plugin-meoo-agent@latest' 即可，
+  // package 不用动（那是同一个包的身份）。
+  package: 'magpie-plugin-meoo-agent',
+  spec: 'github:RexVane/magpie-plugin-meoo-agent',
+ }],
  ['minimax', 'MiniMax Code'],
- ['zen-free', 'OpenCode Zen Free'],
  ['qoder', 'Qoder'],
  ['trae', 'Trae'],
  ['workbuddy', 'WorkBuddy'],
@@ -26,20 +42,22 @@ const BASELINE = [
  ['zcode', 'ZCode'],
 ];
 
-export const PREINSTALLED = Object.freeze(BASELINE.map(([stem, name]) => Object.freeze({
- stem,
- name,
- package: `@magpie-community/opencode-${stem}-auth`,
- spec: `@magpie-community/opencode-${stem}-auth@latest`,
-})));
+// 拼缺省包名用的两条正则，放在 PREINSTALLED 之前：那份清单在模块初始化时就
+// 要按这条规则算包名，正则晚一步声明会踩 TDZ。
+const SCOPED = /^(@[^/@]+\/[^/@]+)(?:@[^/]*)?$/;
+const PLAIN = /^([^/@]+)(?:@[^/]*)?$/;
+
+export const PREINSTALLED = Object.freeze(BASELINE.map(([stem, name, given]) => {
+ const spec = given?.spec ?? `@magpie-community/opencode-${stem}-auth@latest`;
+ // 两元素的旧条目走的仍是同一条拼名规则，产物逐字节不变。
+ const pkg = given?.package ?? packageOf(spec);
+ return Object.freeze({stem, name, package: pkg, spec});
+}));
 
 // 预装登记的开关：0 关掉。留出口是给测试与「我只想要干净 magpie」的用户。
 export function preinstallEnabled(env = process.env) {
  return env.FISH_DOCK_MAGPIE_PREINSTALL !== '0';
 }
-
-const SCOPED = /^(@[^/@]+\/[^/@]+)(?:@[^/]*)?$/;
-const PLAIN = /^([^/@]+)(?:@[^/]*)?$/;
 
 // npm spec 的包名：@scope/name@1.2.3 → @scope/name，name@1.2.3 → name。
 // git spec 与绝对路径返回空串——那不是这些包，宁可当「不匹配」也不误改。
@@ -64,14 +82,18 @@ export function addPreinstalled({raw, packages = PREINSTALLED} = {}) {
  else manifest = {plugins: []};
  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || !Array.isArray(manifest.plugins)) throw Error('plugins.json 结构无效');
  const have = new Set();
+ // 已经写在那里的安装串也记一份：git spec 的包名算不出来（packageOf 认不得
+ // github:owner/repo），只有整串相同才算「同一个包已经登记过」。
+ const specs = new Set();
  for (const entry of manifest.plugins) {
   if (!entry || typeof entry !== 'object') continue;
+  if (typeof entry.spec === 'string' && entry.spec.trim()) specs.add(entry.spec.trim());
   const name = packageOf(entry.spec);
   if (name) have.add(name);
  }
  const added = [];
  for (const item of packages) {
-  if (have.has(item.package)) continue;
+  if (have.has(item.package) || specs.has(item.spec)) continue;
   have.add(item.package);
   manifest.plugins.push({spec: item.spec});
   added.push(item.package);
