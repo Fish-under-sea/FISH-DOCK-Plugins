@@ -1,2 +1,164 @@
-/* 飞书沿用 Dock 的设置卡片与邮件式单双栏。 */
-header{display:flex;align-items:flex-start;gap:12px;margin:0 8px 12px}header p{font-size:12px;margin:4px 0}.eyebrow{display:none}.layouts{flex:none;border-radius:999px;background:var(--dock-card);padding:3px;gap:2px}.layouts button{border:0;background:transparent}.layouts button[aria-pressed=true]{background:var(--dock-line)}main{display:block}main[data-layout=double]{display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,1fr);column-gap:14px;align-items:start}main>header,main>#status{grid-column:1/-1}#status{margin:0 8px 8px}#settings{min-width:0}fieldset{margin:0 0 12px}fieldset label:first-of-type{clear:both}#saved{margin:6px 0 0}.filters{padding-top:2px;gap:8px 16px}.actions{gap:8px}#last{overflow-wrap:anywhere}main>section{margin-bottom:0}@media(max-width:720px){main[data-layout=double]{display:block}}
+/* 飞书页面：通知配置（单栏顺序流 / 双栏两列共用一套原子样式）+ 最近发送。
+   深/浅双主题：:root 是 dark 基准，:root[data-dock-theme=light] 覆盖；
+   主题只认宿主写入的 data-dock-theme（bridge 注入），不读 prefers-color-scheme。
+
+   尺寸刻度（与 plugins/clash/page.css 同一张表，本文件不写手调孤值）：
+   - 字号 13（标题）/ 12.5（正文与字段）/ 12（说明与辅助）；
+   - 行高 28（列表项、紧凑行）/ 26（`.kv` 类详情行、表单控件行）；
+   - 图标与状态字形一律装进 16×16 盒子（inline-flex + 居中），不让字形撑高行；
+   - 圆角只有 14 与 999 两档；间距只用 4 的倍数（4 / 8 / 12 / 16）。
+   色值只允许出现在下面两段 token 定义里。 */
+
+:root{
+  color-scheme:dark;
+  /* 尺寸刻度 */
+  --fs-title:13px;--fs-body:12.5px;--fs-note:12px;
+  --lh-row:28px;--lh-kv:26px;--lh-field:26px;--lh-line:18px;
+  --ico:16px;
+  --r-card:14px;--r-pill:999px;
+  --gap-xs:4px;--gap-sm:8px;--gap-md:12px;--gap-lg:16px;
+  /* 语义 token（dark 基准）：页面自带，不依赖 dock.css 的裸色 */
+  --line-hair:#333336;
+  --line-control:#6b6b70;
+  --layer-1:#0f0f11;
+  --layer-2:#1c1c1e;
+  --hi:rgba(255,255,255,.06);
+  --c-ok:#30d158;--c-warn:#ffd60a;--c-bad:#ff5a4f;
+  --c-ok-bg:rgba(48,209,88,.16);
+  --c-bad-bg:rgba(255,69,58,.12);
+}
+:root[data-dock-theme=light]{
+  color-scheme:light;
+  --line-hair:#e3e3e6;
+  --line-control:#8e8e93;
+  --layer-1:#ffffff;
+  --layer-2:#f7f7f8;
+  --hi:transparent;
+  --c-ok:#0f7b33;--c-warn:#8a6100;--c-bad:#c0392b;
+  --c-ok-bg:rgba(15,123,51,.10);
+  --c-bad-bg:rgba(192,57,43,.08);
+}
+
+/* ── 页头：标题块 + 布局切换（与 clash 同款 .segmented） ── */
+main{padding:var(--gap-xs) var(--gap-sm) var(--gap-lg)}
+header{align-items:flex-start;justify-content:space-between;gap:var(--gap-md);margin:0 0 var(--gap-lg)}
+header h1{font-size:var(--fs-title);line-height:var(--lh-line);margin:0}
+header .lede{margin:var(--gap-xs) 0 0;font-size:var(--fs-note);line-height:var(--lh-line);color:var(--dock-muted)}
+.segmented{display:flex;flex:none;gap:var(--gap-xs);padding:var(--gap-xs);border:1px solid var(--line-control);border-radius:var(--r-pill);background:var(--dock-bg)}
+.segmented button{flex:1;border:0;background:transparent;white-space:nowrap}
+.segmented button[aria-pressed=true]{background:var(--dock-line);color:var(--dock-text)}
+
+/* ── 状态 banner：#status 保持 role=status，成功/失败同行着色 ──
+   状态字形装在 16 盒子内；idle/busy/ok/bad 之间文字缩进不跳动。 */
+.banner{display:grid;grid-template-columns:var(--ico) minmax(0,1fr);align-items:start;gap:var(--gap-sm);
+ margin:0 0 var(--gap-lg);padding:var(--gap-sm) var(--gap-md);border:1px solid var(--line-hair);
+ border-radius:var(--r-card);background:var(--layer-2);
+ font-size:var(--fs-body);line-height:var(--lh-line);overflow-wrap:anywhere}
+.banner::before{content:'';display:inline-flex;align-items:center;justify-content:center;
+ width:var(--ico);height:var(--ico);font-size:var(--fs-note);line-height:var(--ico);border-radius:var(--r-pill)}
+#status[data-tone=idle]::before,#status[data-tone=busy]::before{content:'…'}
+#status[data-tone=ok]::before{content:'✓'}
+#status[data-tone=bad]::before{content:'!'}
+#status[data-tone=ok]{border-color:var(--c-ok);background:var(--c-ok-bg);color:var(--c-ok)}
+#status[data-tone=bad]{border-color:var(--c-bad);background:var(--c-bad-bg);color:var(--c-bad)}
+
+/* ── 布局容器：单栏顺序流；双栏 ≥721px 两列，720px 及以下自动回单栏 ──
+   两列顶部对齐（align-items:start），列间 16：右列卡片顶线＝左列表单卡片顶线。 */
+.board{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--gap-lg);align-items:start}
+main[data-layout=double] .board{grid-template-columns:minmax(0,2fr) minmax(220px,1fr)}
+
+/* ── 卡片原子：14px 圆角 + 1px --line-hair，两套布局共用 ──
+   描边语义两分：--line-control 只给可交互控件（输入框、按钮、分段切换器），
+   容器（卡片、分组、面板）用 --line-hair 弱收边——容器的分隔靠面（--layer-1 与
+   --dock-bg 的明度差）承担，描边只负责收边。卡片若也用 control，就跟输入框同权重，
+   扫一眼分不清「这块是容器还是可点区域」。 */
+.card{min-width:0;margin:0;padding:var(--gap-lg);border:1px solid var(--line-hair);
+ border-radius:var(--r-card);background:var(--layer-1);box-shadow:inset 0 1px 0 var(--hi)}
+#settings{min-width:0}
+/* fieldset 只做语义与禁用壳：卡片外观由所在的 form 承担，描边才不会被 legend 切开。
+   fieldset 默认 min-inline-size:min-content 会把长 URL 撑宽，必须清零。 */
+#fields{min-inline-size:0;margin:0;padding:0;border:0;border-radius:0;background:transparent}
+#fields>legend{float:none;width:auto;padding:0;margin:0 0 var(--gap-md)}
+.card-title{margin:0;font-size:var(--fs-title);font-weight:600;line-height:var(--lh-line);
+ display:flex;align-items:center;gap:var(--gap-sm)}
+
+/* ── 字段分组：组内间距 12，组间 16 + 一条 --line-hair 分隔 ── */
+.group{display:grid;gap:var(--gap-md);margin-top:var(--gap-lg);padding-top:var(--gap-lg);border-top:1px solid var(--line-hair)}
+.group:first-of-type{margin-top:0;padding-top:0;border-top:0}
+.group-title{margin:0;font-size:var(--fs-note);line-height:var(--lh-line);font-weight:600;color:var(--dock-muted)}
+
+/* 地址与密钥：容器够宽就同排（600px 以上双列），窄了自动回一列。
+   align-items:start 让两列各自按内容高，不被同行更高的一项拉伸。 */
+.field-set{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--gap-md);align-items:start}
+
+/* ── 字段原子：控件行 26，字段内 4，字段之间 12 ──
+   align-content:start 是关键：否则本字段被拉高时，grid 会把多出来的高度
+   均摊给每一行（label 24、控件 32），刻度表当场失效——两列字段一高一矮。 */
+.field{display:grid;gap:var(--gap-xs);align-content:start;min-width:0}
+.field>label{display:block;margin:0;font-size:var(--fs-body);line-height:var(--lh-line);font-weight:600;color:var(--dock-text)}
+/* 控件上下内边距 2px 是把控件锁进 26 行高的手段（20 行高 + 4 + 2 边框），不计入块间距。 */
+.field>input{width:100%;min-height:var(--lh-field);padding:2px var(--gap-md);font-size:var(--fs-body);line-height:20px;
+ border:1px solid var(--line-control);border-radius:var(--r-pill);background:var(--dock-bg);color:var(--dock-text)}
+.field>.field-note{margin:0;font-size:var(--fs-note);line-height:var(--lh-line);color:var(--dock-muted)}
+#saved[data-tone=bad]{color:var(--c-bad)}
+
+/* ── 复选行：紧凑行 28 ── */
+.check{display:flex;align-items:center;gap:var(--gap-sm);min-height:var(--lh-row);margin:0;
+ font-size:var(--fs-body);line-height:var(--lh-line)}
+input[type=checkbox]{width:var(--ico);height:var(--ico);flex:none;accent-color:var(--c-ok)}
+.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--gap-sm) var(--gap-md);align-items:start}
+
+/* ── 操作行 ── */
+.actions{display:flex;align-items:center;flex-wrap:wrap;gap:var(--gap-sm);margin-top:var(--gap-lg)}
+.actions button{flex:0 0 auto;white-space:nowrap}
+
+/* ── 按钮语义：保存=primary，测试/刷新=默认，清除=危险色 ──
+   primary 的前景色取 --dock-bg：dark 亮蓝底黑字、light 深蓝底浅字，两档都够对比。 */
+button.primary,button[type=submit]{background:var(--dock-accent);border-color:var(--dock-accent);color:var(--dock-bg)}
+/* 默认按钮的描边走 --line-control：dock.css 的 --dock-line 在 dark 对卡片只有 1.69:1、
+   对按钮自身底 1.23:1，低于控件边界 ≥3:1，同页输入框与分段器却是 3.61:1 —— 同一页里两种权重，
+   用户分不清哪个能点。
+   **必须带 :not(.danger)**：不加这条选择器会把下面危险按钮的红边一起盖掉。 */
+button:not(.primary):not(.danger):not([type=submit]){border-color:var(--line-control)}
+/* 危险按钮：描边与文字走 --c-bad，底沿用按钮自己的 --dock-control（不铺红底）。
+   面板里若把按钮底也染成 --c-bad-bg，它就跟面板融为一体、只剩一根红边；
+   保持控件底才让「取消 / 确认清除」仍是两个独立控件，红色只承担"破坏性"这一层信息。 */
+.danger{border-color:var(--c-bad);color:var(--c-bad)}
+.danger:hover:not(:disabled){filter:brightness(1.12)}
+
+/* ── 清除两步确认：红边承载「破坏性操作」这条信息，不是「可点」提示，所以不用 control。
+   色不能是唯一信号：面板里把后果写清（需重新填写 / 不可撤销），forced-colors 下红边被
+   系统色吃掉时文字仍交代同一件事。内部按钮保持 control 权重，只有确认按钮用 .danger。 ── */
+#clear-confirm{display:grid;gap:var(--gap-md);margin-top:var(--gap-lg);padding:var(--gap-md);
+ border:1px solid var(--c-bad);border-radius:var(--r-card);background:var(--c-bad-bg)}
+#clear-confirm p{margin:0;font-size:var(--fs-body);line-height:var(--lh-line);color:var(--dock-text)}
+#clear-confirm .irreversible{font-weight:600}
+#clear-confirm .actions{margin-top:0}
+
+/* ── 最近发送：状态点走 16 盒子；空态给可行动引导 ── */
+.record{display:grid;grid-template-columns:var(--ico) minmax(0,1fr);align-items:start;gap:var(--gap-sm);
+ min-height:var(--lh-kv);margin:var(--gap-md) 0 0;font-size:var(--fs-body);line-height:var(--lh-line);overflow-wrap:anywhere}
+.record::before{content:'●';display:inline-flex;align-items:center;justify-content:center;
+ width:var(--ico);height:var(--ico);font-size:var(--fs-note);line-height:var(--ico);color:var(--dock-muted)}
+.record[data-tone=ok]::before{color:var(--c-ok)}
+.record[data-tone=bad]::before{color:var(--c-bad)}
+.note-list{display:grid;gap:var(--gap-sm);margin:var(--gap-lg) 0 0}
+.note-list .note{margin:0;font-size:var(--fs-note);line-height:var(--lh-line);color:var(--dock-muted)}
+
+/* ── 无障碍：焦点可见统一，动效与高对比度跟系统 ── */
+:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media(forced-colors:active){
+ .card,#clear-confirm{border:1px solid CanvasText;box-shadow:none;background:Canvas}
+ #clear-confirm p{color:CanvasText}
+ .danger{forced-color-adjust:none;border-color:Highlight;color:Highlight}
+ #status[data-tone=ok],#status[data-tone=bad]{border-color:CanvasText;background:Canvas;color:CanvasText}
+ .record::before{forced-color-adjust:none;color:CanvasText}
+}
+
+/* 720px 及以下：双栏自动降回单栏（两套布局共用上面全部原子样式） */
+@media(max-width:720px){main[data-layout=double] .board{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:480px){header{flex-wrap:wrap;align-items:center}.card{padding:var(--gap-md)}}
+
+/* 桌面 WebView 无 300ms 点击延迟；显式声明可避免宿主启用触控模拟时退化 */
+button,input,label,summary{touch-action:manipulation}
