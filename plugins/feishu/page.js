@@ -34,6 +34,9 @@ function paint(view){
  $('last').textContent=last?`${last.ok?'发送成功':'发送失败'} · ${new Date(last.at).toLocaleString()} · ${last.code}`:EMPTY_HINT;
 }
 /* action 返回字符串即成功文案，返回 {tone:'bad',text} 时按失败着色。 */
+/* refocus：需要在解禁之后才落焦点的目标。run() 一开始就把 fieldset 禁用，
+   禁用的按钮收不到焦点——在 action 里直接 focus() 会落到 BODY（t6 实测）。 */
+let refocus=null;
 async function run(action){
  if(busy)return;
  busy=true;$('fields').disabled=true;setStatus('busy','正在处理…');
@@ -45,6 +48,8 @@ async function run(action){
   setStatus('bad','操作失败，请检查配置、网络和插件运行状态。');
  }finally{
   busy=false;$('fields').disabled=false;$('test').disabled=!configured;
+  // 解禁之后再聚焦：顺序反了就是「focus 打在禁用元素上 → activeElement 变 BODY」。
+  if(refocus){const target=$(refocus);refocus=null;target?.focus()}
  }
 }
 $('settings').addEventListener('submit',event=>{
@@ -63,9 +68,11 @@ $('test').onclick=()=>run(async()=>{
  return '测试通知已发送';
 });
 $('refresh').onclick=()=>run(async()=>paint(await FishDock.call('feishu.view')));
-/* 清除两步确认：打开时焦点落在「取消」，Esc 与取消都退回「清除」按钮。 */
-function openClear(){$('clear-confirm').hidden=false;$('cancel-clear').focus()}
-function closeClear(){$('clear-confirm').hidden=true;$('clear').focus()}
+/* 清除两步确认：打开时焦点落在「取消」，Esc 与取消都退回「清除」按钮；
+   确认后由 run() 的 finally 在解禁之后把焦点放回「清除」（见上面的 refocus）。 */
+function setExpanded(open){$('clear').setAttribute('aria-expanded',String(open))}
+function openClear(){$('clear-confirm').hidden=false;setExpanded(true);$('cancel-clear').focus()}
+function closeClear(){$('clear-confirm').hidden=true;setExpanded(false);$('clear').focus()}
 $('clear').onclick=openClear;
 $('cancel-clear').onclick=closeClear;
 $('clear-confirm').onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();closeClear()}};
@@ -73,7 +80,8 @@ $('confirm-clear').onclick=()=>run(async()=>{
  const settings=Object.fromEntries(flags.map(key=>[key,$(key).checked]));
  paint(await FishDock.call('feishu.save',{...settings,enabled:false,clear:true}));
  $('clear-confirm').hidden=true;
- $('clear').focus();
+ setExpanded(false);
+ refocus='clear';
  return '机器人凭据已清除，自动通知已关闭';
 });
 void run(async()=>paint(await FishDock.call('feishu.view')));

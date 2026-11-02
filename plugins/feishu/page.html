@@ -53,7 +53,7 @@
      <button type="submit">保存配置</button>
      <button type="button" id="test">发送测试通知</button>
      <button type="button" id="refresh">刷新</button>
-     <button type="button" id="clear" class="danger">清除机器人配置</button>
+     <button type="button" id="clear" class="danger" aria-expanded="false" aria-controls="clear-confirm">清除机器人配置</button>
     </div>
     <div id="clear-confirm" hidden role="group" aria-label="确认清除机器人">
      <p>清除保存的 Webhook 和签名密钥，并关闭自动通知。事件筛选设置保留。</p>
@@ -72,6 +72,7 @@
     <p class="note">自动通知附工作区、仓库和会话标识。</p>
     <p class="note">每分钟最多 20 条。</p>
     <p class="note">相同事件 5 秒内重复则只发一次。</p>
+    <p class="note">测试发送独立于自动通知开关。</p>
    </div>
   </section>
  </div>
