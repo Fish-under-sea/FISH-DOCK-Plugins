@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createProxyLease, createRuntime, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet, killProcess} from './runtime.mjs';
 import {createServer} from 'node:http';
-import {mkdtemp,writeFile,readFile,readdir,rm} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,readdir,rm,mkdir} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 test('代理接管先持久化原值，仅在当前值仍属于自身时恢复',async()=>{
@@ -215,4 +216,52 @@ test('runtime 交出 kill/processAlive，service 才能结束残留内核',()=>{
  assert.equal(typeof runtime.processAlive,'function');
  assert.equal(runtime.processAlive(process.pid),true);
  assert.equal(runtime.processAlive(2147483646),false);
+});
+// §3.3 第 1 步：把 start 里「拼 proxy-providers 并落盘」那段抽成 writeConfig，start 复用它。
+test('writeConfig 与 start 共用同一份生成逻辑：路径固定、内容与 kernelConfig 一致',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'clash-cfg-'));
+ try{
+  const storage={read:async(c,n)=>{try{return await readFile(join(dir,c,n),'utf8')}catch{return null}},
+   write:async(c,n,v)=>{await mkdir(join(dir,c),{recursive:true});await writeFile(join(dir,c,n),v,'utf8')}};
+  const runtime=createRuntime({dataDirectory:dir,storage});
+  const sub={id:'sub-00000000-0000-0000-0000-000000000001',enabled:true};
+  const path=await runtime.writeConfig({settings:{mixedPort:7895,controllerPort:9099},secret:'synthetic',subscriptions:[sub]});
+  assert.equal(path,join(dir,'tmp','mihomo-runtime.json'),'内核 -f 读的就是这个路径');
+  assert.equal(path,runtime.configPath());
+  const written=JSON.parse(await readFile(path,'utf8'));
+  assert.deepEqual(written,kernelConfig({mixedPort:7895,controllerPort:9099,secret:'synthetic',
+   dataDirectory:dir,subscriptions:[sub]}),'与 start 时代产物逐字段相同');
+ }finally{await rm(dir,{recursive:true,force:true})}
+});
+// §3.3 第 2 步：热切换先写候选文件，内核确认换上了才 rename 成正式配置；
+// 失败则删候选、正式配置一个字节都不动（回滚由 service 负责启用集）。
+test('运行中换配置：候选文件只在 apply 成功后转正，失败时正式配置不变、候选被清掉',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'clash-swap-'));
+ try{
+  const storage={read:async(c,n)=>{try{return await readFile(join(dir,c,n),'utf8')}catch{return null}},
+   write:async(c,n,v)=>{await mkdir(join(dir,c),{recursive:true});await writeFile(join(dir,c,n),v,'utf8')}};
+  const runtime=createRuntime({dataDirectory:dir,storage});
+  const settings={mixedPort:7895,controllerPort:9099};
+  const a='sub-00000000-0000-0000-0000-000000000001',b='sub-00000000-0000-0000-0000-000000000002';
+  const candidate=join(dir,'tmp','mihomo-runtime.next.json');
+  await runtime.writeConfig({settings,secret:'k',subscriptions:[{id:a,enabled:true}]});
+  let applied=null;
+  await runtime.swapConfig({settings,secret:'k',subscriptions:[{id:a,enabled:false},{id:b,enabled:true}],
+   apply:async path=>{
+    applied=path;
+    assert.equal(path,candidate,'先写候选文件，不直接盖正式配置');
+    const value=JSON.parse(await readFile(path,'utf8'));
+    assert.deepEqual(Object.keys(value['proxy-providers']),[b],'候选配置带的是新启用集');
+   }});
+  assert.equal(applied,candidate);
+  const live=JSON.parse(await readFile(join(dir,'tmp','mihomo-runtime.json'),'utf8'));
+  assert.deepEqual(Object.keys(live['proxy-providers']),[b],'成功后正式配置换成新的一套');
+  assert.equal(existsSync(candidate),false,'候选文件已转正，不残留');
+  const before=await readFile(join(dir,'tmp','mihomo-runtime.json'),'utf8');
+  await assert.rejects(runtime.swapConfig({settings,secret:'k',subscriptions:[{id:a,enabled:true}],
+   apply:async()=>{const error=Error('controller said no');error.code='CONTROLLER_UNREACHABLE';throw error}}),
+   error=>error.code==='CONTROLLER_UNREACHABLE');
+  assert.equal(await readFile(join(dir,'tmp','mihomo-runtime.json'),'utf8'),before,'失败时正式配置一个字节都没动');
+  assert.equal(existsSync(candidate),false,'失败也把候选文件清掉');
+ }finally{await rm(dir,{recursive:true,force:true})}
 });

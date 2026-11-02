@@ -5,7 +5,7 @@ import {connect as tlsConnect} from 'node:tls';
 import http from 'node:http';
 import {mkdir} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
-import {writeFile,rename,readFile} from 'node:fs/promises';
+import {writeFile,rename,readFile,unlink} from 'node:fs/promises';
 import {createSubscriptionRuntime,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
 // 校验错误统一挂码：文案在 shared/errors.mjs 按 code 查表，页面不再做中文正则匹配。
 import {serviceError} from '../../shared/errors.mjs';
@@ -182,6 +182,10 @@ export async function ensureGeoData(home,{bundleDir,fetch:fetcher=globalThis.fet
   return failed===0;
 }
 async function free(port){const server=createServer();await new Promise((resolve,reject)=>{server.once('error',()=>reject(Error('端口已占用，请在配置中修改')));server.listen(port,'127.0.0.1',resolve)});await new Promise(resolve=>server.close(resolve))}
+// 内核真正读取的配置文件名：start 与运行中热切换共用同一份生成逻辑，不允许两处各拼一遍。
+export const RUNTIME_CONFIG=Object.freeze('mihomo-runtime.json');
+// 热切换先写到候选文件，内核确认换上了才 rename 成正式配置：失败时正式配置一个字节都没动。
+const CANDIDATE_CONFIG=Object.freeze('mihomo-runtime.next.json');
 export function createRuntime(context){
  const adapter={async read(){return powershell('read')},async write(values){await powershell('write',values)}};
  const proxy=createProxyLease({storage:context.storage,adapter});
@@ -196,6 +200,33 @@ export function createRuntime(context){
   }
   return false;
  }
+ // 内核配置生成 + 落盘：start 与「运行中热切换」共用这一处（否则两处各拼一遍必然漂移）。
+ // 返回配置文件绝对路径（内核 -f 读的就是它，热切换要让控制器读同一个目录）。
+ async function writeConfig({settings,subscriptions=[],secret,dataDirectory=context.dataDirectory,geo=false,name=RUNTIME_CONFIG}={}){
+  const value=kernelConfig({...settings,secret,subscriptions,dataDirectory,geo});
+  await context.storage.write('tmp',name,JSON.stringify(value));
+  return join(dataDirectory,'tmp',name);
+ }
+ // geo 数据是否就位：热切换不重复下载，按内核实际的工作目录（TUN 用数据根，普通模式用 config）判断。
+ function geoPresent(settings){
+  const home=settings?.tun?.enable?context.dataDirectory:join(context.dataDirectory,'config');
+  return GEO_FILES.every(name=>existsSync(join(home,name)));
+ }
+ // 运行中换启用集：写候选文件 → 让内核就地重载（apply 里发 PUT /configs）→ 成功才转正。
+ // 任何一步失败都删掉候选文件、正式配置一个字节都没动；启用集的回滚由 service 负责。
+ async function swapConfig({settings,subscriptions=[],secret,apply}){
+  const geo=geoPresent(settings);
+  const candidate=await writeConfig({settings,subscriptions,secret,geo,name:CANDIDATE_CONFIG});
+  try{await apply(candidate)}
+  catch(error){await unlink(candidate).catch(()=>{});throw error}
+  try{await rename(candidate,join(context.dataDirectory,'tmp',RUNTIME_CONFIG))}
+  catch{
+   // 转正失败不影响已经在跑的内核：内容直接再写一份正式配置；
+   // 候选文件同样按「失败不留痕」清掉（与上面 apply 失败分支保持一致）。
+   await unlink(candidate).catch(()=>{});
+   await writeConfig({settings,subscriptions,secret,geo});
+  }
+ }
  async function start(c){
   c.signal?.throwIfAborted();
   await checkExecutable(c.kernel);await free(c.mixedPort);await free(c.controllerPort);
@@ -208,8 +239,7 @@ export function createRuntime(context){
   const geoReady=hasSubscriptions
     ?await ensureGeoData(kernelHome,{bundleDir:context.geoDir||dirname(c.kernel),signal:c.signal}).catch(()=>false)
     :false;
-  const runtimePath=join(context.dataDirectory,'tmp','mihomo-runtime.json');
-  await context.storage.write('tmp','mihomo-runtime.json',JSON.stringify(kernelConfig({...c,dataDirectory:context.dataDirectory,geo:geoReady})));
+  const runtimePath=await writeConfig({settings:c,subscriptions:c.subscriptions??[],secret:c.secret,geo:geoReady});
 
   // TUN 交给已安装的 SYSTEM 服务托管：本进程不再 spawn 内核，只写 job.ini。
   if(c.tun?.enable){
@@ -247,7 +277,7 @@ export function createRuntime(context){
    child.once('exit',()=>{void proxy.restore().catch(()=>{})});return {alive,stop,pid:child.pid,mode:'process'};
   }catch(error){await stop();throw error}
  }
- return {start,proxy,tun,proxiedGet,
+ return {start,proxy,tun,proxiedGet,writeConfig,swapConfig,configPath:()=>join(context.dataDirectory,'tmp',RUNTIME_CONFIG),
   // 插件重载后留下的内核不由本实例 spawn，只能按 pid 结束；processAlive 供 attach 判活。
   kill:killProcess,processAlive,
   // 停止时若内核由 TUN 服务托管，一并让服务停下，避免遗留提升权限的内核。

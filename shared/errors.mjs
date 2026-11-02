@@ -54,6 +54,8 @@ export const errorMessages = Object.freeze({
  SUBSCRIPTION_IMMUTABLE: '请在订阅管理中新增或删除订阅',
  SUBSCRIPTION_UPDATING: '请等待订阅更新完成',
  SUBSCRIPTION_NO_CACHE: '请先更新已启用订阅，获取可用缓存',
+ // 运行中热切换失败：启用集与配置文件都已回滚，用户唯一的下一步就是重启内核。
+ SUBSCRIPTION_SWITCH_FAILED: '订阅切换没能热生效：请重启内核后再试；原启用状态已回滚',
  DETAIL_SECTION_INVALID: '详情类别无效',
  PLUGIN_STOPPING: '插件正在停用',
  TUN_UNSUPPORTED: '当前环境不支持 TUN 服务模式',

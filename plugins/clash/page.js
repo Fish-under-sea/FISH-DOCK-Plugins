@@ -25,10 +25,23 @@
  let lastError=null; // {method,params}——错误横幅的「重试」重放它
  const updateSince={};
 
+ // 设置 view 的唯一出口：整体替换视图时顺手把高亮校正到「真实启用项」。
+ // 加载（首屏/刷新）、轮询、操作成功、操作回滚四条路径都走这里——只覆盖操作路径，
+ // 首屏就会出现「标签写着已启用、卡片却没高亮」（t5 实测），以后每加一个入口还会再漏一次。
+ function applyView(next){
+  view=next??null;
+  activeSub=(next?.subscriptions??[]).find(s=>s.enabled)?.id??'';
+  return view;
+ }
+
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const updating=()=>view?.subscriptions?.some(s=>s.updating);
- // 后端在运行中拒绝订阅与配置变更，界面必须同步禁用（否则只是把错误延后到 RPC）。
+ // locked：必须停内核才能做的动作（订阅增删改、改内核设置、装/卸 TUN 服务），界面同步禁用，
+ // 否则只是把错误延后到 RPC。订阅启用/停用不在其中——2.1.4 起运行中改启用集由内核就地热重载。
  const locked=()=>view?.running||!!view?.operation||updating()||!!view?.tunSwitching;
+ // subEditLocked：启用集切换的闸门，只挡「启动/停止/订阅更新/切 TUN」这些中间态。
+ const subEditLocked=()=>!!view?.operation||updating()||!!view?.tunSwitching;
+ const switchingSub=id=>ops.has('sub:'+id);
  const anyOp=()=>ops.size>0;
  const opSince=key=>ops.get(key)?.since??0;
  const elapsed=since=>since?Math.max(0,Math.round((Date.now()-since)/1000)):'';
@@ -68,6 +81,8 @@
   SUBSCRIPTION_IMMUTABLE:'请在订阅管理中新增或删除订阅',
   SUBSCRIPTION_UPDATING:'请等待订阅更新完成',
   SUBSCRIPTION_NO_CACHE:'请先更新已启用订阅，获取可用缓存',
+  // 运行中热切换失败：启用集与配置文件都已回滚，用户唯一的下一步就是重启内核。
+  SUBSCRIPTION_SWITCH_FAILED:'订阅切换没能热生效：请重启内核后再试；原启用状态已回滚',
   DETAIL_SECTION_INVALID:'详情类别无效',
   PLUGIN_STOPPING:'插件正在停用',
   TUN_UNSUPPORTED:'当前环境不支持 TUN 服务模式',
@@ -159,6 +174,15 @@
   if(!inFilter)return 'list';
   return ['ArrowDown','ArrowUp','Home','End','Enter','Escape','Tab'].includes(key)?'list':'native';
  }
+ // 组名/节点名常以 emoji 开头（🔵 微软服务、♻️ 自动选择、🇭🇰 香港 01）。emoji 的字形高度不受
+ // font-size 约束，直接排在行里会把 .lb-option 撑到 40px 以上；这里把开头那串符号剥出来交给
+ // .lb-ico 16px 盒，正文只留文字。整串都是符号（例如组名只叫「🚀」）时不动，别把标签清空。
+ const ICON_RE=/^([\p{Extended_Pictographic}\p{Regional_Indicator}\uFE0F\u200D\u20E3]+)\s+/u;
+ function splitIcon(label){
+  const text=String(label??'');
+  const m=ICON_RE.exec(text);
+  return m?{icon:m[1],text:text.slice(m[0].length)}:{icon:'',text};
+ }
 
  // ── 弹层（position:fixed 挂 body，不能被 .pane 的 overflow:auto 裁切） ──
  const LB={active:null};
@@ -189,11 +213,15 @@
    if(!filtered.length){html+='<div class="lb-empty" role="status">没有匹配的节点</div>'}
    else{let last=null;filtered.forEach((it,i)=>{
     if(it.group&&it.group!==last){last=it.group;html+=`<div class="lb-group" role="presentation">${esc(it.group)}</div>`}
-    const sel=it.selected?'true':'false',d=it.delay;
+    const sel=it.selected?'true':'false',d=it.delay,{icon,text}=splitIcon(it.label);
+    // emoji 一律进 .lb-ico 16px 盒：字形再高也不撑高行（选中态「咋这么大」的根因）。
+    const ico=`<span class="lb-ico" aria-hidden="true">${esc(icon)}</span>`;
+    // 勾固定占住 16px 盒：勾出现/消失时文字不左右漂移，勾本身在 28px 行内垂直居中。
+    const check=`<span class="check" aria-hidden="true">${it.selected?'✓':''}</span>`;
     const dot=d?`<span class="dot ${esc(d.kind)}" aria-hidden="true"></span>`:'';
-    const delayTxt=d?`<span class="lb-delay">${esc(d.kind==='neutral'?'—':d.text)}</span>`:'';
-    const check=it.selected?'<span class="check" aria-hidden="true">✓</span>':'';
-    html+=`<div class="lb-option" role="option" id="${esc(pop.id)}-opt-${i}" data-index="${i}" aria-selected="${sel}"${it.disabled?' aria-disabled="true"':''}${i===active?' data-active="true"':''}>${dot}${check}<span class="lb-label">${esc(it.label)}</span>${delayTxt}</div>`;
+    // 状态点跟着数字走（都靠右贴边），右侧读数不会被挤出去。
+    const delayTxt=d?`<span class="lb-delay">${dot}${esc(d.kind==='neutral'?'—':d.text)}</span>`:'';
+    html+=`<div class="lb-option" role="option" id="${esc(pop.id)}-opt-${i}" data-index="${i}" aria-selected="${sel}"${it.disabled?' aria-disabled="true"':''}${i===active?' data-active="true"':''}>${ico}${check}<span class="lb-label">${esc(text)}</span>${delayTxt}</div>`;
    })}
    pop.innerHTML=html;
    pop.querySelectorAll?.('[data-index]').forEach(el=>{
@@ -228,7 +256,9 @@
    }
   }
   const onOutside=e=>{const t=e.target;if(!pop.contains?.(t)&&!trigger.contains?.(t))closeListbox(false)};
-  const onWheel=()=>closeListbox(false);
+  // 弹层内滚列表不能收起弹层（2.1.3 回归：往下滑两下弹层就没了）。只有弹层外的滚轮才关闭；
+  // .listbox 自带 overscroll-behavior:contain，滚动链不会继续传给外层页面。
+  const onWheel=e=>{const t=e?.target;if(pop.contains?.(t))return;closeListbox(false)};
   const onResize=()=>closeListbox(false);
   LB.active={trigger,pop,onOutside,onKey:key,onWheel,onResize};
   popoverRoot.appendChild(pop);
@@ -295,7 +325,7 @@
   draw();schedule();
   try{
    const result=await FishDock.call(`clash.${method}`,params);
-   view=result;afterSuccess(method,params);
+   applyView(result);afterSuccess(method,params);
    return true;
   }catch(e){
    if(e&&e.__cancelled){/* 取消不走错误横幅 */}
@@ -310,8 +340,8 @@
   const controller=new AbortController();
   ops.set(key,{controller,since:Date.now(),label,method,params});
   const prev=view;apply();error='';say('');lastError=null;revision++;draw();
-  try{const result=await FishDock.call(`clash.${method}`,params);view=result;return true}
-  catch(e){revert?.();view=prev;error=`${label}失败：${reason(e)}；未生效，已回到原状态`;lastError=null;return false}
+  try{const result=await FishDock.call(`clash.${method}`,params);applyView(result);return true}
+  catch(e){revert?.();applyView(prev);error=`${label}失败：${reason(e)}；未生效，已回到原状态`;lastError=null;return false}
   finally{ops.delete(key);draw();schedule()}
  }
 
@@ -325,7 +355,7 @@
   try{
    const next=await FishDock.call('clash.view');
    if(requestedRevision===revision){
-    view=next;lastUpdatedAt=Date.now();pollFails=0;
+    applyView(next);lastUpdatedAt=Date.now();pollFails=0;
     // H1：结构性变化才整块重绘，否则只改进读数节点。
     if(structSig()!==lastStructSig)requestDraw();else updateLive();
    }
@@ -393,12 +423,16 @@
   }
   return rows[0]??null;
  }
+ // 收起箭头用内联 SVG（12×12、stroke:currentColor、flex:none）：文本字形「⌄」的基线随
+ // 回退字体漂移，两个触发器会一高一低；盒子固定后只靠 align-items:center 对齐，不用 translateY 凑。
+ const CHEV='<svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
  function comboTrigger(id,label,text,delay,disabled,reasonText){
+  const {icon,text:plain}=splitIcon(text);
   return `<div class="combo"><span class="combo-label">${label}</span>
    <button type="button" class="combo-trigger" id="${id}" role="combobox" aria-haspopup="listbox" aria-expanded="false"
     aria-controls="${id}-listbox" data-action="open-${id}" ${disabled?'disabled aria-disabled="true"':''} title="${esc(disabled?(reasonText||'不可用'):'')}">
-    <span class="trigger-text">${esc(text)}</span>${delay!=null?`<span class="trigger-delay n-delay ${delay.kind}">${esc(delay.text)}</span>`:''}
-    <span class="chev" aria-hidden="true">⌄</span></button>
+    ${icon?`<span class="lb-ico" aria-hidden="true">${esc(icon)}</span>`:''}<span class="trigger-text">${esc(plain)}</span>${delay!=null?`<span class="trigger-delay n-delay ${delay.kind}">${esc(delay.text)}</span>`:''}
+    ${CHEV}</button>
    ${disabled&&reasonText?`<span class="reason">${esc(reasonText)}</span>`:''}</div>`;
  }
  function subscriptionCard(){
@@ -441,15 +475,18 @@
   const status=tun?'TUN 模式已启用：应用通过虚拟网卡访问网络。'
    :system?`系统代理已接管：浏览器等应用走 127.0.0.1:${view.mixedPort}。`
    :'未接管系统网络：只有内置代理端口可用，其他应用需要自行配置。';
-  const tunNote=!view.tunService?.installed?' · 需先安装 TUN 服务':view.running?' · 切换会重启内核':'';
+  // 禁用原因是独立一行 muted 小字（同时进 title）：混进同一句会把「开启」胶囊压成竖排圆块。
   const proxyReason=!view.running&&!system?'内核未运行，无法接管系统代理':'';
   const tunReason=!view.configured?'先完成内核配置':!view.tunService?.installed?'需先安装 TUN 服务':'';
+  const tunNote=view.tunService?.installed&&view.running?' · 切换会重启内核':'';
   return card('网络设置',`<div class="switch-row"><div><strong>系统代理</strong>
-    <p class="small muted">${system?'已写入系统代理设置':'由 Dock 写入，停止内核时还原'}${proxyReason?' · '+esc(proxyReason):''}</p></div>
-    ${button('proxy',system?'关闭':'开启',`role="switch" aria-checked="${system}" title="${esc(proxyReason)}"`,anyOp()||(!view.running&&!system))}</div>
+    <p class="small muted">${system?'已写入系统代理设置':'由 Dock 写入，停止内核时还原'}</p></div>
+    ${button('proxy',system?'关闭':'开启',`role="switch" aria-checked="${system}" title="${esc(proxyReason||'接管系统代理')}"`,anyOp()||(!view.running&&!system))}</div>
+   ${proxyReason?`<p class="reason">${esc(proxyReason)}</p>`:''}
    <div class="switch-row"><div><strong>TUN 虚拟网卡</strong>
     <p class="small muted">${tun?'已启用':'未启用'}${tunNote}</p></div>
-    ${button('tun-toggle',view.tunSwitching?'切换中…':tun?'关闭':'开启',`role="switch" aria-checked="${tun}" title="${esc(tunReason)}"`,anyOp()||view.tunSwitching||!view.configured||!view.tunService?.installed)}</div>
+    ${button('tun-toggle',view.tunSwitching?'切换中…':tun?'关闭':'开启',`role="switch" aria-checked="${tun}" title="${esc(tunReason||'切换 TUN')}"`,anyOp()||view.tunSwitching||!view.configured||!view.tunService?.installed)}</div>
+   ${tunReason?`<p class="reason">${esc(tunReason)}</p>`:''}
    <p class="status-line">${esc(status)}</p>`);
  }
  function modeCard(){
@@ -466,12 +503,11 @@
     <span class="muted">${sitesBusy?'测试中…':'未测试'}</span></div>`).join('');
   const summary=list?`<p class="status-line">${ok} / ${list.length} 个站点可达</p>`
    :'<p class="status-line">经当前节点发起请求，避免直连测出假结果</p>';
-  return card('网站测试',`${body}${summary}`,{footer:button('site-test',sitesBusy?'测试中…':'测试全部',
+  return card('网站测试',`<div class="kv-list">${body}</div>${summary}`,{footer:button('site-test',sitesBusy?'测试中…':'测试全部',
    `aria-busy="${sitesBusy}"`,anyOp()||sitesBusy||!view.running)});
  }
  const maskIp=value=>/^\d+\.\d+\.\d+\.\d+$/.test(String(value??''))
   ?String(value).replace(/\.\d+$/,'.***'):(value?'***':'—');
- const copyBtn=(action,value)=>button(action,'复制',`data-copy="${esc(value)}" title="复制到剪贴板（不需要网络权限）"`,false);
  function ipCard(){
   if(!view.running)return card('IP 信息','<p class="muted">内核运行后经当前代理查询出口 IP。</p>');
   if(ipError)return card('IP 信息',`<p class="bad" role="alert">${esc(ipError)}</p>`,
@@ -481,20 +517,20 @@
   if(ip.available===false)return card('IP 信息',`<p class="muted">${esc(ip.reason??'当前无法查询出口 IP')}</p>`,
    {footer:`${button('ip-refresh','重试','',anyOp())}${ipBusy?button('ip-cancel','取消','',false):''}`});
   const country=esc(ip.country||'—'),code=/^[A-Za-z]{2}$/.test(ip.countryCode??'')?` (${esc(ip.countryCode.toUpperCase())})`:'';
-  return card('IP 信息',`${kv('国家',`${country}${code}`)}
-   ${kv('IP',`<code>${esc(ipReveal?ip.ip:maskIp(ip.ip))}</code> ${button('ip-reveal',ipReveal?'隐藏':'显示','',false)} ${ipReveal?copyBtn('copy',ip.ip):''}`)}
+  return card('IP 信息',`<div class="kv-list">${kv('国家',`${country}${code}`)}
+   ${kv('IP',`<code>${esc(ipReveal?ip.ip:maskIp(ip.ip))}</code> ${button('ip-reveal',ipReveal?'隐藏':'显示','',false)}`)}
    ${kv('ASN',esc(ip.asn||'—'))}${kv('服务商',esc(ip.isp||'—'))}
-   ${kv('位置',esc(ip.location||'—'))}${kv('时区',esc(ip.timezone||'—'))}`,
+   ${kv('位置',esc(ip.location||'—'))}${kv('时区',esc(ip.timezone||'—'))}</div>`,
    {footer:`${button('ip-refresh','刷新','',anyOp())}${anyOp()?button('ip-cancel','取消','',false):''}`});
  }
  function clashCard(){
   const addr=`127.0.0.1:${view.mixedPort}`;
-  return card('Clash 信息',`${kv('内核版本',esc(view.version||'—'))}
-   ${kv('系统代理地址',`<code>${esc(addr)}</code> ${copyBtn('copy',addr)}`)}
-   ${kv('混合代理端口',`<code data-live="port">${esc(view.mixedPort)}</code> ${copyBtn('copy',String(view.mixedPort))}`)}
-   ${kv('控制器端口',`<code data-live="cport">${esc(view.controllerPort)}</code> ${copyBtn('copy',String(view.controllerPort))}`)}
+  return card('Clash 信息',`<div class="kv-list">${kv('内核版本',esc(view.version||'—'))}
+   ${kv('系统代理地址',`<code>${esc(addr)}</code>`)}
+   ${kv('混合代理端口',`<code data-live="port">${esc(view.mixedPort)}</code>`)}
+   ${kv('控制器端口',`<code data-live="cport">${esc(view.controllerPort)}</code>`)}
    ${kv('运行时间',`<span data-live="uptime">${esc(fmtUptime(view.uptimeMs))}</span>`)}
-   ${kv('规则数量',`<span data-live="rules">${Number.isFinite(view.rulesCount)?`${view.rulesCount} 条`:'—'}</span>`)}`);
+   ${kv('规则数量',`<span data-live="rules">${Number.isFinite(view.rulesCount)?`${view.rulesCount} 条`:'—'}</span>`)}</div>`);
  }
  function systemCard(){
   const rows=[['操作系统',`${esc(view.os||'—')}${view.arch?` · ${esc(view.arch)}`:''}`]];
@@ -503,7 +539,7 @@
   rows.push(['运行模式',view.tun?.enable?'TUN / 服务模式':'普通模式']);
   rows.push(['内核来源',view.bundled?'内置 mihomo':'自定义路径']);
   if(view.pluginVersion)rows.push(['插件版本',`v${esc(view.pluginVersion)}`]);
-  return card('系统信息',rows.map(([key,value])=>kv(key,value)).join(''));
+  return card('系统信息',`<div class="kv-list">${rows.map(([key,value])=>kv(key,value)).join('')}</div>`);
  }
  function overviewSection(){
   return `<div class="cards">${subscriptionCard()}${currentNodeCard()}${networkCard()}${modeCard()}
@@ -518,7 +554,7 @@
   const field=(id,label,input,error)=>`<label for="${id}">${label}${input}${error?`<p class="field-error" role="alert">${esc(error)}</p>`:''}</label>`;
   const nameInput=`<input id="subscription-name" name="name" maxlength="80" required aria-label="订阅名称" value="${esc(draft.name)}" placeholder="例如：机场A" aria-invalid="${!!fieldErrors.name}" ${locked()||ops.has('subscriptionSave')?'disabled':''}>`;
   const urlInput=`<input id="subscription-url" name="url" type="password" autocomplete="off" spellcheck="false" aria-label="HTTPS 订阅地址" value="${esc(draft.url)}" placeholder="${draft.id?'留空保持原地址':'https://…'}" aria-invalid="${!!fieldErrors.url}" ${draft.id?'':'required'} ${locked()||ops.has('subscriptionSave')?'disabled':''}>`;
-  return `<h2>订阅管理</h2><p class="muted">点订阅卡片＝查看/选中；启用/停用只点卡内的开关。新增后点「更新」校验，通过后才能启动内核。</p>
+  return `<h2>订阅管理</h2><p class="muted">点订阅卡片＝高亮并切换启用（内核运行中就地热重载，不重启）；卡内开关等价。新增后点「更新」校验，通过后才能启动内核。</p>
    ${banner}${empty}
    ${button('reload','更新全部已启用订阅','',anyOp()||!view.configured||!rows.some(s=>s.enabled)||!!view.operation)}
    <div class="subscriptions">${rows.map(s=>subscriptionRow(s)).join('')}</div>
@@ -530,9 +566,11 @@
    </form>`;
  }
  function subscriptionRow(s){
-  const upd=s.updating||ops.has('update:'+s.id);
-  const toggle=`<button type="button" data-action="toggle-sub" data-id="${esc(s.id)}" role="switch" aria-checked="${s.enabled}" title="${s.enabled?'点击停用此订阅':'点击启用此订阅'}" ${locked()?'disabled':''}>${s.enabled?'已启用':'已停用'}</button>`;
-  return `<article class="subscription" data-sub="${esc(s.id)}" data-active="${activeSub===s.id?'true':'false'}" ${locked()?'aria-disabled="true"':''} tabindex="${locked()?-1:0}" aria-label="${esc(s.name)}">
+  const upd=s.updating||ops.has('update:'+s.id),switching=switchingSub(s.id);
+  // 蓄意只挡中间态：运行中允许点卡片/开关热切换，不再整块置灰（2.1.3 的「运行中就锁死」已废弃）。
+  const blocked=subEditLocked()||anyOp();
+  const toggle=`<button type="button" data-action="toggle-sub" data-id="${esc(s.id)}" role="switch" aria-checked="${s.enabled}" aria-busy="${switching}" title="${switching?'正在热切换订阅':s.enabled?'点击停用此订阅':'点击启用此订阅'}" ${blocked?'disabled':''}>${switching?'切换中…':s.enabled?'已启用':'已停用'}</button>`;
+  return `<article class="subscription" data-sub="${esc(s.id)}" data-active="${activeSub===s.id?'true':'false'}" aria-busy="${switching}" ${blocked?'aria-disabled="true"':''} tabindex="${blocked?-1:0}" aria-label="${esc(s.name)}">
    <div class="subscription-title"><strong>${esc(s.name)}</strong><span class="tag ${s.enabled?'on':'off'}">${s.enabled?'已启用':'已停用'}</span></div>
    <p class="sub-state ${s.status==='error'?'bad':s.status==='ready'?'good':'muted'}" role="status" data-live="substate" data-live-id="${esc(s.id)}">${s.updating?`更新中 ${elapsed(updateSince[s.id])||0}s`:({pending:'等待更新',ready:'缓存可用',error:'更新失败'}[s.status]||'等待更新')} · ${s.nodeCount} 个节点</p>
    <p class="muted small">最近尝试：${when(s.lastAttempt)} · 最近成功：${when(s.lastSuccess)}</p>
@@ -543,7 +581,7 @@
    ${toggle}
    ${button('edit','编辑',`data-id="${esc(s.id)}"`,locked())}
    ${button('delete','删除',`data-id="${esc(s.id)}"`,locked())}</div>
-   <p class="sub-hint">${locked()?'内核运行中：先停止内核再切换订阅':'点卡片查看，开关控制启用/停用'}</p>
+   <p class="sub-hint">${view.running?'内核运行中：点卡片即热切换订阅，内核就地重载、不重启；增删改订阅仍需先停止内核':'点卡片＝高亮并切换启用，同时只保留一条启用；卡内开关等价'}</p>
   </article>`;
  }
  function tunServiceBlock(){
@@ -760,21 +798,33 @@
   const prev=view.systemProxy;
   return optimistic('proxy',{enabled},()=>{view.systemProxy=enabled},()=>{view.systemProxy=prev},'系统代理');
  }
- function toggleSub(id){
-  if(locked())return false;
-  const row=view.subscriptions.find(s=>s.id===id);if(!row)return false;
-  const prev=view.subscriptions;
-  const next=!row.enabled;
-  return optimistic('subscriptionToggle',{id,enabled:next},
-   ()=>{view.subscriptions=view.subscriptions.map(s=>s.id===id?{...s,enabled:next}:{...s,enabled:next?false:s.enabled})},
-   ()=>{view.subscriptions=prev},'切换订阅启用');
+ async function toggleSub(id,next){
+  const row=view?.subscriptions?.find(s=>s.id===id);
+  if(!row||subEditLocked()||anyOp())return false;
+  const want=typeof next==='boolean'?next:!row.enabled;
+  const prevView=view,prevRows=view.subscriptions;
+  ops.set('sub:'+id,{since:Date.now(),label:'切换订阅启用',method:'subscriptionToggle',params:{id,enabled:want}});
+  // 乐观：先切 UI（高亮跟着启用项走），RPC 回来再以服务端视图为准；失败整块回滚。
+  applyView({...view,subscriptions:prevRows.map(s=>s.id===id?{...s,enabled:want}:{...s,enabled:want?false:s.enabled})});
+  error='';say('');lastError=null;revision++;draw();schedule();
+  try{
+   const result=await FishDock.call('clash.subscriptionToggle',{id,enabled:want});
+   applyView(result);
+   say(want?'已启用该订阅，内核已就地切换':'已停用该订阅','ok');
+   return true;
+  }catch(e){
+   applyView(prevView);
+   error=`切换订阅启用失败：${reason(e)}；未生效，已回到原状态`;lastError=null;
+   return false;
+  }finally{ops.delete('sub:'+id);draw();schedule()}
  }
- // H5：点卡片＝查看/选中，绝不改启用态；拖动选文字/双击不触发（selection 非折叠即忽略）。
+ // 点卡＝高亮 + 切换启用（两个动作同一次点击）；拖动选文字/双击不触发（selection 非折叠即忽略）。
  function onCardClick(id,event){
   const sel=typeof window.getSelection==='function'?window.getSelection():null;
   if(sel&&sel.isCollapsed===false)return false;
-  if(locked())return false;
-  activeSub=activeSub===id?'':id;draw();return false;
+  const row=view?.subscriptions?.find(s=>s.id===id);
+  if(!row)return false;
+  return toggleSub(id,!row.enabled);
  }
  // H6：删除先删后撤销——UI 立即移除，5 秒后真正落盘；撤销则取消落盘并恢复。
  function deleteSub(id){
@@ -782,6 +832,8 @@
   const row=view.subscriptions.find(s=>s.id===id);if(!row)return false;
   pendingDelete.add(id);
   if(draft.id===id)draft={id:'',name:'',url:''};
+  // pendingDelete 只是 UI 过滤、view 没变（applyView 不会动高亮），这里显式清掉被删那条的高亮；
+  // 真正落盘后由 applyView(commitDelete 的返回视图) 重新校正。
   if(activeSub===id)activeSub='';
   undo={id,name:row.name,timer:setTimeout(()=>commitDelete(id),5000)};
   say(`已删除「${row.name}」，5 秒内可撤销`,'ok');draw();return true;
@@ -814,7 +866,6 @@
    if(a==='site-test')return testSites();
    if(a==='ip-refresh')return loadIp(true);
    if(a==='ip-reveal'){ipReveal=!ipReveal;draw();return}
-   if(a==='copy')return copyText(b.dataset.copy);
    if(a==='edit'){const s=view.subscriptions.find(s=>s.id===id);draft={id,name:s.name,url:''};fieldErrors={};draw();return}
    if(a==='cancel-edit'){draft={id:'',name:'',url:''};fieldErrors={};draw();return}
    if(a==='delete')return deleteSub(id);
@@ -851,18 +902,6 @@
   const btn=root.querySelector('[data-focus]');
   if(btn)btn.focus?.();
  }
- function copyText(value){
-  const text=String(value??'');
-  const done=()=>say('已复制到剪贴板','ok');
-  const fallback=()=>say('复制失败，请手动全选后按 Ctrl+C','info');
-  try{
-   if(navigator?.clipboard?.writeText){navigator.clipboard.writeText(text).then(()=>{done();draw()},()=>{fallback();draw()});return false}
-  }catch{}
-  try{
-   const ta=document.createElement('textarea');ta.value=text;popoverRoot.appendChild?.(ta);ta.select?.();document.execCommand?.('copy');ta.remove?.();done();draw();
-  }catch{fallback();draw()}
-  return false;
- }
 
  // H2 IME 保护：组合期间挂起重绘，compositionend 后补一次。
  root.addEventListener?.('compositionstart',()=>{composing=true},true);
@@ -872,7 +911,7 @@
 
  // 供单测读取纯逻辑（仅测试上下文注入时挂载，生产不产生全局副作用）。
  if(typeof globalThis!=='undefined'&&typeof globalThis.__CLASH_TEST_HOOKS__==='function')
-  globalThis.__CLASH_TEST_HOOKS__({moveActive,resolveActive,filterItems,typeAheadNext,nodeDelayView,keyRoute,run});
+  globalThis.__CLASH_TEST_HOOKS__({moveActive,resolveActive,filterItems,typeAheadNext,nodeDelayView,keyRoute,splitIcon,run});
 
  run('view');
 })();

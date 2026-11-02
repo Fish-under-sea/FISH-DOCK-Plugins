@@ -4,6 +4,14 @@
    Dock 可以深色而系统浅色，用系统偏好会与宿主打架。
    颜色全部走 token：本文件里出现色值的地方只允许在这两段 token 定义里。 */
 
+/* ── 尺寸刻度表（2.1.4 起全局唯一，禁止逐处手写孤值）──
+   字号：13（区块标题）/ 12.5（正文、列表项）/ 12（辅助说明与小字）
+   行高：28（列表项、紧凑行）/ 26（详情卡 .kv）/ 18（行内文字基线）
+   图标：16×16 盒子 .lb-ico（emoji 与状态点一律进盒子，否则字形高度不可控）
+   圆角：14（卡片、弹层）/ 999（胶囊）
+   间距：块间距只用 4 的倍数（4/8/12/16…）；控件内的 2px 只是把行撑到刻度
+   弹层、卡片、按钮、.kv 全部按这张表；plugins/feishu/page.css 沿用同一张表。 */
+
 :root{
   color-scheme:dark;
   /* 语义 token（dark 基准） */
@@ -40,7 +48,7 @@
 header>div:first-child{display:flex;align-items:center;gap:8px}
 .toolbar>label{display:flex;align-items:center;gap:8px;margin:0}
 .toolbar{margin:0 8px 12px}
-.headbar{flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;padding-bottom:2px;scrollbar-width:thin}
+.headbar{flex-wrap:nowrap;overflow-x:auto;overscroll-behavior-x:contain;padding-bottom:4px;scrollbar-width:thin}
 .headbar button{flex:0 0 auto}
 .headbar button[aria-pressed=true]{background:var(--dock-line);border-color:var(--dock-line);color:var(--dock-text)}
 
@@ -53,23 +61,30 @@ header>div:first-child{display:flex;align-items:center;gap:8px}
 
 /* ── 控件边界统一走 --line-control（宿主 --dock-line 在 dark 只有 1.5:1） ── */
 button:not(.primary):not([type=submit]),input:not([type=checkbox]),textarea,select{border-color:var(--line-control)}
+/* 胶囊按钮不该折行：2.1.3 里「开启」被压成竖排圆块就是缺这一条。 */
+button{white-space:nowrap}
 button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;cursor:not-allowed}
 
 /* ── 读数条容器与新鲜度：读数区是唯一 aria-live 的地方 ── */
-.readout{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0;font-size:12.5px}
-.readout-label{color:var(--dock-muted)}
-.readout-node{min-width:0;overflow-wrap:anywhere}
-.readout-bar{position:relative;flex:1 1 120px;min-width:80px;height:3px;background:var(--dock-control);overflow:hidden}
+/* 读数行按刻度走 12.5 / 26：换行而不是溢出，延迟读数贴右且不参与压缩（右侧数字不被裁）。 */
+.readout{display:flex;align-items:center;gap:4px 8px;flex-wrap:wrap;margin:8px 0;font-size:12.5px;line-height:26px}
+.readout-label{flex:0 0 auto;color:var(--dock-muted)}
+.readout-node{flex:1 1 80px;min-width:0;overflow-wrap:anywhere}
+.readout-bar{position:relative;flex:0 1 120px;min-width:80px;height:3px;background:var(--dock-control);overflow:hidden}
 .readout-fill{display:block;height:100%;background:var(--c-ok)}
 .readout-fill.warm{background:var(--c-warn)}
 .readout-fill.bad{background:var(--c-bad)}
 .readout-fill.neutral{background:var(--dock-muted)}
-.stamp{margin:4px 0 0;font-size:12px;color:var(--dock-muted);font-variant-numeric:tabular-nums}
+.readout>.n-delay{flex:0 0 auto;margin-left:auto}
+.stamp{margin:4px 0 0;font-size:12px;line-height:18px;color:var(--dock-muted);font-variant-numeric:tabular-nums}
 .stamp.stale{color:var(--c-bad)}
 .readout-area[data-stale=true]{opacity:.55}
 
-/* ── 订阅：卡片可点＝查看/选中；启用/停用只由卡内开关承担 ── */
-.subscriptions{display:grid;gap:12px;margin:12px 0}
+/* ── 订阅：卡片可点＝高亮 + 切换启用（运行中就地热重载）；卡内开关等价 ── */
+/* 反面清单：被外层 stretch 拉高的容器一律 align-content:start —— 否则 grid 的
+   align-content:normal(=stretch) 会把多出来的高度均摊给每一行，视觉上就是「一个高一个低」。
+   这里给 .cards / .split / .subscriptions / .columns 全部钉死，卡内行距只由 CSS 写的行高决定。 */
+.subscriptions{display:grid;gap:12px;margin:12px 0;align-content:start}
 .subscription{border:1px solid var(--line-hair);border-radius:14px;padding:16px;min-width:0;overflow-wrap:anywhere;
  background:var(--layer-1);box-shadow:inset 0 1px 0 var(--hi);cursor:pointer;transition:border-color .12s ease,background .12s ease}
 .subscription[data-active=true]{border-color:var(--dock-accent);box-shadow:inset 2px 0 0 var(--sel-line),inset 0 1px 0 var(--hi);background:var(--sel-bg)}
@@ -104,26 +119,36 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 
 /* ── 概览：信息卡网格 ── */
 /* D1：卡片按本行最高对齐（align-items:stretch）；因已删 height:100% 且 overflow:visible，拉伸不裁内容。 */
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));grid-auto-rows:min-content;gap:12px;align-items:stretch;margin:0}
-.cards>.card{margin:0;display:flex;flex-direction:column;gap:8px;min-width:0;overflow:visible}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));grid-auto-rows:min-content;gap:12px;align-items:stretch;align-content:start;margin:0}
+.cards>.card{margin:0;display:flex;flex-direction:column;justify-content:flex-start;gap:8px;min-width:0;overflow:visible}
 .cards>.card.wide{grid-column:1/-1}
-.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 20px}
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 20px;align-items:start;align-content:start}
 .split>label{margin:8px 0}
 .card{background:var(--layer-1);border:1px solid var(--line-hair);border-radius:14px;box-shadow:inset 0 1px 0 var(--hi)}
-.card-title{margin:0;font-size:12.5px;font-weight:600;line-height:19px;min-height:19px;display:flex;align-items:center;gap:8px;letter-spacing:.02em}
+.card-title{margin:0;font-size:12.5px;font-weight:600;line-height:26px;min-height:26px;display:flex;align-items:center;gap:8px;letter-spacing:.02em}
 .card-foot{margin-top:auto;padding-top:4px;display:flex;flex-wrap:wrap;gap:8px}
-.kv{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:22px;font-size:12.5px;min-width:0}
-.kv>.k{color:var(--dock-muted);white-space:nowrap}
-.kv>.v{display:flex;align-items:center;justify-content:flex-end;gap:8px;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
-.kv code{font:12px/1.5 "Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
-.status-line{margin:0;font-size:12px;color:var(--dock-muted)}
+/* 详情卡行高：26 是刻度表里 .kv 的唯一档位，两卡（Clash 信息 / 系统信息）共用同一行组件。 */
+.kv{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-height:26px;font-size:12.5px;line-height:26px;min-width:0}
+.kv>.k{color:var(--dock-muted);white-space:nowrap;line-height:26px}
+.kv>.v{display:block;min-width:0;text-align:right;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;line-height:26px}
+/* code 只缩字号、不继承 26 的行高：等宽字体的上/下伸比正文大，行高按 26 算会让这一行多出 1px。 */
+.kv code{font-family:"Cascadia Mono",Consolas,monospace;font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}
+/* 值里的胶囊按钮（IP 卡的「显示/隐藏」）压到同一基线节奏：高度由内容（18+2）决定，
+   不再用 dock.css 的 min-height:28 把 26px 的行顶开。 */
+.kv>.v button{min-height:0;padding:0 10px;font-size:12px;line-height:18px;vertical-align:middle}
+/* 详情卡的行列表：行距只由行高决定（.cards>.card 的 8px 块间距到此为止，不摊进行间）。 */
+.kv-list{display:grid;gap:0;align-content:start;min-width:0}
+.status-line{margin:0;font-size:12px;line-height:18px;color:var(--dock-muted)}
+/* 开关行：按钮不参与压缩、文案可换行，禁用原因另起一行 muted 小字。 */
 .switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
+.switch-row>div{flex:1 1 auto;min-width:0}
+.switch-row>button{flex:0 0 auto;white-space:nowrap}
 .switch-row strong{font-size:12.5px}
 .switch-row p{margin:4px 0 0}
-.segmented{display:flex;gap:4px;padding:3px;border-radius:999px;background:var(--dock-bg);border:1px solid var(--line-control)}
+.segmented{display:flex;gap:4px;padding:4px;border-radius:999px;background:var(--dock-bg);border:1px solid var(--line-control)}
 .segmented button{flex:1;border:0;background:transparent}
 .segmented button[aria-pressed=true]{background:var(--dock-line);color:var(--dock-text)}
-.site-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:22px;font-size:12.5px;font-variant-numeric:tabular-nums}
+.site-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:28px;font-size:12.5px;line-height:28px;font-variant-numeric:tabular-nums}
 /* 延迟三态：正常绿/黄/红，「已超时」红，「未测速」灰。色 + 文字双通道，不只靠颜色。 */
 .n-delay{white-space:nowrap;font-size:12px;font-variant-numeric:tabular-nums}
 .n-delay.good{color:var(--c-ok)}
@@ -140,14 +165,14 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 .usage-text{margin:4px 0 0;font-size:12px;color:var(--dock-muted);font-variant-numeric:tabular-nums}
 
 /* ── 内核设置：表单 + TUN 段 + 吸底保存 ── */
-.columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.columns{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;align-content:start}
 .tun-box{border:1px solid var(--line-hair);border-radius:14px;padding:12px 16px;margin:12px 0;background:var(--layer-2)}
 .tun-box legend{float:none;width:auto;padding:0 8px 0 0;margin:0 0 8px;color:var(--dock-muted);font-size:12px}
 .tun-box label{margin:8px 0}
 .tun-service{margin-top:8px;padding-top:8px;border-top:1px solid var(--line-hair)}
 .svc-log{margin:8px 0;max-height:120px;font-size:12px;color:var(--dock-muted)}
 .confirm-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;
- border:1px solid var(--line-control);border-radius:14px;padding:8px 12px;margin:8px 0;font-size:12px;background:var(--layer-2)}
+ border:1px solid var(--line-hair);border-radius:14px;padding:8px 12px;margin:8px 0;font-size:12px;background:var(--layer-2)}
 .confirm-bar p{margin:0;font-size:12px}
 /* D3：吸底保存条用不透明底 + 分隔线；内核设置页按内容长高、保存条回到文末静态位置，
    滚动到底时 TUN 服务按钮行不再被压住。 */
@@ -162,17 +187,18 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.snackbar{background:var(--layer-2)}}
 
 /* ── 下拉 / listbox（弹层 position:fixed 挂 body，不被 .pane 的 overflow 裁切） ── */
-.combo{display:flex;flex-direction:column;gap:4px;min-width:0}
-.combo>.combo-label{font-size:12px;color:var(--dock-muted)}
-.combo-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:32px;
- padding:4px 12px;border:1px solid var(--line-control);border-radius:999px;background:var(--dock-control);
- font-size:12.5px;font-weight:600;cursor:pointer;text-align:left;color:var(--dock-text)}
+.combo{display:flex;flex-direction:column;justify-content:flex-start;gap:4px;min-width:0}
+.combo>.combo-label{font-size:12px;line-height:18px;color:var(--dock-muted)}
+.combo-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:28px;
+ padding:2px 12px;border:1px solid var(--line-control);border-radius:999px;background:var(--dock-control);
+ font-size:12.5px;line-height:18px;font-weight:600;cursor:pointer;text-align:left;color:var(--dock-text)}
 .combo-trigger:hover:not(:disabled){filter:brightness(1.15)}
 .combo-trigger[aria-expanded=true]{border-color:var(--dock-accent)}
-.combo-trigger .chev{flex:none;transition:transform .12s ease}
+/* 箭头是内联 SVG：字形基线随回退字体漂移会让两个触发器一高一低，改用 12×12 盒子后不再靠 translateY 凑。 */
+.combo-trigger .chev{flex:none;display:block;width:12px;height:12px;transition:transform .12s ease}
 .combo-trigger[aria-expanded=true] .chev{transform:rotate(180deg)}
 .combo-trigger .trigger-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.combo-trigger .trigger-delay{margin-left:auto;font-variant-numeric:tabular-nums}
+.combo-trigger .trigger-delay{margin-left:auto;flex:0 0 auto;font-variant-numeric:tabular-nums}
 /* F6：下拉触发器与选项的键盘焦点必须可见（无障碍底线）。 */
 .combo-trigger:focus-visible,.lb-option:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px}
 /* D2：弹层默认用不透明 --layer-1 底 + 边框——headless/禁 GPU 时 backdrop-filter 不被渲染
@@ -181,21 +207,30 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 .listbox{position:fixed;z-index:70;max-height:320px;overflow:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--line-hair);border-radius:14px;
  background:var(--layer-1);-webkit-backdrop-filter:blur(30px) saturate(1.6);backdrop-filter:blur(30px) saturate(1.6);box-shadow:var(--shadow);outline:0}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.listbox{background:var(--layer-1)}}
-.lb-filter{width:100%;min-height:30px;margin:0 0 4px;padding:4px 8px;border:1px solid var(--line-control);border-radius:999px;background:var(--dock-bg);font-size:12.5px}
-.lb-group{padding:8px 8px 4px;font-size:12px;font-weight:600;color:var(--dock-muted)}
-.lb-option{display:flex;align-items:center;gap:8px;min-height:32px;padding:4px 8px;font-size:12.5px;cursor:pointer;color:var(--dock-text)}
+.lb-filter{width:100%;min-height:28px;margin:0 0 4px;padding:2px 8px;border:1px solid var(--line-control);border-radius:999px;background:var(--dock-bg);font-size:12.5px;line-height:18px}
+.lb-group{padding:4px 8px;min-height:26px;font-size:12px;font-weight:600;line-height:18px;color:var(--dock-muted)}
+/* 列表项：行高 = 刻度表 28，行距 = 行高（选项之间不加 margin）。
+   组名与节点名带 emoji（🔵 微软服务 / ♻️ 自动选择 …），字形比 12.5px 文字高得多，
+   不关进 .lb-ico 盒子就会把行撑到 40px 以上——这就是「选中咋这么大、很丑」的根因。 */
+.lb-option{display:flex;align-items:center;gap:8px;min-height:28px;padding:2px 8px;font-size:12.5px;line-height:18px;cursor:pointer;color:var(--dock-text)}
 .lb-option:hover{filter:brightness(1.12)}
 .lb-option[aria-selected=true]{background:var(--sel-bg);box-shadow:inset 2px 0 0 var(--sel-line)}
 .lb-option[data-active=true]{background:var(--dock-control)}
 .lb-option[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+/* 16×16 图标盒：emoji 与状态点都放进同一个盒子，字形再高也只占 16。 */
+.lb-ico{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:16px}
 .lb-option .dot{flex:none;width:8px;height:8px;border-radius:999px;border:1px solid var(--line-control);background:transparent}
 .lb-option .dot.good{background:var(--c-ok);border-color:var(--c-ok)}
 .lb-option .dot.warm{background:var(--c-warn);border-color:var(--c-warn)}
 .lb-option .dot.bad{background:var(--c-bad);border-color:var(--c-bad)}
-.lb-option .lb-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lb-option .lb-delay{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dock-muted)}
-.lb-option .check{margin-left:0;color:var(--dock-accent)}
-.lb-empty{padding:8px 12px;font-size:12px;color:var(--dock-muted)}
+.lb-option .lb-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:18px}
+/* 延迟读数自带状态点：点与数字贴在一起，右侧贴边且不参与压缩（读数不裁）。 */
+.lb-option .lb-delay{margin-left:auto;flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;line-height:18px;font-variant-numeric:tabular-nums;color:var(--dock-muted)}
+/* 选中勾固定 16×16 盒：文字不会因为勾出现/消失而左右漂移，勾本身在行内垂直居中。
+   （必须显式清掉 dock.css 的 .check{min-height:28px;margin:8px 0}——那是复选框行的样式，
+  还留在身上会把 16px 盒子撑回 28px、再带 8px 外边距，正是「行被顶开」的第二种来源。） */
+.lb-option .check{flex:none;width:16px;height:16px;min-height:0;margin:0;display:inline-flex;align-items:center;justify-content:center;font-size:12px;line-height:16px;color:var(--dock-accent)}
+.lb-empty{padding:4px 12px;font-size:12px;line-height:18px;color:var(--dock-muted)}
 
 /* 收起箭头在 reduced-motion 下不转 */
 @media(prefers-reduced-motion:reduce){

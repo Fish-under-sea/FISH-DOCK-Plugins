@@ -12,7 +12,7 @@ test('failed proxy restoration still stops the owned core and remains retryable'
  await f.service.stop();assert.equal((await f.service.view()).error,'');
 });
 function fixture(disk=new Map(),options={}) {
- const requests=[],updates=[],kills=[];let up=false,starts=0,stops=0,owned,fail=false,blocked=null,delayError=null;
+ const requests=[],updates=[],kills=[],swaps=[];let up=false,starts=0,stops=0,owned,fail=false,blocked=null,delayError=null,switchDown=false;
  // external 模拟「插件进程重启后仍有残留内核」：pid 还活着、控制器可应答，但不是本实例 spawn 的。
  const external=options.external?{alive:true,...options.external}:null;
  const controllerUp=options.controller!==false;
@@ -25,6 +25,8 @@ function fixture(disk=new Map(),options={}) {
  const subs=()=>owned?.subscriptions??external?.subscriptions??[];
  const request=async(path,options={})=>{
   requests.push({path,...options});
+  // 目标内核不认 PUT /configs（老版本/被代理挡住）：热切换必须明确失败并回滚。
+  if(switchDown&&path.startsWith('/configs?force=true'))throw Object.assign(Error('控制器拒绝热重载'),{code:'CONTROLLER_UNREACHABLE'});
   if(delayError&&path.includes('/delay?'))throw delayError;
   if(!controllerUp)throw Object.assign(Error('控制器不可达'),{code:'CONTROLLER_UNREACHABLE'});
   // 残留内核（不是本实例 spawn 的）控制器不通：用来证明 attach 失败后也不会盲杀 pid。
@@ -49,6 +51,12 @@ function fixture(disk=new Map(),options={}) {
   // 结束残留内核（不是本实例 spawn 的）：记录 pid，按 external 状态回报是否真的没了。
   kill:async pid=>{kills.push(pid);if(external&&external.pid===pid)external.alive=false;return true},
   updateSubscription:async c=>{updates.push(c);await blocked;if(c.signal.aborted||fail)throw Error('token=PRIVATE');await c.apply?.();await c.commit({nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}});return {nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}}},
+  // 运行中热切换：service 只把「新启用集 + apply 回调」交出去；这里记录调用并真的走 apply，
+  // 好让「PUT /configs?force=true 失败」这条路径也能被验证（配置文件的 rename 由 runtime 真实实现负责）。
+  swapConfig:async({settings,subscriptions,secret,apply})=>{
+   swaps.push({settings,secret,subscriptions:subscriptions.map(s=>[s.id,s.enabled])});
+   await apply(`${context.dataDirectory}/tmp/mihomo-runtime.next.json`);
+  },
   proxy:{enable:async()=>{},restore:async()=>{},active:()=>false},
   tun:{status:async()=>({installed:tunInstalled,state:tunInstalled?'running':'absent',kernel:tunKernel,log:''}),
    install:async({kernel})=>{tunInstalled=true;tunKernel=kernel},
@@ -71,7 +79,9 @@ function fixture(disk=new Map(),options={}) {
   }catch{/* 坏记录按取不到处理 */}
   return null;
  }});
- return {service,disk,requests,updates,runtime,context,external,stats:()=>({starts,stops,up,owned,kills}),fail:()=>{fail=true},
+ return {service,disk,requests,updates,swaps,runtime,context,external,stats:()=>({starts,stops,up,owned,kills}),
+  // 模拟「目标内核不认 PUT /configs」。
+  refuseReload:(on=true)=>{switchDown=on},fail:()=>{fail=true},
   // 模拟「残留内核的控制器从不通恢复为可达」。
   setExternalController:on=>{externalDown=on===false},
   breakDelay:error=>{delayError=error},
@@ -86,6 +96,9 @@ async function settled(service) {
 }
 test('multiple subscriptions keep independent IDs but only one runs at a time',async()=>{
  const f=fixture();await f.service.save(kernel);const a=await add(f),b=await add(f,'B','https://example.test/b');
+ // 启用无缓存的订阅现在两条路径都拒绝（t5 F5），这里先把 A、B 的缓存都准备好，本用例只关心单选语义。
+ await f.service.reload();await settled(f.service);
+ await f.service.reload({id:b.id});await settled(f.service);
  assert.notEqual(a.id,b.id);
  assert.equal(a.enabled,true,'第一条默认启用');
  assert.equal(b.enabled,false,'之后再新增的默认停用');
@@ -119,12 +132,92 @@ test('multiple subscriptions keep independent IDs but only one runs at a time',a
  await f.service.select({group:'🚀 节点选择',name:sourceNodes[0].name});
  assert.ok(f.requests.some(r=>r.method==='PUT'&&r.body?.name===`[${a.id}] same`));
  assert.ok(!JSON.stringify(state).includes('PRIVATE'));assert.ok(!f.disk.get('config/subscriptions.json').includes('https:'));
- await assert.rejects(f.service.subscriptionToggle({id:a.id,enabled:false}),error=>error.code==='KERNEL_RUNNING_LOCK');
+ // 2.1.4：运行中改启用集不再抛 KERNEL_RUNNING_LOCK——B 已有缓存，这里直接走热重载。
+ // 「无缓存时拒绝」的路径由「无缓存的订阅两条路径都不许启用（t5 F5）」那一条单独覆盖。
+ const hot=await f.service.subscriptionToggle({id:b.id,enabled:true});
+ assert.deepEqual(hot.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,false],[b.id,true]],'运行中切换生效');
+ assert.ok(f.swaps.length>0,'走的是热重载路径，不是停内核');
  await f.service.stop();await f.service.subscriptionToggle({id:a.id,enabled:true});
  await f.service.start();assert.deepEqual(f.stats().owned.subscriptions.map(s=>s.id),[a.id]);
  await f.service.stop();await f.service.subscriptionRemove({id:a.id});
  assert.deepEqual((await f.service.view()).subscriptions.map(s=>s.id),[b.id]);
  assert.equal(f.disk.get(`secret/credentials/${a.id}.json`),'');
+});
+// ───────── 2.1.4 运行中热切换（§3.3）：不重启内核，失败全回滚 ─────────
+async function twoCached(f){
+ const a=await add(f),b=await add(f,'B','https://example.test/b');
+ await f.service.reload();await settled(f.service);          // A 启用 → 拿到缓存
+ await f.service.reload({id:b.id});await settled(f.service); // B 单独刷一次，也拿到缓存
+ return {a,b};
+}
+test('运行中热切换订阅：生成候选配置 → PUT /configs?force=true，内核不重启',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ const {a,b}=await twoCached(f);
+ await f.service.start();
+ const before=f.stats();
+ const state=await f.service.subscriptionToggle({id:b.id,enabled:true});
+ assert.deepEqual(state.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,false],[b.id,true]]);
+ assert.equal(state.running,true);
+ assert.equal(f.stats().starts,before.starts,'热切换不重新起内核');
+ assert.equal(f.stats().stops,before.stops,'热切换不停内核');
+ // 新启用集交给了配置生成（其余自动关掉），并且真的发了一条热重载指令。
+ const swap=f.swaps.at(-1);
+ assert.deepEqual(swap.subscriptions,[[a.id,false],[b.id,true]]);
+ assert.equal(typeof swap.secret,'string');assert.ok(swap.secret,'带上控制器密钥');
+ const put=f.requests.find(r=>r.method==='PUT'&&r.path==='/configs?force=true');
+ assert.ok(put,'内核收到就地换配置的指令');
+ assert.match(put.body.path,/mihomo-runtime\.next\.json$/,'先用候选文件，成功再转正');
+ const rows=JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions;
+ assert.deepEqual(rows.filter(s=>s.enabled).map(s=>s.id),[b.id],'启用集落盘也是新的');
+});
+test('热切换失败：启用集与磁盘一起回滚，抛 SUBSCRIPTION_SWITCH_FAILED',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ const {a,b}=await twoCached(f);
+ await f.service.start();
+ f.refuseReload();
+ await assert.rejects(f.service.subscriptionToggle({id:b.id,enabled:true}),error=>error.code==='SUBSCRIPTION_SWITCH_FAILED');
+ const state=await f.service.view({controller:false});
+ assert.deepEqual(state.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,true],[b.id,false]],'启用集回滚');
+ const rows=JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions;
+ assert.deepEqual(rows.filter(s=>s.enabled).map(s=>s.id),[a.id],'磁盘也回滚');
+ assert.equal(state.running,true,'内核仍在原配置上运行，没被带偏');
+ // 回滚后再切一次（控制器恢复）必须成功：证明回滚没把内部状态弄脏。
+ f.refuseReload(false);
+ const retried=await f.service.subscriptionToggle({id:b.id,enabled:true});
+ assert.deepEqual(retried.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,false],[b.id,true]]);
+});
+test('内核没跑时切启用集只落盘，不生成配置也不碰控制器',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ const a=await add(f),b=await add(f,'B','https://example.test/b');
+ // 先给 B 准备缓存（无缓存的订阅两条路径都拒绝，见下一条用例），本用例只关心"没跑内核只落盘"。
+ await f.service.reload({id:b.id});await settled(f.service);
+ const state=await f.service.subscriptionToggle({id:b.id,enabled:true});
+ assert.deepEqual(state.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,false],[b.id,true]]);
+ assert.equal(f.swaps.length,0,'没跑内核就不生成新配置');
+ assert.equal(f.requests.some(r=>r.path==='/configs?force=true'),false,'不碰控制器');
+ assert.equal(JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions.find(s=>s.enabled).id,b.id);
+});
+test('无缓存的订阅两条路径都不许启用（t5 F5）：没跑内核时也不落盘',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ const a=await add(f),b=await add(f,'B','https://example.test/b');
+ // 内核没跑：同样拒绝，且绝不落盘（否则下次 start 会带着空 provider 起来）。
+ await assert.rejects(f.service.subscriptionToggle({id:b.id,enabled:true}),error=>error.code==='SUBSCRIPTION_NO_CACHE');
+ assert.deepEqual(JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions.map(s=>[s.id,s.enabled]),
+  [[a.id,true],[b.id,false]],'被拒时磁盘上的启用集不变');
+ // 跑起来以后同一条也拒绝（两条路径语义一致），并且不去写配置。
+ await f.service.reload();await settled(f.service);await f.service.start();
+ await assert.rejects(f.service.subscriptionToggle({id:b.id,enabled:true}),error=>error.code==='SUBSCRIPTION_NO_CACHE');
+ assert.equal(f.swaps.length,0,'被拒时不写配置');
+ assert.equal(f.stats().up,true,'内核照旧在原配置上跑');
+});
+test('订阅更新进行中不许切启用集：SUBSCRIPTION_UPDATING，且不动现有启用项',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ const a=await add(f),b=await add(f,'B','https://example.test/b');
+ const release=f.block();
+ await f.service.reload({id:b.id});
+ await assert.rejects(f.service.subscriptionToggle({id:a.id,enabled:false}),error=>error.code==='SUBSCRIPTION_UPDATING');
+ release();await settled(f.service);
+ assert.equal(JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions.find(s=>s.enabled).id,a.id);
 });
 test('duplicate submissions and duplicate refresh clicks cannot create duplicate work',async()=>{
  const f=fixture();await f.service.save(kernel);
