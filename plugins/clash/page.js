@@ -431,7 +431,7 @@
   return `<div class="combo"><span class="combo-label">${label}</span>
    <button type="button" class="combo-trigger" id="${id}" role="combobox" aria-haspopup="listbox" aria-expanded="false"
     aria-controls="${id}-listbox" data-action="open-${id}" ${disabled?'disabled aria-disabled="true"':''} title="${esc(disabled?(reasonText||'不可用'):'')}">
-    ${icon?`<span class="lb-ico" aria-hidden="true">${esc(icon)}</span>`:''}<span class="trigger-text">${esc(plain)}</span>${delay!=null?`<span class="trigger-delay n-delay ${delay.kind}">${esc(delay.text)}</span>`:''}
+    <span class="lb-ico" aria-hidden="true">${esc(icon)}</span><span class="trigger-text">${esc(plain)}</span>${delay!=null?`<span class="trigger-delay n-delay ${delay.kind}">${esc(delay.text)}</span>`:''}
     ${CHEV}</button>
    ${disabled&&reasonText?`<span class="reason">${esc(reasonText)}</span>`:''}</div>`;
  }
