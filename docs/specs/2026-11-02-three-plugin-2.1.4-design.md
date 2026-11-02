@@ -130,9 +130,11 @@ B1 删 `loomyCheckinCredit = 400` 与读取侧改写；B2 `CheckinViewState` 增
 
 **门禁（比 2.1.3 严，因为换了基线也换了二进制）**：
 - `git apply --check` 对新基线干净通过；补丁文件命名与基线版本对齐（`magpie-<上游tag>+fish.9.patch`）；
+- **「能 apply」不等于「能跑」**：Phase 2 必须**真编译 + 真跑测试 + 冷启冒烟**三者齐备——上游 2336→2732 有 598 commit / 1410 文件 / +113 635 行的漂移，`pagebridge.js`、`plugins.go`、`plugin/page.go`、`provider/plugin_icon.go` 这类语义漂移比 hunk 冲突更危险；
 - `build-magpie.ps1` 出 exe，核对版本资源（FileVersion / ProductVersion = 新上游版本 + `.9`、ProductName `magpie fish`）；
 - 真机四态冒烟（有台账/无台账/有采集/无采集）+ 冷启 5 次看 `<data>/icons/brand` 是否抖动 + `preinstall-state.json` 首启后存在；
-- 随包 exe 与 2.1.3 **不再逐字节相同**（换了基线），发行说明要写明「本版 magpie.exe 已换上游基线 <tag>」，并给出新旧体积与 sha256 对照。
+- 随包 exe 与 2.1.3 **不再逐字节相同**（换了基线），发行说明要写明「本版 magpie.exe 已换上游基线 <tag>」，并给出新旧体积与 sha256 对照；
+- **交付报告必须含「上游 2336→2732 面向用户的变化摘要」**（5–10 条，只写用户可感知的：新供应商、签到规则、图标、性能、修复），供 `docs/releases/2.1.4.md` 使用——否则用户读到的 2.1.4 只有我们自己的改动。
 
 **B4 先接线**：`runtime.mjs` 在 `seedPreinstalled(...)` 之后调 `recordPreinstallState`，并把 `readPreinstallState` 接进 `pendingPlugins` 计算（实现已在 `feat/2.1.4-magpie-backend` @ `65549f0`，未接线）。
 
