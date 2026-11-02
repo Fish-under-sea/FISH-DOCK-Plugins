@@ -67,8 +67,12 @@ header .lede{margin:var(--gap-xs) 0 0;font-size:var(--fs-note);line-height:var(-
 .board{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--gap-lg);align-items:start}
 main[data-layout=double] .board{grid-template-columns:minmax(0,2fr) minmax(220px,1fr)}
 
-/* ── 卡片原子：14px 圆角 + 1px --line-control，两套布局共用 ── */
-.card{min-width:0;margin:0;padding:var(--gap-lg);border:1px solid var(--line-control);
+/* ── 卡片原子：14px 圆角 + 1px --line-hair，两套布局共用 ──
+   描边语义两分：--line-control 只给可交互控件（输入框、按钮、分段切换器），
+   容器（卡片、分组、面板）用 --line-hair 弱收边——容器的分隔靠面（--layer-1 与
+   --dock-bg 的明度差）承担，描边只负责收边。卡片若也用 control，就跟输入框同权重，
+   扫一眼分不清「这块是容器还是可点区域」。 */
+.card{min-width:0;margin:0;padding:var(--gap-lg);border:1px solid var(--line-hair);
  border-radius:var(--r-card);background:var(--layer-1);box-shadow:inset 0 1px 0 var(--hi)}
 #settings{min-width:0}
 /* fieldset 只做语义与禁用壳：卡片外观由所在的 form 承担，描边才不会被 legend 切开。
