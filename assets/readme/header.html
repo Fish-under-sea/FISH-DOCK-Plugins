@@ -95,8 +95,8 @@ for(const el of document.querySelectorAll('[data-zh]'))el.textContent=el.dataset
       const number=card.querySelector('.number');if(number)number.textContent=v;
       const label=card.querySelector('.metric-label');
       if(label){
-        label.dataset.zh=`Clash · Magpie ${v}`;
-        label.dataset.en=`CLASH · MAGPIE ${v}`;
+        label.dataset.zh=`Clash · Magpie · 飞书 ${v}`;
+        label.dataset.en=`CLASH · MAGPIE · FEISHU ${v}`;
         label.textContent=document.documentElement.lang==='en'?label.dataset.en:label.dataset.zh;
       }
     }
