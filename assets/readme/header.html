@@ -97,6 +97,10 @@ for(const el of document.querySelectorAll('[data-zh]'))el.textContent=el.dataset
       if(label){
         label.dataset.zh=`Clash · Magpie · 飞书 ${v}`;
         label.dataset.en=`CLASH · MAGPIE · FEISHU ${v}`;
+        const params=new URLSearchParams(location.search);
+        const lzh=params.get('lzh'), len=params.get('len');
+        if(lzh)label.dataset.zh=lzh;
+        if(len)label.dataset.en=len;
         label.textContent=document.documentElement.lang==='en'?label.dataset.en:label.dataset.zh;
       }
     }

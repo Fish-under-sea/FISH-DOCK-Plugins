@@ -10,7 +10,7 @@
 <main id="relay">
   <header>
     <h1>中转站探针</h1>
-    <p class="muted">探测由 magpie 本体发出：页面本身连不到网络。判定只看行为指纹（thinking 签名重放、token 计数对账、跨代 tokenizer），不是身份证明。</p>
+    <p class="muted">探测由 magpie 本体发出（页面本身连不到网络）。判定只看行为指纹：thinking 签名重放、token 计数对账、跨代 tokenizer——是行为复核，不是身份证明。</p>
   </header>
 
   <section class="card">
@@ -67,6 +67,22 @@
       <thead><tr><th>探针</th><th>状态</th><th>说明</th></tr></thead>
       <tbody id="probes"></tbody>
     </table>
+  </section>
+
+  <section class="card guide">
+    <details id="guide">
+      <summary>操作教程（点击查看）</summary>
+      <ol>
+        <li>在「目标」里填 <b>Base URL</b>：一般到域名层就够，例如 <code>https://relay.example.com</code>；有的站要带 <code>/v1</code>，以站点文档为准。</li>
+        <li>填 <b>API Key</b>：保存后只留密文，页面不回显；换 Key 直接覆盖。</li>
+        <li><b>主模型</b>填你要验的那个模型名（例如 <code>claude-sonnet-4-5</code>）；<b>对照模型</b>可留空，留空时只用主模型跑三组探针。</li>
+        <li><b>认证方式</b>先用 <code>auto</code>：自动按 <code>x-api-key</code> 与 <code>bearer</code> 各试一次；两个都失败再手动指定。<b>API 版本</b>只在站点要求时填（如 <code>2023-06-01</code>）。</li>
+        <li>点 <b>保存</b> 再点 <b>开始探测</b>：一轮约十几秒到一分钟（取决于超时设置），期间按钮会锁住，可随时 <b>停止</b>。</li>
+        <li>看「结论」：<b>原生一致 / 存疑 / 疑似伪装</b>三档，下面列出每条信号的理由；「三组探针」表里是每条的原始状态。</li>
+        <li>判定只说明「这次请求的行为像不像原生」，<b>不等于</b>站点一定是官方或一定是假的；换模型、换时间段各测一次更稳。</li>
+      </ol>
+      <p class="tip">参考阅读：<a data-open-url="https://docs.anthropic.com/en/api/messages">Anthropic Messages API</a> · <a data-open-url="https://platform.openai.com/docs/api-reference/chat">OpenAI Chat Completions</a>（点链接会用系统浏览器打开，插件页自己不联网）</p>
+    </details>
   </section>
 </main>
 <script src="_magpie/bridge.js"></script>

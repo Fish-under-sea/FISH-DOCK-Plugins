@@ -261,3 +261,18 @@ export function mountRelayPage(bridge) {
 if (typeof window !== "undefined" && window.magpie && typeof document !== "undefined" && document.getElementById("relay")) {
   void mountRelayPage(window.magpie);
 }
+
+// 页面里的外链：插件页帧是 sandbox="allow-scripts"，没有 allow-popups / allow-top-navigation，
+// <a href> 点了不会有反应。统一交给宿主用系统默认浏览器打开（magpie:open-external，只认 http/https）。
+if (typeof document !== "undefined") {
+  document.addEventListener("click", (event) => {
+    const node = event.target instanceof Element ? event.target.closest("[data-open-url]") : null;
+    if (!node) return;
+    event.preventDefault();
+    const url = node.getAttribute("data-open-url") || "";
+    const bridge = globalThis.magpie;
+    if (bridge && typeof bridge.call === "function" && /^https?:\/\//i.test(url)) {
+      void bridge.call("magpie:open-external", { url }).catch(() => {});
+    }
+  });
+}

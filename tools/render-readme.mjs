@@ -11,15 +11,25 @@ const heroVariant = process.env.README_VARIANT || ''
 const outputPrefix = 'config-'
 // 版本号只从 catalog/stable.json 读：README 的 VERSION 卡片与文档里的版本必须同源，
 // 否则发版时改了文档、图片还挂在旧版本上（2.1.2 就这样漏过一次）。
-const catalogVersion = (() => {
+// 三插件可以不同版本（例如只升 Magpie）：大字取最高版，副标题按插件分列。仍然只从 catalog 读。
+const versionInfo = (() => {
   try {
     const catalog = JSON.parse(fs.readFileSync(path.join(root, 'catalog/stable.json'), 'utf8'))
-    const rows = (catalog.plugins || []).filter(row => row.id !== 'fish.feishu' && row.id !== 'fish.ofm')
-    const versions = [...new Set(rows.map(row => row.version))]
-    return versions.length === 1 ? versions[0] : ''
-  } catch { return '' }
+    const rows = (catalog.plugins || []).filter(row => row.id !== 'fish.ofm')
+    if (!rows.length) return null
+    const parse = v => v.split('.').map(n => Number(n) || 0)
+    const cmp = (a, b) => { const A = parse(a), B = parse(b); for (let i = 0; i < 3; i++) { if (A[i] !== B[i]) return A[i] - B[i] } return 0 }
+    const version = rows.map(r => r.version).sort(cmp)[rows.length - 1]
+    const pick = id => (rows.find(r => r.id === id) || {}).version || ''
+    return {
+      version,
+      zh: `C ${pick('fish.clash')} · M ${pick('fish.magpie')} · 飞 ${pick('fish.feishu')}`,
+      en: `C ${pick('fish.clash')} · M ${pick('fish.magpie')} · F ${pick('fish.feishu')}`
+    }
+  } catch { return null }
 })()
-if (!catalogVersion) throw Error('无法从 catalog/stable.json 确定插件版本（Clash 与 Magpie 版本不一致？）')
+if (!versionInfo) throw Error('无法从 catalog/stable.json 确定插件版本')
+const catalogVersion = versionInfo.version
 const edge = process.env.EDGE_BINARY || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'fish-readme-'))
 const browser = spawn(edge, ['--headless=new','--disable-gpu','--disable-gpu-sandbox','--disable-features=CalculateNativeWinOcclusion','--no-first-run','--no-default-browser-check','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'], { stdio:'ignore' })
@@ -39,7 +49,7 @@ try {
   await call('Emulation.setDeviceMetricsOverride',{width:2200,height:1300,deviceScaleFactor:1,mobile:false})
   await call('Emulation.setDefaultBackgroundColorOverride',{color:{r:0,g:0,b:0,a:0}})
   for(const lang of ['zh'])for(const theme of ['light','dark']){
-    await call('Page.navigate',{url:pathToFileURL(path.join(assets,'header.html')).href+`?lang=${lang}&theme=${theme}&variant=${encodeURIComponent(heroVariant)}&version=${encodeURIComponent(catalogVersion)}`})
+    await call('Page.navigate',{url:pathToFileURL(path.join(assets,'header.html')).href+`?lang=${lang}&theme=${theme}&variant=${encodeURIComponent(heroVariant)}&version=${encodeURIComponent(catalogVersion)}&lzh=${encodeURIComponent(versionInfo.zh)}&len=${encodeURIComponent(versionInfo.en)}`})
     await until(()=>evaluate(`document.readyState==='complete' && document.documentElement.lang==='${lang==='en'?'en':'zh-CN'}' && document.documentElement.dataset.theme==='${theme}'`))
     await evaluate('document.fonts.ready.then(()=>true)')
     assert.ok(await evaluate("[...document.images].every(i=>i.complete&&i.naturalWidth>0)"),'图片缺失')
