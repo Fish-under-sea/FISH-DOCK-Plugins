@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2732`，加上 `patches/magpie-v0.1.2732+fish.9.patch`（2.1.4 起；2.1.3 及更早是 `v0.1.2336` + `fish.1–fish.8`，旧补丁留在 `patches/` 备查）。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2732`，加上 `patches/magpie-v0.1.2732+fish.11.patch`（2.1.7 起；2.1.4–2.1.6 是同一基线的 `fish.9` / `fish.10`，2.1.3 及更早是 `v0.1.2336` + `fish.1–fish.8`，旧补丁留在 `patches/` 备查）。
 
 ## 为什么要自己编
 
@@ -30,6 +30,16 @@
 
 素材是拿签到页那批已定稿的图合成的，合的是**根 `<svg>` 上的绘图属性也一起搬**（`fill="currentColor"`、`fill="#CF0A2C"` 这类）。只搬 innerHTML 而不搬根属性，图标会一律变黑——`currentColor` 在 `<img>` 里没有父级可继承，本来恒等于黑，浅色组还要把它落成 `#111111`。
 
+**2.1.7（`fish.11`）让出了 NearToken 的供应商**（issue #22）：`@fish-under-sea/magpie-neartoken` 从 0.1.7 起自己就是 provider 插件（`auth` 设备授权 / `provider.models` / `auth.usage` / `auth.icon`），provider id 仍是 `neartoken`。宿主侧那条 key+URL 供应商还挂在同一个 id 上，就成了盖住插件的那一条——模型表是旧的、卡片是灰立方体、「重新获取模型」还去问站点 `/v1/models`（按令牌分组过滤，很多账号回空）。`internal/neartoken/handoff.go` 的处理：
+
+- 插件在场（`plugin.Listed()` 里有 id 为 `neartoken` 的 provider）时，宿主不再 `provider.Save`、也不再 `catalog.SaveLive`；
+- 登录拿到的令牌交给插件自己的 auth（`plugin.Import`，形状 `type/access/refresh`），页面那八条 `neartoken:*` 改从 `plugin.Auths` 读令牌；
+- 老用户升级时把 `providers.json` 里那条的钥匙搬进插件 auth，搬成功才删那一条；搬不动就留着，钥匙不丢；
+- 断开时撤令牌 + `plugin.SignOut` + 删宿主侧那条与它的模型表；
+- 插件不在场时走老路（一条 key+URL 供应商），页面照旧能用。
+
+判定与迁移都在 `internal/neartoken/handoff.go`，单测在 `handoff_test.go`（5 条，盯住「钥匙归插件」「宿主侧那条会被让出」「插件不在场时保持原样」「断开两处都不留」）。
+
 ## 构建
 
 ```powershell
@@ -40,15 +50,15 @@ python tools\download-go.py
 git clone --filter=blob:none --no-checkout https://github.com/yetone/magpie.git upstream
 git -C upstream fetch --depth=1 origin tag v0.1.2732
 git -C upstream worktree add ..\upstream-2732 v0.1.2732
-git -C ..\upstream-2732 apply --check patches\magpie-v0.1.2732+fish.9.patch
-git -C ..\upstream-2732 apply patches\magpie-v0.1.2732+fish.9.patch
+git -C ..\upstream-2732 apply --check patches\magpie-v0.1.2732+fish.11.patch
+git -C ..\upstream-2732 apply patches\magpie-v0.1.2732+fish.11.patch
 
 # 3) 编（本机没有 make，手跑 release-windows 的两段式）
 #    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
   -UpstreamRoot ..\upstream-2732 `
-  -VersionTag 'v0.1.2732+fish.9' -FileVersion '0.1.2732.9' -ProductName 'magpie fish' `
+  -VersionTag 'v0.1.2732+fish.11' -FileVersion '0.1.2732.11' -ProductName 'magpie fish' `
   -WinresJson ..\upstream-2732\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
@@ -65,8 +75,8 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 | 位置 | 值 |
 |---|---|
-| `magpie version` | `magpie v0.1.2732+fish.9` |
-| FileVersion | `0.1.2732.9`（四段数字，Windows 资源要求） |
+| `magpie version` | `magpie v0.1.2732+fish.11` |
+| FileVersion | `0.1.2732.11`（四段数字，Windows 资源要求） |
 | ProductName | `magpie fish` |
 | FileDescription | `magpie fish (FISH Dock build)` |
 | manifest identity | `ai.usemagpie.magpie.fish` |
