@@ -153,7 +153,7 @@ test('首次登记写清单与标记；再跑一次直接跳过，不动磁盘',
  const text=await utf8(list);
  assert.equal(JSON.parse(text).plugins.length,13);
  const record=JSON.parse(await utf8(marker));
- assert.equal(record.schema,1);
+ assert.equal(record.schema,2);
  assert.equal(record.registered.length,13);
  const before=(await fs.stat(list)).mtimeMs;
  const second=await seedPreinstalled({data});
@@ -162,16 +162,147 @@ test('首次登记写清单与标记；再跑一次直接跳过，不动磁盘',
  assert.equal((await fs.stat(list)).mtimeMs,before,'跳过时不动清单');
 });
 
-test('标记已在时连缺插件都不补：用户移除过的不加回来',async()=>{
+// #71 起「标记已在」不再等于「什么都不做」：marker 记基线，基线没变时对用户删过
+// 的项不补（skipped、不写盘），但 registered 按清单实际内容说真话。
+test('基线对齐后：marker 在、用户删过的项不加回来，registered 只报真在清单里的',async()=>{
  const {data,list,marker}=await sandbox();
- await fs.writeFile(marker,JSON.stringify({schema:1,registered:[]})+'\n');
- const text=JSON.stringify({plugins:[]},null,2)+'\n';
- await fs.writeFile(list,text);
+ await seedPreinstalled({data});
+ // 用户删掉 qoder：marker 的基线仍对齐，差集为空 → 不补、不写盘。
+ const afterFirst=JSON.parse(await utf8(list));
+ afterFirst.plugins=afterFirst.plugins.filter(entry=>entry.spec!=='@magpie-community/opencode-qoder-auth@latest');
+ await fs.writeFile(list,JSON.stringify(afterFirst,null,2)+'\n');
+ const before=(await fs.stat(list)).mtimeMs;
+ const markerBefore=(await fs.stat(marker)).mtimeMs;
  const result=await seedPreinstalled({data});
- assert.equal(result.skipped,true);
- assert.equal(await utf8(list),text);
+ assert.equal(result.skipped,true,'基线没变，用户删过的项不加回来');
+ assert.equal(result.added.length,0);
+ assert.equal((await fs.stat(list)).mtimeMs,before,'不动清单');
+ assert.equal((await fs.stat(marker)).mtimeMs,markerBefore,'不动 marker');
+ assert.equal(result.registered.length,12,'registered 不含被删的 qoder');
+ assert.equal(result.registered.includes('@magpie-community/opencode-qoder-auth'),false);
 });
 
+// 老数据根迁移（#71 的核心场景）：2.1.3 的 marker 只有 13 项 registered（没有
+// meoo），基线升级后按差集补登记 Meoo，旧条目与用户自己的条目都不动。
+test('老 marker（13 项无 meoo）+ 新基线（含 meoo）→ 补登记 meoo 的 git spec',async()=>{
+ const {data,list,marker}=await sandbox();
+ // 2.1.3 的真实形态：schema 1，registered 里没有 meoo。
+ const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>item.package);
+ await fs.writeFile(marker,JSON.stringify({schema:1,registered:legacy})+'\n');
+ // 那时的 plugins.json：13 减 meoo 家，外加用户自己的本地插件。
+ const specs=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>({spec:item.spec}));
+ specs.push({spec:'C:/data/plugins/page-checkin'});
+ await fs.writeFile(list,JSON.stringify({plugins:specs},null,2)+'\n');
+ const result=await seedPreinstalled({data});
+ assert.equal(result.skipped,false);
+ assert.deepEqual(result.added,['magpie-plugin-meoo-agent'],'只补 meoo 一家');
+ const manifest=JSON.parse(await utf8(list));
+ const meoo=manifest.plugins.filter(entry=>entry.spec==='github:RexVane/magpie-plugin-meoo-agent');
+ assert.equal(meoo.length,1,'git spec 写进清单且只有一条');
+ assert.equal(manifest.plugins.some(entry=>entry.spec==='C:/data/plugins/page-checkin'),true,'用户自己的条目不动');
+ assert.equal(manifest.plugins.length,14);
+ // marker 升级到 schema 2，baseline 对齐到当前 13 家基线。
+ const record=JSON.parse(await utf8(marker));
+ assert.equal(record.schema,2);
+ assert.equal(record.baseline.length,13);
+ assert.deepEqual(record.baseline,PREINSTALLED.map(item=>item.spec));
+ assert.equal(record.registered.length,13,'registered 与清单一致');
+ // 再跑一次：基线已对齐 → 幂等，什么都不写。
+ const before=(await fs.stat(list)).mtimeMs;
+ const markerBefore=(await fs.stat(marker)).mtimeMs;
+ const again=await seedPreinstalled({data});
+ assert.equal(again.skipped,true);
+ assert.equal(again.added.length,0);
+ assert.equal((await fs.stat(list)).mtimeMs,before,'重复启动不写清单');
+ assert.equal((await fs.stat(marker)).mtimeMs,markerBefore,'重复启动不写 marker');
+ const final=JSON.parse(await utf8(list));
+ assert.equal(final.plugins.filter(entry=>entry.spec==='github:RexVane/magpie-plugin-meoo-agent').length,1,'spec 不重复');
+});
+
+// 旧格式 marker 容忍：坏 JSON、非对象、baseline 缺失都按「基线为空」全量补登记，
+// 不抛错；addPreinstalled 幂等，已有条目不会重复。
+test('旧格式与坏 marker 都不抛错，按缺字段处理',async()=>{
+ for(const bad of ['not json',{'schema':1,'registered':['x']},[1,2],null]){
+  // 每种坏 marker 用全新沙箱：老根上 marker 已是 schema 2、清单已齐，测不出退化路径。
+  const {data,list}=await sandbox();
+  await fs.writeFile(list,JSON.stringify({plugins:[{spec:'@magpie-community/opencode-raccoon-auth@latest'}]},null,2)+'\n');
+  await fs.writeFile(path.join(data,markerName),typeof bad==='string'?bad:JSON.stringify(bad));
+  const result=await seedPreinstalled({data});
+  assert.equal(result.skipped,false,'退化为全量补登记');
+  assert.equal(result.added.length,12,'已登记的 raccoon 不重复，补其余 12 家');
+  const manifest=JSON.parse(await utf8(list));
+  assert.equal(manifest.plugins.length,13,'补齐后正好 13 条');
+  const record=JSON.parse(await utf8(path.join(data,markerName)));
+  assert.equal(record.schema,2,'补登记后 marker 升级到 schema 2');
+ }
+});
+
+// #71 S3：状态文件说真话。registered 是补登记后清单里真正在案的包，added 是本次
+// 实际补上的；不再是「拿基线抄一遍」。
+test('状态文件的 registered/added 取实际登记结果，与 plugins.json 一致',async()=>{
+ const {data,list,marker}=await sandbox();
+ // 老根：12 家已在（无 meoo），走一次补登记。
+ const specs=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>({spec:item.spec}));
+ await fs.writeFile(list,JSON.stringify({plugins:specs},null,2)+'\n');
+ const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>item.package);
+ await fs.writeFile(marker,JSON.stringify({schema:1,registered:legacy})+'\n');
+ await seedPreinstalled({data});
+ const state=await readPreinstallState({data});
+ assert.deepEqual(state.added,['magpie-plugin-meoo-agent'],'added 只记本次补的');
+ assert.equal(state.registered.length,13);
+ assert.deepEqual(state.registered,PREINSTALLED.map(item=>item.package));
+ const manifest=JSON.parse(await utf8(list));
+ // registered 按基线序、清单按写入序：比集合，再核数——口径与 registeredFrom 一致。
+ const inList=new Set(manifest.plugins.filter(entry=>PREINSTALLED.some(item=>item.spec===entry.spec)).map(entry=>entry.spec));
+ assert.equal(inList.size,13);
+ for(const item of PREINSTALLED)assert.equal(inList.has(item.spec),true,'清单里 13 家基线都在');
+});
+
+// #71 S3 的另一半：ensurePreinstallState 拿到空 registered 时照实写，不再拿基线
+// 顶上（老版本这里会把 13 家全写进去，撒谎的来源之一）。
+test('ensurePreinstallState 对 seeded.registered=[] 照实写空',async()=>{
+ const {data}=await sandbox();
+ await ensurePreinstallState({data,seeded:{registered:[],added:[]},at:new Date('2026-11-04T12:00:00Z')});
+ const state=await readPreinstallState({data});
+ assert.deepEqual(state.registered,[],'没有登记在案就写空，不拿基线凑数');
+ assert.deepEqual(state.added,[]);
+});
+
+// 新装用户行为不变：没有 marker、没有清单 → 一次性登记 13 家，marker 与状态文件
+// 与旧版产物等价（marker 多了 baseline 字段）。
+test('新装用户：首启登记 13 家，二启幂等',async()=>{
+ const {data}=await sandbox();
+ const first=await seedPreinstalled({data});
+ assert.equal(first.skipped,false);
+ assert.equal(first.added.length,13);
+ assert.deepEqual(first.registered,PREINSTALLED.map(item=>item.package));
+ const state=await readPreinstallState({data});
+ assert.deepEqual(state.registered,PREINSTALLED.map(item=>item.package));
+ assert.equal(state.added.length,13);
+ const second=await seedPreinstalled({data});
+ assert.equal(second.skipped,true);
+ assert.equal(second.added.length,0);
+ assert.deepEqual(second.registered,PREINSTALLED.map(item=>item.package));
+});
+
+// zen-free 等移出基线的项：增量补登记路径从头到尾不碰它们。
+test('zen-free 已装时不被增量补登记触碰（不卸载、不改写）',async()=>{
+ const {data,list,marker}=await sandbox();
+ const specs=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>({spec:item.spec}));
+ specs.unshift({spec:'@magpie-community/opencode-zen-free-auth@latest',off:false,options:{collapsed:true}});
+ await fs.writeFile(list,JSON.stringify({plugins:specs},null,2)+'\n');
+ const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>item.package);
+ await fs.writeFile(marker,JSON.stringify({schema:1,registered:legacy})+'\n');
+ await seedPreinstalled({data});
+ const manifest=JSON.parse(await utf8(list));
+ const zen=manifest.plugins.filter(entry=>entry.spec==='@magpie-community/opencode-zen-free-auth@latest');
+ assert.equal(zen.length,1,'zen-free 还在');
+ assert.equal(zen[0].off,false);
+ assert.deepEqual(zen[0].options,{collapsed:true});
+ assert.equal(manifest.plugins.length,14,'13 基线 + 1 zen-free，不多不少');
+});
+
+// 已有清单里的其它条目在登记后字节不变，且留一份原文件备份
 test('已有清单里的其它条目在登记后字节不变，且留一份原文件备份',async()=>{
  const {data,list}=await sandbox();
  const raw=JSON.stringify({plugins:[{spec:'C:/data/plugins/page-checkin',options:{collapsed:true}}]},null,2)+'\n';

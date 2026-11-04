@@ -5,11 +5,12 @@ import {writeManifest} from './page-seed.mjs';
 
 // 出厂预装的社区供应商插件（#11 的预装基线）。包名与顺序以插件页的显示为准：
 // 上游把内置订阅陆续交给 @magpie-community 的插件承载，这些包不在 magpie 本体里。
-// 宿主只在第一次拉起 magpie 时登记它们，之后不再插手——用户自己停用或移除的，
-// 不会被加回来。上游的更新循环发现「plugins.json 里有 spec、plugins/ 下没有这个
+// 宿主每次拉起 magpie 时按「当前基线 − 已登记」增量补登记（#71）：基线新增的
+// （2.1.4 才进来的 Meoo）会补上；用户自己停用或移除的、以及已对齐过的，不会加
+// 回来。上游的更新循环发现「plugins.json 里有 spec、plugins/ 下没有这个
 // 包」时会按 spec 自动安装（internal/plugin/plugin_missing_test.go 的
 // TestMissingPluginsInstalledAgain），所以这里只写包名：不下载、不占插件包体积，
-// 首次启动由 magpie 自己装，失败下次再试。
+// 登记完由 magpie 自己装，失败下次再试。
 //
 // 每条是 [stem, 显示名] 或 [stem, 显示名, 显式规格]。缺第三条时按
 // @magpie-community/opencode-<stem>-auth 拼；不在这条命名规则里的插件（Meoo 就是）
@@ -102,9 +103,35 @@ export function addPreinstalled({raw, packages = PREINSTALLED} = {}) {
  return {changed: true, text: JSON.stringify(manifest, null, 2) + '\n', added};
 }
 
-// 登记过一次就留标记：之后无论 plugins.json 怎么变（用户移除、装回别的版本），
-// 这里都不再动手。标记只认「登记完成」，写失败下次重来。
+// 登记完成就留标记（#71 起带 baseline）：marker 记下「上次登记对齐到哪份基线」，
+// 下次启动只对差集补登记；无差集时连 plugins.json 都不读不写。旧版 marker 只有
+// registered——按「基线为空」处理，全部当前项算差集。写失败下次重来。
 export const markerName = '.fish-dock-preinstalled.json';
+
+// 读 marker，宽容旧格式与坏 JSON：认不出的内容一律当「没有对齐记录」，
+// 让差集退化为全量补登记（addPreinstalled 幂等，只会补缺席的），不抛错。
+export async function readPreinstallMarker(data) {
+  if (typeof data !== 'string' || !data) return {baseline: [], legacy: true};
+  let text;
+  try {
+    text = await fs.readFile(path.join(data, markerName), 'utf8');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return null; // 没写过 marker：全新环境。
+  }
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { parsed = null; }
+  // schema 2 起才有 baseline；旧格式（schema 1，只有 registered）、非对象、
+  // 坏 JSON 都按「基线为空」处理。
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.baseline)) {
+    return {baseline: [], legacy: true};
+  }
+  const baseline = [];
+  for (const value of parsed.baseline) {
+    if (typeof value === 'string' && value.trim()) baseline.push(value.trim());
+  }
+  return {baseline, legacy: false};
+}
 
 // #16：把「已登记哪几家、登记于何时」落成一份可读的状态文件。它不假装知道
 // 安装进度——那要装完才知道（上游的更新循环在后台按 npm spec 装）——但它给
@@ -153,26 +180,55 @@ export async function readPreinstallState({data} = {}) {
  }
 }
 
-// ensurePreinstallState 是启动时补那一次写：登记本身有标记文件兜底（只写一次），
+// ensurePreinstallState 是启动时补那一次写：登记有 marker 兜底（按基线增量补），
 // 状态文件却是每次启动都可能缺的——清过、写到一半、或者登记发生在 2.1.3 之前
 // （那时还没有这份文件）。缺了就在这里补一份，让 host 的 brand:status 有据可查
 // （「正在准备 N 个供应商插件」的 N 由 Go 侧按真实安装算，这里只负责让登记名单在）。
 // 已经有就什么都不做：不刷 registeredAt，也不改已经写下的 added。
+// registered/added 取 seedPreinstalled 的实际结果（#71）：seeded 为 null（拿不到
+// 本次登记结果的老路径）才退回按基线推导；seeded.registered 是空数组属于真实
+// 情况（清单里一家都没有），照实写，不再拿基线顶上。
 export async function ensurePreinstallState({data, seeded = null, at = new Date()} = {}) {
  if (typeof data !== 'string' || !data) return null;
  if (await readPreinstallState({data})) return null;
- const registered = seeded?.registered?.length ? seeded.registered : PREINSTALLED.map((item) => item.package);
+ const registered = seeded?.registered ?? PREINSTALLED.map((item) => item.package);
  return recordPreinstallState({data, registered, added: seeded?.added ?? [], at});
 }
 
+// registeredFrom（#71）：从 plugins.json 的原文算「基线里真正登记在案」的包名。
+// 命中口径与 addPreinstalled 一致——npm 包名匹配，或整串 spec 相同（git spec 算不出
+// 包名，只能按整串比）。清单读不出来（不存在/空/坏 JSON）时按「一个都没有」算，
+// 不抛错：registered 宁可少报也不编造。
+export function registeredFrom(raw, packages = PREINSTALLED) {
+  let manifest = null;
+  try {
+    const body = String(raw ?? '').replace(/^\uFEFF/, '');
+    manifest = body.trim() ? JSON.parse(body) : null;
+  } catch {
+    manifest = null;
+  }
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || !Array.isArray(manifest.plugins)) return [];
+  const seen = new Set();
+  for (const entry of manifest.plugins) {
+    if (!entry || typeof entry !== 'object' || typeof entry.spec !== 'string' || !entry.spec.trim()) continue;
+    seen.add(entry.spec.trim());
+    const name = packageOf(entry.spec);
+    if (name) seen.add(name);
+  }
+  return packages
+    .filter((item) => seen.has(item.package) || seen.has(item.spec))
+    .map((item) => item.package);
+}
+
 export async function seedPreinstalled({data, packages = PREINSTALLED, onPhase = () => {}, signal} = {}) {
- const marker = path.join(data, markerName);
- try {
-  await fs.stat(marker);
-  return {skipped: true, added: [], registered: []};
- } catch (error) {
-  if (error.code !== 'ENOENT') throw error;
- }
+ const markerFile = path.join(data, markerName);
+ // #71：登记不再是「见 marker 即跳过」。marker 里记的是上次对齐的基线 spec，
+ // 与当前基线求差集：差集为空 → 什么都不写（marker mtime 不变，只读清单把
+ // registered 说真话）；有差集（基线新增，或旧格式 marker）→ 只补差集；用户删过、
+ // 又不在当前基线里的项（比如 zen-free）从头到尾不在待补名单里，不会被卸载或改写。
+ const marker = await readPreinstallMarker(data);
+ const baseline = marker ? new Set(marker.baseline) : null;
+ const pending = baseline ? packages.filter((item) => !baseline.has(item.spec)) : packages;
  const file = path.join(data, 'plugins.json');
  let raw;
  try {
@@ -180,17 +236,36 @@ export async function seedPreinstalled({data, packages = PREINSTALLED, onPhase =
  } catch (error) {
   if (error.code !== 'ENOENT') throw error;
  }
- const next = addPreinstalled({raw, packages});
+ if (!pending.length) {
+  return {skipped: true, added: [], registered: registeredFrom(raw, packages)};
+ }
+ const next = addPreinstalled({raw, packages: pending});
  if (next.changed) {
   onPhase('prepare-data');
   signal?.throwIfAborted();
   await writeManifest(file, next.text, signal);
  }
  signal?.throwIfAborted();
- const registered = packages.map((item) => item.package);
- const record = JSON.stringify({schema: 1, registered}, null, 2) + '\n';
- try {
-  await fs.writeFile(marker, record, {flag: 'wx', mode: 0o600});
+ // registered 说真话（#71）：按补登记后的 plugins.json 实际内容算——基线里哪几家
+ // 真的在清单里（包名或整串 spec 命中）就记谁，用户删掉的不记，不再由基线推导。
+ const registered = registeredFrom(next.text, packages);
+ const record = JSON.stringify({
+  schema: 2,
+  baseline: packages.map((item) => item.spec),
+  registered,
+ }, null, 2) + '\n';
+ if (marker) {
+  // marker 已在（旧格式，或基线又变了）：原子换成新内容，升级到 schema 2。
+  // 两个实例并发换的内容一致，rename 各自原子，谁先落都一样。
+  const temporary = `${markerFile}.${randomUUID()}.tmp`;
+  try {
+   await fs.writeFile(temporary, record, {mode: 0o600});
+   await fs.rename(temporary, markerFile);
+  } finally {
+   await fs.unlink(temporary).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+  }
+ } else try {
+  await fs.writeFile(markerFile, record, {flag: 'wx', mode: 0o600});
  } catch (error) {
   // 另一个实例抢先把同一份登记写完：结果一致，按成功处理。
   if (error.code !== 'EEXIST') throw error;
