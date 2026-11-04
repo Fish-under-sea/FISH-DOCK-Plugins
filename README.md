@@ -12,18 +12,18 @@
 </picture>
 
 <p>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.8"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：Clash 2.1.8 · Magpie 2.1.8 · 飞书 2.1.5" width="23%"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.9"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：三插件 2.1.9" width="23%"></picture></a>
   <a href="#plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-desktop-zh-dark.png"><img src="assets/readme/config-stat-desktop-zh-light.png" alt="PLUGINS：三个独立插件" width="23%"></picture></a>
   <a href="#packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-mail-zh-dark.png"><img src="assets/readme/config-stat-mail-zh-light.png" alt="PACKAGES：三个 npm 单包" width="23%"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-Dock"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-channels-zh-dark.png"><img src="assets/readme/config-stat-channels-zh-light.png" alt="HOST API：1，兼容 FISH Dock 2.0.0+" width="23%"></picture></a>
 </p>
 
-<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="插件适配代码许可 MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="随包 mihomo 许可 GPL-3.0"> <img src="https://img.shields.io/badge/Plugins-2.1.8-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="Clash 2.1.8 · Magpie 2.1.8 · 飞书 2.1.5"></p>
+<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="插件适配代码许可 MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="随包 mihomo 许可 GPL-3.0"> <img src="https://img.shields.io/badge/Plugins-2.1.9-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="三插件 2.1.9"></p>
 <p><strong>FISH Plugins &amp; Configuration · 插件配置仓</strong><br>官方插件、配置说明与发行入口；按需安装，独立运行。</p>
 
 <p>
   <a href="#get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-download-zh-dark.png"><img src="assets/readme/key-download-zh-light.png" alt="下载 / Releases" height="40"></picture></a>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.8"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.9"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-issues-zh-dark.png"><img src="assets/readme/key-issues-zh-light.png" alt="反馈 / Issues" height="40"></picture></a>
 </p>
 
@@ -35,23 +35,32 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-本版**两个插件**：**Magpie 2.1.7 → 2.1.8**（追一次上游到 `v0.1.2799`，补齐 NearToken 分组墙契约）、**Clash 2.1.5 → 2.1.8**（测速不再被宿主的 15 秒掐断、换订阅不用再自己重启内核、关掉 geo 自动更新）。飞书保持 2.1.5。要求 **FISH Dock ≥ 2.0.0**。完整改动见 [2.1.8 发行说明](docs/releases/2.1.8.md)。
+本版**三个插件统一到 2.1.9**：**Clash** 修「首启自启动拉不起内核」（activate 不再被慢活占预算、内核路径自愈、起内核三次重试），**Magpie** 补 #24 的模型分区（供应商页图像 / 视频 / 语音 / 向量四块，模型列表只留 LLM），**飞书** 只随版本统一。要求 **FISH Dock ≥ 2.0.0**。完整改动见 [2.1.9 发行说明](docs/releases/2.1.9.md)。
 
-**2.1.8 改了什么**
+**2.1.9 改了什么**
 
-- **Clash：测速不再变成「未识别错误」**：旧实现「并发 6 + 每节点 5 秒」，37 个节点要 30 秒以上，超过宿主给插件的 15 秒 RPC 上限，宿主回一句没有错误码的「插件响应超时」，页面只能折叠成「未识别错误」。现在测速自己带预算（并发 8 / 单节点 2.5 秒 / 整段 9 秒封顶），来不及测的节点如实标成未测；宿主那两句没码的话也有了专门文案。
-- **Clash：换订阅启用失败时插件自己重启内核**：热重载（`PUT /configs?force=true`）失败不再把「请重启内核」丢给用户——插件立刻按新启用集重启一次，两次都失败才回滚并报错。
-- **Clash：关掉 `geo-auto-update`**：开着它时内核会在启动或重载那一刻去 GitHub 下 geosite/geoip，网络不通就直接 `Parse config error` 退出（本地实测 20 秒后 fatal）。geo 文件本来就随包发布，启动时由 `ensureGeoData` 落地。
-- **Magpie：追上游 `v0.1.2732` → `v0.1.2799`**：补丁 `fish.12`，`git apply -3` 只剩 `core_budget_test.go` 一处冲突，按上游规矩取实测值（1,534,429）。
-- **Magpie：NearToken 分组墙契约**：`neartoken:state` 多回 `groupList`（站点原文组名 + 倍率 + 该组能聊的模型数 + ref，没读过目录时是空数组）与 `tokenName`；页面据此画可点分组墙，点一下写 `disabledGroups`，插件侧自己过滤模型。
-- **包与版本**：Clash **2.1.8**、Magpie **2.1.8**、飞书 2.1.5；`magpie.exe` 版本资源 `0.1.2799.12`（ProductName `magpie fish`）；`page-checkin` 0.2.6、`page-relay-probe` 0.1.2。
+- **Clash：首启自启动**：`activate()` 里恢复系统代理、探控制器这些慢活原来排在自启动前面，冷启时把宿主给插件进程的 5–8 秒预算吃光（`plugin-failures.log` 里「握手超时，已按未运行处理」就是它）；现在 activate 立刻返回，自启动在后台跑，并且 0 / 1.5 / 4 秒各试一次。还补了内核路径自愈：`clash.json` 里的内核指向上一版插件目录、文件已经不在了，就自动改回包内内核。
+- **Magpie：#24 四类模型各就各位**：`catalog.Model` 增加 `Audio` / `Embedding`，`Chat()` 四类都不算能聊的；供应商编辑页把「图像模型」扩成**图像 / 视频 / 语音 / 向量**四块（同一套 chip 与勾选逻辑，各自记自己的取消勾选集合）；供应商列表与 Agent 模型列表**只留对话模型**；插件侧 `capabilities.output` 的 image / video / audio / embedding 直接映射，不用再改一次。
+- **Magpie：#23 分组墙**沿用 2.1.8 的 `groupList` 与 `tokenName`，本版只随口径验过一遍。
+- **飞书**：无代码改动，版本号随统一到 2.1.9。
+- **包与版本**：Clash **2.1.9**、Magpie **2.1.9**、飞书 **2.1.9**；`magpie.exe` 版本资源 `0.1.2799.13`（ProductName `magpie fish`）。
+
+> ⚠️ **#24 还差两块**：`设置 → 图像` 那种**模型选择入口**（视频 / 语音 / 向量各一个）没做，`/v1/models` 的 `kind` 还没补 `audio` / `embedding`——见发行说明「未验证与遗留」。
 
 > ℹ️ **2.1.3 的已知限制已在 2.1.4 修复**：讯飞今日积分显示 400 的问题（读取侧补偿）随 #18 的 B1 移除，读不到真实积分时显示「未告知」。
 
 <details>
-<summary><b>2.1.7 / 2.1.6 / 2.1.5 / 2.1.2 / 2.1.0 改了什么</b></summary>
+<summary><b>2.1.8 / 2.1.7 / 2.1.6 / 2.1.5 / 2.1.2 / 2.1.0 改了什么</b></summary>
 
 <br>
+
+**2.1.8 改了什么**
+
+- **Clash：测速不再变成「未识别错误」**：旧实现「并发 6 + 每节点 5 秒」，37 个节点要 30 秒以上，超过宿主给插件的 15 秒 RPC 上限，宿主回一句没有错误码的「插件响应超时」，页面只能折叠成「未识别错误」。现在测速自己带预算（并发 8 / 单节点 2.5 秒 / 整段 9 秒封顶），来不及测的节点如实标成未测。
+- **Clash：换订阅启用失败时插件自己重启内核**：热重载失败不再把「请重启内核」丢给用户——插件立刻按新启用集重启一次，两次都失败才回滚并报错。
+- **Clash：关掉 `geo-auto-update`**：开着它时内核会在启动或重载那一刻去 GitHub 下 geosite/geoip，网络不通就直接 `Parse config error` 退出。
+- **Magpie：追上游 `v0.1.2732` → `v0.1.2799`**：补丁 `fish.12`，`git apply -3` 只剩 `core_budget_test.go` 一处冲突，按上游规矩取实测值（1,534,429）。
+- **Magpie：NearToken 分组墙契约**：`neartoken:state` 多回 `groupList` 与 `tokenName`。
 
 **2.1.7 改了什么（仅 Magpie）**
 
@@ -158,9 +167,9 @@
 
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
-| 飞书 2.1.5 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.5/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu) |
-| Clash 2.1.8 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.8/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.1.4) |
-| Magpie 2.1.8 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.8/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.1.4) |
+| 飞书 2.1.9 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.9/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu) |
+| Clash 2.1.9 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.9/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.1.4) |
+| Magpie 2.1.9 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.9/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.1.4) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-packages-dark.png"><img src="assets/readme/section-packages-light.png" alt="PACKAGES · npm 单包" width="100%"></picture></h2>
 
