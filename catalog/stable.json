@@ -9,12 +9,12 @@
         "WTStarMark",
         "FISH"
       ],
-      "version": "2.1.9",
+      "version": "2.2.0",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.9/feishu.fish-plugin",
-      "sha256": "a5735cbf6f24057471617ceed73f00ef67f883eae0517c4506ed00a9f8bc9605",
-      "bytes": 36370,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/feishu.fish-plugin",
+      "sha256": "39aeda0afb7cc945dcfb7ea0eacb969672f10d2d69b6c6410fe73faef59f0bd8",
+      "bytes": 36368,
       "dependencies": [
         "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
@@ -28,12 +28,12 @@
         "Elysia395",
         "FISH"
       ],
-      "version": "2.1.9",
+      "version": "2.2.0",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.9/clash.fish-plugin",
-      "sha256": "51a4671bfaea989203352114c1ff8d58b77d189c5a65aff80496f3061c810a28",
-      "bytes": 17178570,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/clash.fish-plugin",
+      "sha256": "df71fd3f1a4bf950f2c2aac99fb88ad3371164839f49af7d94dafb071038547b",
+      "bytes": 17178572,
       "dependencies": [
         "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
@@ -47,12 +47,12 @@
         "FISH",
         "Jassdingk"
       ],
-      "version": "2.1.9",
+      "version": "2.2.0",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.9/magpie.fish-plugin",
-      "sha256": "6f7addd5187839261704d5a0c7aac84c46aaf8006f01a7fe8c8209e3aee85f2c",
-      "bytes": 33739638,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/magpie.fish-plugin",
+      "sha256": "6bdd24353fa015b951cb859bf7d8ceb597e47c5e5b36a730bd8df391145584ec",
+      "bytes": 33861986,
       "dependencies": [
         "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"

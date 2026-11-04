@@ -1,6 +1,6 @@
 {
   "name": "page-relay-probe",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "中转站真伪检测：页面在 magpie 窗口里，探测由 magpie 本体发出",
   "type": "module",
@@ -8,7 +8,7 @@
     "test": "node --test page/app.test.mjs"
   },
   "magpie": {
-    "icon": "page/icon.svg",
+    "icon": "page/icon.png",
     "page": {
       "title": "中转站探针",
       "titles": {

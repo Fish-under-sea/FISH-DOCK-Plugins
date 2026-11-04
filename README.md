@@ -12,18 +12,18 @@
 </picture>
 
 <p>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.9"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：三插件 2.1.9" width="23%"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.2.0"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：三插件 2.2.0" width="23%"></picture></a>
   <a href="#plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-desktop-zh-dark.png"><img src="assets/readme/config-stat-desktop-zh-light.png" alt="PLUGINS：三个独立插件" width="23%"></picture></a>
   <a href="#packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-mail-zh-dark.png"><img src="assets/readme/config-stat-mail-zh-light.png" alt="PACKAGES：三个 npm 单包" width="23%"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-Dock"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-channels-zh-dark.png"><img src="assets/readme/config-stat-channels-zh-light.png" alt="HOST API：1，兼容 FISH Dock 2.0.0+" width="23%"></picture></a>
 </p>
 
-<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="插件适配代码许可 MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="随包 mihomo 许可 GPL-3.0"> <img src="https://img.shields.io/badge/Plugins-2.1.9-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="三插件 2.1.9"></p>
+<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="插件适配代码许可 MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="随包 mihomo 许可 GPL-3.0"> <img src="https://img.shields.io/badge/Plugins-2.2.0-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="三插件 2.2.0"></p>
 <p><strong>FISH Plugins &amp; Configuration · 插件配置仓</strong><br>官方插件、配置说明与发行入口；按需安装，独立运行。</p>
 
 <p>
   <a href="#get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-download-zh-dark.png"><img src="assets/readme/key-download-zh-light.png" alt="下载 / Releases" height="40"></picture></a>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.9"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.2.0"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-issues-zh-dark.png"><img src="assets/readme/key-issues-zh-light.png" alt="反馈 / Issues" height="40"></picture></a>
 </p>
 
@@ -35,24 +35,28 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-本版**三个插件统一到 2.1.9**：**Clash** 修「首启自启动拉不起内核」（activate 不再被慢活占预算、内核路径自愈、起内核三次重试），**Magpie** 补 #24 的模型分区（供应商页图像 / 视频 / 语音 / 向量四块，模型列表只留 LLM），**飞书** 只随版本统一。要求 **FISH Dock ≥ 2.0.0**。完整改动见 [2.1.9 发行说明](docs/releases/2.1.9.md)。
+本版**三个插件统一到 2.2.0**：**Magpie** 补完 #24 的两块尾巴（设置页「语音 / 向量模型」选择器、`/v1/models` 的 `kind: audio/embedding`），外加三件新事——签到未告知积分补惯例值 **+100**、路由组新增**「图片输入」声明**（三态，与推理档位同款）、中转站探针的**图标分工修正**（侧边栏仍是图钉，插件列表大图恢复品牌立绘）。要求 **FISH Dock ≥ 2.0.0**。完整改动见 [2.2.0 发行说明](docs/releases/2.2.0.md)。
 
-**2.1.9 改了什么**
+**2.2.0 改了什么**
 
-- **Clash：首启自启动**：`activate()` 里恢复系统代理、探控制器这些慢活原来排在自启动前面，冷启时把宿主给插件进程的 5–8 秒预算吃光（`plugin-failures.log` 里「握手超时，已按未运行处理」就是它）；现在 activate 立刻返回，自启动在后台跑，并且 0 / 1.5 / 4 秒各试一次。还补了内核路径自愈：`clash.json` 里的内核指向上一版插件目录、文件已经不在了，就自动改回包内内核。
-- **Magpie：#24 四类模型各就各位**：`catalog.Model` 增加 `Audio` / `Embedding`，`Chat()` 四类都不算能聊的；供应商编辑页把「图像模型」扩成**图像 / 视频 / 语音 / 向量**四块（同一套 chip 与勾选逻辑，各自记自己的取消勾选集合）；供应商列表与 Agent 模型列表**只留对话模型**；插件侧 `capabilities.output` 的 image / video / audio / embedding 直接映射，不用再改一次。
-- **Magpie：#23 分组墙**沿用 2.1.8 的 `groupList` 与 `tokenName`，本版只随口径验过一遍。
-- **飞书**：无代码改动，版本号随统一到 2.1.9。
-- **包与版本**：Clash **2.1.9**、Magpie **2.1.9**、飞书 **2.1.9**；`magpie.exe` 版本资源 `0.1.2799.13`（ProductName `magpie fish`）。
-
-> ⚠️ **#24 还差两块**：`设置 → 图像` 那种**模型选择入口**（视频 / 语音 / 向量各一个）没做，`/v1/models` 的 `kind` 还没补 `audio` / `embedding`——见发行说明「未验证与遗留」。
+- **Magpie：#24 收尾**：设置 → 模型里新增「语音模型」「向量模型」两行选择器（图像那行同款；视频模型继续走 Image generation 那一行，因为 `generate_video` 就在那条 MCP 服务器上）；`/v1/models` 补 `kind: "audio"` / `"embedding"`（按 `X-Magpie-Speakers` / `X-Magpie-Embedders` 头返回，各自带 modalities，不发的客户端不受影响）。#24 至此全部完成。
+- **Magpie：签到未告知积分**：签到成功但插件没报积分的，「今日已得」按惯例值 **+100** 补上；插件报了真数值就用真值。「今日额度」那一栏仍是「未告知」。别的机器没有这个功能——它随我们的 fish 补丁走，装 2.2.0 的包才有。
+- **Magpie：路由组「图片输入」声明**：路由组编辑页「推理档位」下面新增一行，三态分段——**成员共有**（默认，既有行为）/ **是**（声明支持，即便成员都不认）/ **否**（声明不支持，带图请求被拒）。存进 `providers.json`（`images` + `imagesSaid`），组聚合时用户的话覆盖成员的话。
+- **Magpie：探针图标分工修正**：2.1.7 把插件列表大图也改成了图钉（错的那半），本版恢复——`magpie.page.icon` 仍是**图钉 SVG**（侧边栏，深浅两套色），`magpie.icon` 恢复**品牌立绘 PNG**（插件列表，与自动签到同款）；`page-relay-probe` 升到 0.1.3。
+- **Clash / 飞书**：无逻辑改动，版本位与提示文案随统一到 2.2.0。
+- **包与版本**：三插件 **2.2.0**；`magpie.exe` 版本资源 `0.1.2799.14`（ProductName `magpie fish`）。
 
 > ℹ️ **2.1.3 的已知限制已在 2.1.4 修复**：讯飞今日积分显示 400 的问题（读取侧补偿）随 #18 的 B1 移除，读不到真实积分时显示「未告知」。
 
 <details>
-<summary><b>2.1.8 / 2.1.7 / 2.1.6 / 2.1.5 / 2.1.2 / 2.1.0 改了什么</b></summary>
+<summary><b>2.1.9 / 2.1.8 / 2.1.7 / 2.1.6 / 2.1.5 / 2.1.2 / 2.1.0 改了什么</b></summary>
 
 <br>
+
+**2.1.9 改了什么**
+
+- **Clash：首启自启动**：activate 立刻返回（慢活后台跑）、内核路径自愈、起内核 0/1.5/4 秒三次重试；宿主侧剩余问题在 Dock 主仓 #70。
+- **Magpie：#24 主体**：`catalog.Model` 增 `Audio`/`Embedding`；供应商编辑页四分区（图像/视频/语音/向量）；模型列表只留对话模型；插件 `capabilities.output` 直接映射。
 
 **2.1.8 改了什么**
 
@@ -167,9 +171,9 @@
 
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
-| 飞书 2.1.9 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.9/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu) |
-| Clash 2.1.9 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.9/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.1.4) |
-| Magpie 2.1.9 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.9/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.1.4) |
+| 飞书 2.2.0 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu) |
+| Clash 2.2.0 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.1.4) |
+| Magpie 2.2.0 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.1.4) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-packages-dark.png"><img src="assets/readme/section-packages-light.png" alt="PACKAGES · npm 单包" width="100%"></picture></h2>
 
