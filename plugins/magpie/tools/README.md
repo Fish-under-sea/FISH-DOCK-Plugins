@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2732`，加上 `patches/magpie-v0.1.2732+fish.11.patch`（2.1.7 起；2.1.4–2.1.6 是同一基线的 `fish.9` / `fish.10`，2.1.3 及更早是 `v0.1.2336` + `fish.1–fish.8`，旧补丁留在 `patches/` 备查）。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2799`，加上 `patches/magpie-v0.1.2799+fish.12.patch`（2.1.8 起；2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1–fish.8`，旧补丁留在 `patches/` 备查）。
 
 ## 为什么要自己编
 
@@ -40,6 +40,13 @@
 
 判定与迁移都在 `internal/neartoken/handoff.go`，单测在 `handoff_test.go`（5 条，盯住「钥匙归插件」「宿主侧那条会被让出」「插件不在场时保持原样」「断开两处都不留」）。
 
+**2.1.8（`fish.12`）追上游到 `v0.1.2799`，并补 NearToken 的分组墙契约**：
+
+- 基线 `v0.1.2732` → `v0.1.2799`。`git apply -3` 只剩一处冲突：`internal/gui/core_budget_test.go` 的预算常量。按上游注释的规矩取实测值 **1,534,429**（上游 cap 1,533,802，多出的 627 字节是我们补丁加进核心脚本的 `plugins.js` + `pluginpages.js`），写明为什么上调，不留余量。
+- `neartoken:state` 多回 `groupList`：站点 `/api/pricing` 的 `enable_groups` 原文（含 emoji，不翻译）+ `group_ratio` 倍率 + 这一组能聊的模型数 + `group_refs` 的 `ref`，顺序按分组首次出现；没读过目录时是**空数组**而不是 `null`。
+- `neartoken:state` 的 `tokenName`：自己连的时候用站点回的名字（`keepWithPlugin` 现在把它一起写进插件 auth），之后从插件凭据里读。
+- 页面按 `disabledGroups` 走 `magpie.options.set`，插件自己的 `provider.models` 过滤——这一半不需要宿主改动。
+
 ## 构建
 
 ```powershell
@@ -48,18 +55,18 @@ python tools\download-go.py
 
 # 2) 取上游基线（用独立 worktree，别搅动已打补丁的那棵树）
 git clone --filter=blob:none --no-checkout https://github.com/yetone/magpie.git upstream
-git -C upstream fetch --depth=1 origin tag v0.1.2732
-git -C upstream worktree add ..\upstream-2732 v0.1.2732
-git -C ..\upstream-2732 apply --check patches\magpie-v0.1.2732+fish.11.patch
-git -C ..\upstream-2732 apply patches\magpie-v0.1.2732+fish.11.patch
+git -C upstream fetch --depth=1 origin tag v0.1.2799
+git -C upstream worktree add ..\upstream-2799 v0.1.2799
+git -C ..\upstream-2799 apply --check patches\magpie-v0.1.2799+fish.12.patch
+git -C ..\upstream-2799 apply patches\magpie-v0.1.2799+fish.12.patch
 
 # 3) 编（本机没有 make，手跑 release-windows 的两段式）
 #    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
-  -UpstreamRoot ..\upstream-2732 `
-  -VersionTag 'v0.1.2732+fish.11' -FileVersion '0.1.2732.11' -ProductName 'magpie fish' `
-  -WinresJson ..\upstream-2732\build\windows\fish-winres.json `
+  -UpstreamRoot ..\upstream-2799 `
+  -VersionTag 'v0.1.2799+fish.12' -FileVersion '0.1.2799.12' -ProductName 'magpie fish' `
+  -WinresJson ..\upstream-2799\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
 
@@ -75,8 +82,8 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 | 位置 | 值 |
 |---|---|
-| `magpie version` | `magpie v0.1.2732+fish.11` |
-| FileVersion | `0.1.2732.11`（四段数字，Windows 资源要求） |
+| `magpie version` | `magpie v0.1.2799+fish.12` |
+| FileVersion | `0.1.2799.12`（四段数字，Windows 资源要求） |
 | ProductName | `magpie fish` |
 | FileDescription | `magpie fish (FISH Dock build)` |
 | manifest identity | `ai.usemagpie.magpie.fish` |
