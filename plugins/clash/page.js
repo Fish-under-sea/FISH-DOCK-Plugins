@@ -81,8 +81,8 @@
   SUBSCRIPTION_IMMUTABLE:'请在订阅管理中新增或删除订阅',
   SUBSCRIPTION_UPDATING:'请等待订阅更新完成',
   SUBSCRIPTION_NO_CACHE:'请先更新已启用订阅，获取可用缓存',
-  // 运行中热切换失败：启用集与配置文件都已回滚，用户唯一的下一步就是重启内核。
-  SUBSCRIPTION_SWITCH_FAILED:'订阅切换没能热生效：请重启内核后再试；原启用状态已回滚',
+  // 运行中换订阅：热重载失败时插件自己会重启一次内核；两次都失败才回滚启用集。
+  SUBSCRIPTION_SWITCH_FAILED:'订阅切换没能生效：已回滚到原启用集；请刷新后重试，反复失败请打开插件日志查看原始错误码',
   DETAIL_SECTION_INVALID:'详情类别无效',
   PLUGIN_STOPPING:'插件正在停用',
   TUN_UNSUPPORTED:'当前环境不支持 TUN 服务模式',
@@ -118,12 +118,16 @@
   // 插件协议层（d.sdk/宿主产生）：不要落到「未识别错误」。
   COMMAND_FAILED:'这次操作插件没能完成：请重试；仍失败请打开插件日志查看原因',
   NOT_ACTIVE:'插件尚未启用：回到插件页启用后重试',
-  UNKNOWN_METHOD:'宿主与插件版本不匹配（页面要的方法插件没有）：请更新插件到 2.1.5 后重试',
-  CAPABILITY_REQUIRED:'宿主与插件版本不匹配（插件没声明所需能力）：请更新插件到 2.1.5 后重试',
+  UNKNOWN_METHOD:'宿主与插件版本不匹配（页面要的方法插件没有）：请更新插件到 2.1.8 后重试',
+  CAPABILITY_REQUIRED:'宿主与插件版本不匹配（插件没声明所需能力）：请更新插件到 2.1.8 后重试',
   BAD_HANDSHAKE:'插件没能与 Dock 完成握手：请重新安装该插件；仍失败请打开插件日志',
   HANDSHAKE_REQUIRED:'插件会话尚未就绪：请关闭并重新打开插件页面后重试',
   OPERATION_ERROR:'插件操作未完成：请刷新后重试；仍失败请打开插件日志查看原因'};
- const HOST_FOLD={'插件操作未完成，请检查配置后重试':ERROR_TEXT.OPERATION_ERROR};
+ // 宿主自己的两句话没有错误码，按原文折叠：15 秒 RPC 上限撞上时，用户看到的必须是
+ // 「这次操作超过了宿主的上限」，而不是「未识别错误」（2.1.8 之前的测速就是这样）。
+ const HOST_FOLD={'插件操作未完成，请检查配置后重试':ERROR_TEXT.OPERATION_ERROR,
+  '插件响应超时':'这次操作超过了宿主的 15 秒上限（插件仍在运行）：请稍后重试；反复出现请减少启用的订阅节点数',
+  '插件进程无响应（握手超时），已按未运行处理':'插件进程没有应答，已被宿主当作未运行：请回插件页重新启用后再试'};
  const reason=e=>{
   const code=typeof e?.code==='string'?e.code.trim():'';
   if(Object.hasOwn(ERROR_TEXT,code))return ERROR_TEXT[code];

@@ -113,7 +113,11 @@ export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],d
     'MATCH,🐟 漏网之鱼'
    ];
    value['geodata-mode']=true;
-   value['geo-auto-update']=true;
+   // geo-auto-update 关掉（2.1.8）：geo 文件随包发布、启动时由 ensureGeoData 落到内核目录，
+   // 不需要内核自己去 GitHub 下。开着它时，缓存判定过期会让内核在「启动」或「热重载」那一刻
+   // 去下载 GeoSite/GeoIP——连不上的机器直接 Parse config error 退出，或把重载拖过超时。
+   // 文件缺失时内核仍会自己尝试下载（那是它自己的兜底），我们只不再主动催它。
+   value['geo-auto-update']=false;
    value['geo-update-interval']=168;
    value['geo-download-urls']=['https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/','https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/'];
   }else{

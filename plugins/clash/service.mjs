@@ -132,6 +132,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   // secrets.read 由宿主先解密；这里只标记解密后内容仍不符合订阅地址格式的情况。
   let legacyPending=false;
   let queue=Promise.resolve();
+  // 运行中换订阅：热重载的控制器超时（默认 3.5 秒是给读接口用的，重载要重建 provider 与规则）。
+  const SWITCH_RELOAD_TIMEOUT_MS=4500;
   // 切 TUN 要重启内核，耗时可能超过一次 RPC 的超时，所以它跑在后台：RPC 立刻返回，
   // 前端靠轮询 tunSwitching 看进度。这个标记不进 operation，免得和启动/停止互相覆盖。
   let tunBusy=false;
@@ -345,14 +347,14 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     })().catch(error=>{loading=null;throw error});
     await loading;return settings;
   }
-  async function request(path,{method='GET',body,limit=2*1024*1024}={}) {
+  async function request(path,{method='GET',body,limit=2*1024*1024,timeoutMs=3500}={}) {
     if(injectedRequest)return injectedRequest(path,{method,...(body===undefined?{}:{body})});
     const c=await config();
     let response;
     try{
       response=await fetcher(`http://127.0.0.1:${c.controllerPort}${path}`,{
         method,headers:{Authorization:`Bearer ${secret}`,'Content-Type':'application/json'},
-        body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(3500),redirect:'error'});
+        body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(timeoutMs),redirect:'error'});
     }catch(error){
       // 超时与不可达对用户是两件事：一个可能只是内核忙，另一个是内核/端口不对。
       throw error?.name==='TimeoutError'
@@ -482,20 +484,52 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       await persist(next);
       // 内核没跑：只落盘启用集，下次启动用新的一套。
       if(!alive())return view({controller:false});
-      try{
-        if(typeof runtime.swapConfig!=='function')throw coded('SUBSCRIPTION_SWITCH_FAILED','当前运行时不支持热切换配置');
-        const key=secret||await context.secrets.read('keys','controller.key')||'';
-        await runtime.swapConfig({settings:c,subscriptions:next,secret:key,
-          apply:path=>request('/configs?force=true',{method:'PUT',body:{path}})});
-      }catch(error){
-        await rollbackSwitch(previous);
-        // 目标内核不认 PUT /configs 时也走这里：页面文案直接告诉用户重启内核，不静默失败。
-        // cause 传原始错误（保留堆栈、URL 与原始 code），不把 code 字符串塞进标准字段。
-        throw coded('SUBSCRIPTION_SWITCH_FAILED',`订阅切换没能热生效（${error?.code??'UNKNOWN'}）`,{cause:error});
-      }
+      // 2.1.8：热重载失败不再把「请重启内核」丢给用户——插件自己按新配置重启一次。
+      await applySwitch(c,next,previous);
       // 换完配置立刻回读视图：代理组已经是新启用集的，页面才不会显示旧组树。
       try{return await view()}catch{return view({controller:false})}
     });
+  }
+  // applySwitch 是「让新启用集真正生效」的唯一入口：先热重载（连接不断），失败就按
+  // 新配置重启一次内核。两次都失败才回滚启用集并报错——回滚之后用户至少还是旧的那套。
+  //
+  // 重启不经过 start()：那会走 operation 队列，而本次调用就在队列里，两边互等。
+  async function applySwitch(c,next,previous) {
+    const key=secret||await context.secrets.read('keys','controller.key')||'';
+    try{
+      if(typeof runtime.swapConfig!=='function')throw coded('SUBSCRIPTION_SWITCH_FAILED','当前运行时不支持热切换配置');
+      await runtime.swapConfig({settings:c,subscriptions:next,secret:key,
+        // 热重载要读配置文件、重建 provider 与规则，给 4.5 秒而不是默认的 3.5 秒。
+        apply:path=>request('/configs?force=true',{method:'PUT',body:{path},timeoutMs:SWITCH_RELOAD_TIMEOUT_MS})});
+      return {applied:'hot'};
+    }catch(hot){
+      try{
+        await restartKernel(c,next);
+        return {applied:'restart',hotCode:hot?.code??'UNKNOWN'};
+      }catch(restart){
+        await rollbackSwitch(previous);
+        throw coded('SUBSCRIPTION_SWITCH_FAILED',
+          `订阅切换没能生效（热重载 ${hot?.code??'UNKNOWN'}，重启 ${restart?.code??'UNKNOWN'}）`,{cause:restart});
+      }
+    }
+  }
+  // restartKernel 按给定的启用集重起内核：先停旧的，再用新配置启动，最后写回运行态
+  // （下次插件重载还能 attach）。任何一步失败抛错，交给 applySwitch 回滚。
+  async function restartKernel(c,next) {
+    const enabled=next.filter(s=>s.enabled);
+    if(running){try{await running.stop()}catch{/* 旧内核可能已经自己退了，照常往下走 */}running=null}
+    secret=await context.secrets.read('keys','controller.key')||randomBytes(32).toString('hex');
+    await context.secrets.write('keys','controller.key',secret);
+    const candidate=await runtime.start({...c,secret,subscriptions:enabled,request});
+    running=candidate;
+    await request('/version',{timeoutMs:4000}).catch(()=>{throw coded('CONTROLLER_UNREACHABLE','重启后的内核控制器尚未就绪')});
+    startedAt=Date.now();ipCache=null;attached=false;attachError=null;attachTask=null;attachRetryAt=0;
+    kernelPid=Number.isInteger(candidate.pid)?candidate.pid:null;
+    try{
+      await writeRunState({schema:1,pid:kernelPid,mode:candidate.mode??(c.tun?.enable?'service':'process'),
+        mixedPort:c.mixedPort,controllerPort:c.controllerPort,startedAt,
+        subscriptions:enabled.map(s=>s.id),secretFingerprint:secretFingerprint(secret)});
+    }catch{/* 落盘失败只影响重载后能否 attach */}
   }
   // 热切换失败回滚启用集：磁盘写失败也要把内存复原，不能留下两套状态。
   async function rollbackSwitch(previous){
@@ -769,7 +803,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     if(!leaf)throw serviceError('NODE_UNAVAILABLE');
     const sites=await Promise.all(siteTargets.map(async target=>{
       try{
-        const result=await request(`/proxies/${encodeURIComponent(leaf)}/delay?url=${encodeURIComponent(target.url)}&timeout=5000`);
+        const result=await request(`/proxies/${encodeURIComponent(leaf)}/delay?url=${encodeURIComponent(target.url)}&timeout=5000`,{timeoutMs:6000});
         const delay=Number.isFinite(result?.delay)&&result.delay>0?result.delay:null;
         return {...target,delay,ok:delay!==null,kind:delay===null?'node':null,code:null,
           reason:delay===null?'节点不通，延迟测试失败':''};
@@ -785,8 +819,14 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     return {node:leaf,sites};
   }
   // 节点测速：对当前组的每个节点打一次控制器的 delay 接口，结果按节点名回给页面。
-  // 并发 6：几百个节点同时打会把控制器压住，单条失败只影响它自己。
+  //
+  // 两条硬约束（2.1.8）：宿主给一次 RPC 只有 15 秒（plugin_rpc_timeout），控制器请求
+  // 自己也带 AbortSignal 超时。原先是「并发 6 + 每个节点 5 秒」，40 个节点就要 30 秒
+  // 以上——整次调用被宿主掐断，页面只剩「未识别错误」，插件还会被记成「响应超时」。
+  // 现在自己带预算：并发 8、单节点 2.5 秒、整段 9 秒封顶；来不及测的节点如实标成
+  // untested，而不是把整次调用拖死。
   const delayUrl='https://www.gstatic.com/generate_204';
+  const TEST_CONCURRENCY=8,DELAY_TIMEOUT_MS=2500,TEST_BUDGET_MS=9000;
   async function nodeTest({group:groupName}={}) {
     if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
     const state=await view();
@@ -794,19 +834,24 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     if(!target)throw serviceError('NODE_UNAVAILABLE');
     const names=target.nodes.filter(node=>node.type!=='group').slice(0,200).map(node=>node.name);
     const delays=[];
+    const deadline=Date.now()+TEST_BUDGET_MS;
     let cursor=0;
     const worker=async()=>{
       for(;;){
         const index=cursor++;if(index>=names.length)return;
+        if(Date.now()>deadline)return;
         const name=names[index];
         try{
-          const result=await request(`/proxies/${encodeURIComponent(name)}/delay?url=${encodeURIComponent(delayUrl)}&timeout=5000`);
+          const result=await request(`/proxies/${encodeURIComponent(name)}/delay?url=${encodeURIComponent(delayUrl)}&timeout=${DELAY_TIMEOUT_MS}`,
+            {timeoutMs:DELAY_TIMEOUT_MS+500});
           delays.push({name,delay:Number.isFinite(result?.delay)&&result.delay>0?result.delay:null});
         }catch{delays.push({name,delay:null})}
       }
     };
-    await Promise.all(Array.from({length:Math.min(6,names.length)},worker));
-    return {group:target.name,tested:delays.length,delays};
+    await Promise.all(Array.from({length:Math.min(TEST_CONCURRENCY,names.length)},worker));
+    const done=new Set(delays.map(row=>row.name));
+    return {group:target.name,tested:delays.length,delays,budgetMs:TEST_BUDGET_MS,
+      untested:names.filter(name=>!done.has(name)).length};
   }
   // 运行中切换 TUN 必须重启内核：TUN 由 SYSTEM 服务托管，普通模式由本进程 spawn，
   // 两者写同一个控制器端口，不能并存。整段「停 → 写配置 → 按新设置起」放到后台跑，

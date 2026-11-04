@@ -12,7 +12,7 @@ test('failed proxy restoration still stops the owned core and remains retryable'
  await f.service.stop();assert.equal((await f.service.view()).error,'');
 });
 function fixture(disk=new Map(),options={}) {
- const requests=[],updates=[],kills=[],swaps=[];let up=false,starts=0,stops=0,owned,fail=false,blocked=null,delayError=null,switchDown=false;
+ const requests=[],updates=[],kills=[],swaps=[];let up=false,starts=0,stops=0,owned,fail=false,blocked=null,delayError=null,switchDown=false,startDown=false;
  // external 模拟「插件进程重启后仍有残留内核」：pid 还活着、控制器可应答，但不是本实例 spawn 的。
  const external=options.external?{alive:true,...options.external}:null;
  const controllerUp=options.controller!==false;
@@ -47,7 +47,7 @@ function fixture(disk=new Map(),options={}) {
    path==='/rules'?{rules:[{type:'MATCH',payload:'',proxy:'🐟 漏网之鱼'},{type:'GEOSITE',payload:'cn',proxy:'🎯 全球直连'},{type:'GEOIP',payload:'cn',proxy:'🎯 全球直连'}]}:
    path.includes('/delay?')?{delay:path.includes('youtube')?0:87}:{url:'https://private.test/?token=PRIVATE'};
  };
- const runtime={start:async c=>{starts++;up=true;owned=c;return {alive:()=>up,pid:kernelPid,mode:'process',stop:async()=>{stops++;up=false}}},
+ const runtime={start:async c=>{if(startDown)throw Object.assign(Error('启动失败'),{code:'SPAWN_FAILED'});starts++;up=true;owned=c;return {alive:()=>up,pid:kernelPid,mode:'process',stop:async()=>{stops++;up=false}}},
   // 结束残留内核（不是本实例 spawn 的）：记录 pid，按 external 状态回报是否真的没了。
   kill:async pid=>{kills.push(pid);if(external&&external.pid===pid)external.alive=false;return true},
   updateSubscription:async c=>{updates.push(c);await blocked;if(c.signal.aborted||fail)throw Error('token=PRIVATE');await c.apply?.();await c.commit({nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}});return {nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}}},
@@ -82,6 +82,8 @@ function fixture(disk=new Map(),options={}) {
  return {service,disk,requests,updates,swaps,runtime,context,external,stats:()=>({starts,stops,up,owned,kills}),
   // 模拟「目标内核不认 PUT /configs」。
   refuseReload:(on=true)=>{switchDown=on},fail:()=>{fail=true},
+  // 模拟「重启内核失败」（热切换失败后的兜底路径）。
+  refuseStart:(on=true)=>{startDown=on},
   // 模拟「残留内核的控制器从不通恢复为可达」。
   setExternalController:on=>{externalDown=on===false},
   breakDelay:error=>{delayError=error},
@@ -170,19 +172,43 @@ test('运行中热切换订阅：生成候选配置 → PUT /configs?force=true�
  const rows=JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions;
  assert.deepEqual(rows.filter(s=>s.enabled).map(s=>s.id),[b.id],'启用集落盘也是新的');
 });
-test('热切换失败：启用集与磁盘一起回滚，抛 SUBSCRIPTION_SWITCH_FAILED',async()=>{
+test('热切换失败时插件自己重启内核：启用集照常生效，不用用户手动重启',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ const {a,b}=await twoCached(f);
+ await f.service.start();
+ const before=f.stats();
+ // 目标内核不认 PUT /configs：2.1.8 起不再把「请重启内核」丢给用户，插件按新配置重启一次。
+ f.refuseReload();
+ const state=await f.service.subscriptionToggle({id:b.id,enabled:true});
+ assert.deepEqual(state.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,false],[b.id,true]],'启用集生效');
+ assert.equal(f.stats().stops,before.stops+1,'先停了旧内核');
+ assert.equal(f.stats().starts,before.starts+1,'再按新配置起一次');
+ assert.deepEqual(f.stats().owned.subscriptions.map(s=>s.id),[b.id],'新内核吃的是新启用集');
+ assert.equal(state.running,true);
+ const rows=JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions;
+ assert.deepEqual(rows.filter(s=>s.enabled).map(s=>s.id),[b.id],'磁盘上也是新的');
+ // 热重载恢复后照旧走热路径，不再重启。
+ f.refuseReload(false);
+ const back=await f.service.subscriptionToggle({id:a.id,enabled:true});
+ assert.deepEqual(back.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,true],[b.id,false]]);
+ assert.equal(f.stats().starts,before.starts+1,'这次没再重启内核');
+});
+test('热切换与重启都失败：回滚启用集，抛 SUBSCRIPTION_SWITCH_FAILED',async()=>{
  const f=fixture();await f.service.save(kernel);
  const {a,b}=await twoCached(f);
  await f.service.start();
  f.refuseReload();
+ f.refuseStart();
  await assert.rejects(f.service.subscriptionToggle({id:b.id,enabled:true}),error=>error.code==='SUBSCRIPTION_SWITCH_FAILED');
  const state=await f.service.view({controller:false});
  assert.deepEqual(state.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,true],[b.id,false]],'启用集回滚');
  const rows=JSON.parse(f.disk.get('config/subscriptions.json')).subscriptions;
  assert.deepEqual(rows.filter(s=>s.enabled).map(s=>s.id),[a.id],'磁盘也回滚');
- assert.equal(state.running,true,'内核仍在原配置上运行，没被带偏');
- // 回滚后再切一次（控制器恢复）必须成功：证明回滚没把内部状态弄脏。
+ // 两次都失败后旧内核已经停了，界面必须如实说「没在跑」，不能还画成运行中。
+ assert.equal(state.running,false,'内核确实没起来');
+ // 回滚后再切一次（控制器与启动都恢复）必须成功：证明回滚没把内部状态弄脏。
  f.refuseReload(false);
+ f.refuseStart(false);
  const retried=await f.service.subscriptionToggle({id:b.id,enabled:true});
  assert.deepEqual(retried.subscriptions.map(s=>[s.id,s.enabled]),[[a.id,false],[b.id,true]]);
 });

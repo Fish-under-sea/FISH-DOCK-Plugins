@@ -54,8 +54,8 @@ export const errorMessages = Object.freeze({
  SUBSCRIPTION_IMMUTABLE: '请在订阅管理中新增或删除订阅',
  SUBSCRIPTION_UPDATING: '请等待订阅更新完成',
  SUBSCRIPTION_NO_CACHE: '请先更新已启用订阅，获取可用缓存',
- // 运行中热切换失败：启用集与配置文件都已回滚，用户唯一的下一步就是重启内核。
- SUBSCRIPTION_SWITCH_FAILED: '订阅切换没能热生效：请重启内核后再试；原启用状态已回滚',
+ // 运行中换订阅：热重载失败时插件自己会重启一次内核；两次都失败才回滚启用集。
+ SUBSCRIPTION_SWITCH_FAILED: '订阅切换没能生效：已回滚到原启用集；请刷新后重试，反复失败请打开插件日志查看原始错误码',
  DETAIL_SECTION_INVALID: '详情类别无效',
  PLUGIN_STOPPING: '插件正在停用',
  TUN_UNSUPPORTED: '当前环境不支持 TUN 服务模式',
@@ -77,8 +77,8 @@ export const errorMessages = Object.freeze({
  // 这几条不是插件业务码，画面上的下一步也按用户能做的事写，不写协议黑话。
  COMMAND_FAILED: '这次操作插件没能完成：请重试；仍失败请打开插件日志查看原因',
  NOT_ACTIVE: '插件尚未启用：回到插件页启用后重试',
- UNKNOWN_METHOD: '宿主与插件版本不匹配（页面要的方法插件没有）：请更新插件到 2.1.5 后重试',
- CAPABILITY_REQUIRED: '宿主与插件版本不匹配（插件没声明所需能力）：请更新插件到 2.1.5 后重试',
+ UNKNOWN_METHOD: '宿主与插件版本不匹配（页面要的方法插件没有）：请更新插件到 2.1.8 后重试',
+ CAPABILITY_REQUIRED: '宿主与插件版本不匹配（插件没声明所需能力）：请更新插件到 2.1.8 后重试',
  BAD_HANDSHAKE: '插件没能与 Dock 完成握手：请重新安装该插件；仍失败请打开插件日志',
  HANDSHAKE_REQUIRED: '插件会话尚未就绪：请关闭并重新打开插件页面后重试',
  OPERATION_ERROR: '插件操作未完成：请刷新后重试；仍失败请打开插件日志查看原因',
