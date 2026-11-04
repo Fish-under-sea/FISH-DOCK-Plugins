@@ -12,18 +12,18 @@
 </picture>
 
 <p>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.7"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：Clash 2.1.5 · Magpie 2.1.7 · 飞书 2.1.5" width="23%"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.8"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：Clash 2.1.8 · Magpie 2.1.8 · 飞书 2.1.5" width="23%"></picture></a>
   <a href="#plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-desktop-zh-dark.png"><img src="assets/readme/config-stat-desktop-zh-light.png" alt="PLUGINS：三个独立插件" width="23%"></picture></a>
   <a href="#packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-mail-zh-dark.png"><img src="assets/readme/config-stat-mail-zh-light.png" alt="PACKAGES：三个 npm 单包" width="23%"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-Dock"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-channels-zh-dark.png"><img src="assets/readme/config-stat-channels-zh-light.png" alt="HOST API：1，兼容 FISH Dock 2.0.0+" width="23%"></picture></a>
 </p>
 
-<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="插件适配代码许可 MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="随包 mihomo 许可 GPL-3.0"> <img src="https://img.shields.io/badge/Plugins-2.1.7-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="Clash 2.1.5 · Magpie 2.1.7 · 飞书 2.1.5"></p>
+<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="插件适配代码许可 MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="随包 mihomo 许可 GPL-3.0"> <img src="https://img.shields.io/badge/Plugins-2.1.8-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="Clash 2.1.8 · Magpie 2.1.8 · 飞书 2.1.5"></p>
 <p><strong>FISH Plugins &amp; Configuration · 插件配置仓</strong><br>官方插件、配置说明与发行入口；按需安装，独立运行。</p>
 
 <p>
   <a href="#get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-download-zh-dark.png"><img src="assets/readme/key-download-zh-light.png" alt="下载 / Releases" height="40"></picture></a>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.7"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.1.8"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-release-zh-dark.png"><img src="assets/readme/key-release-zh-light.png" alt="更新记录" height="40"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-issues-zh-dark.png"><img src="assets/readme/key-issues-zh-light.png" alt="反馈 / Issues" height="40"></picture></a>
 </p>
 
@@ -35,20 +35,28 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-本版**只升 Magpie：2.1.6 → 2.1.7**（Clash / 飞书 保持 2.1.5）。这版做两件事：NearToken 的 provider 插件从 0.1.7 起自带模型表、图标与余额，宿主侧那条 key+URL 供应商**让出去**（[#22](https://github.com/Fish-under-sea/FISH-Dock-Plugins/issues/22)）；内置「中转站探针」补上 📌 图钉图标，深浅两套配色。要求 **FISH Dock ≥ 2.0.0**。完整改动见 [2.1.7 发行说明](docs/releases/2.1.7.md)。
+本版**两个插件**：**Magpie 2.1.7 → 2.1.8**（追一次上游到 `v0.1.2799`，补齐 NearToken 分组墙契约）、**Clash 2.1.5 → 2.1.8**（测速不再被宿主的 15 秒掐断、换订阅不用再自己重启内核、关掉 geo 自动更新）。飞书保持 2.1.5。要求 **FISH Dock ≥ 2.0.0**。完整改动见 [2.1.8 发行说明](docs/releases/2.1.8.md)。
 
-**2.1.7 改了什么（仅 Magpie）**
+**2.1.8 改了什么**
 
-- **NearToken 不再被宿主那条供应商盖住（#22）**：`@fish-under-sea/magpie-neartoken` 0.1.7 起自己就是 provider 插件（设备授权、按「分组 × 模型」展开的模型表、倍率、生图/视频标记、图标、余额都由它给），宿主侧那条 key+URL 供应商撞在同一个 id 上，于是模型表是旧的、卡片是灰立方体、「重新获取模型」还去问站点 `/v1/models`（那个端点按令牌分组过滤，很多账号回空）。本版插件在场时**宿主让出供应商**：不再 `provider.Save`、不再写模型表，页面那八条 `neartoken:*` 改从插件凭据里读令牌；老用户升级时把旧钥匙搬进插件 auth 再删掉那条（搬不动就留着，钥匙不丢）；断开时撤令牌 + 删插件凭据 + 删宿主侧那条，一样不留；插件不在场时保持老做法。
-- **中转站探针的图标**：2.1.6 换了矢量图标，但 `magpie.page.icon` 没落到 `package.json` 上，侧边栏里还是 magpie 的兜底灰方块。本版换成**图钉（📌）**描边图标，`magpie.page.icon` 与 `magpie.icon` 同指 `page/icon.svg`；深浅两套颜色写在 SVG 里（`@media (prefers-color-scheme: dark)` 切 `#111111` / `#F2F2F7`），因为 `<img>` 里 `currentColor` 没有父级可继承、恒等于黑。包里那张 109 KB 灰色位图已删。
-- **包与版本**：Clash 与飞书 2.1.5、**Magpie 2.1.7**；`magpie.exe` 版本资源 `0.1.2732.11`（ProductName `magpie fish`）；`page-checkin` 保持 0.2.6，`page-relay-probe` 升到 0.1.2。
+- **Clash：测速不再变成「未识别错误」**：旧实现「并发 6 + 每节点 5 秒」，37 个节点要 30 秒以上，超过宿主给插件的 15 秒 RPC 上限，宿主回一句没有错误码的「插件响应超时」，页面只能折叠成「未识别错误」。现在测速自己带预算（并发 8 / 单节点 2.5 秒 / 整段 9 秒封顶），来不及测的节点如实标成未测；宿主那两句没码的话也有了专门文案。
+- **Clash：换订阅启用失败时插件自己重启内核**：热重载（`PUT /configs?force=true`）失败不再把「请重启内核」丢给用户——插件立刻按新启用集重启一次，两次都失败才回滚并报错。
+- **Clash：关掉 `geo-auto-update`**：开着它时内核会在启动或重载那一刻去 GitHub 下 geosite/geoip，网络不通就直接 `Parse config error` 退出（本地实测 20 秒后 fatal）。geo 文件本来就随包发布，启动时由 `ensureGeoData` 落地。
+- **Magpie：追上游 `v0.1.2732` → `v0.1.2799`**：补丁 `fish.12`，`git apply -3` 只剩 `core_budget_test.go` 一处冲突，按上游规矩取实测值（1,534,429）。
+- **Magpie：NearToken 分组墙契约**：`neartoken:state` 多回 `groupList`（站点原文组名 + 倍率 + 该组能聊的模型数 + ref，没读过目录时是空数组）与 `tokenName`；页面据此画可点分组墙，点一下写 `disabledGroups`，插件侧自己过滤模型。
+- **包与版本**：Clash **2.1.8**、Magpie **2.1.8**、飞书 2.1.5；`magpie.exe` 版本资源 `0.1.2799.12`（ProductName `magpie fish`）；`page-checkin` 0.2.6、`page-relay-probe` 0.1.2。
 
 > ℹ️ **2.1.3 的已知限制已在 2.1.4 修复**：讯飞今日积分显示 400 的问题（读取侧补偿）随 #18 的 B1 移除，读不到真实积分时显示「未告知」。
 
 <details>
-<summary><b>2.1.6 / 2.1.5 / 2.1.2 / 2.1.0 改了什么</b></summary>
+<summary><b>2.1.7 / 2.1.6 / 2.1.5 / 2.1.2 / 2.1.0 改了什么</b></summary>
 
 <br>
+
+**2.1.7 改了什么（仅 Magpie）**
+
+- **NearToken 不再被宿主那条供应商盖住（#22）**：插件 0.1.7 起自己就是 provider 插件，宿主让出那条 key+URL 供应商——不再 `provider.Save`、不再写模型表，页面八条 `neartoken:*` 改从插件凭据读令牌；老用户升级把旧钥匙搬进插件 auth 再删那条；断开时撤令牌 + 删插件凭据 + 删宿主侧那条。
+- **中转站探针的图标**：换成图钉（📌）描边图标，`magpie.page.icon` 与 `magpie.icon` 同指 `page/icon.svg`，深浅两套颜色写在 SVG 里；删掉那张 109 KB 灰色位图。
 
 **2.1.6 改了什么（仅 Magpie）**
 
@@ -151,8 +159,8 @@
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
 | 飞书 2.1.5 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.5/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu) |
-| Clash 2.1.5 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.5/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.1.4) |
-| Magpie 2.1.7 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.7/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.1.4) |
+| Clash 2.1.8 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.8/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.1.4) |
+| Magpie 2.1.8 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.1.8/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.1.4) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-packages-dark.png"><img src="assets/readme/section-packages-light.png" alt="PACKAGES · npm 单包" width="100%"></picture></h2>
 
