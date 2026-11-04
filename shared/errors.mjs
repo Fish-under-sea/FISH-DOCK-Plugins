@@ -77,8 +77,8 @@ export const errorMessages = Object.freeze({
  // 这几条不是插件业务码，画面上的下一步也按用户能做的事写，不写协议黑话。
  COMMAND_FAILED: '这次操作插件没能完成：请重试；仍失败请打开插件日志查看原因',
  NOT_ACTIVE: '插件尚未启用：回到插件页启用后重试',
- UNKNOWN_METHOD: '宿主与插件版本不匹配（页面要的方法插件没有）：请更新插件到 2.1.8 后重试',
- CAPABILITY_REQUIRED: '宿主与插件版本不匹配（插件没声明所需能力）：请更新插件到 2.1.8 后重试',
+ UNKNOWN_METHOD: '宿主与插件版本不匹配（页面要的方法插件没有）：请更新插件到 2.1.9 后重试',
+ CAPABILITY_REQUIRED: '宿主与插件版本不匹配（插件没声明所需能力）：请更新插件到 2.1.9 后重试',
  BAD_HANDSHAKE: '插件没能与 Dock 完成握手：请重新安装该插件；仍失败请打开插件日志',
  HANDSHAKE_REQUIRED: '插件会话尚未就绪：请关闭并重新打开插件页面后重试',
  OPERATION_ERROR: '插件操作未完成：请刷新后重试；仍失败请打开插件日志查看原因',
