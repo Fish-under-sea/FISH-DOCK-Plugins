@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2799`，加上 `patches/magpie-v0.1.2799+fish.12.patch`（2.1.8 起；2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1–fish.8`，旧补丁留在 `patches/` 备查）。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2799`，加上 `patches/magpie-v0.1.2799+fish.13.patch`（2.1.9 起；2.1.8 是同一基线的 `fish.12`，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1–fish.8`，旧补丁留在 `patches/` 备查）。
 
 ## 为什么要自己编
 
@@ -47,6 +47,15 @@
 - `neartoken:state` 的 `tokenName`：自己连的时候用站点回的名字（`keepWithPlugin` 现在把它一起写进插件 auth），之后从插件凭据里读。
 - 页面按 `disabledGroups` 走 `magpie.options.set`，插件自己的 `provider.models` 过滤——这一半不需要宿主改动。
 
+**2.1.9（`fish.13`）#24：供应商页原生区分四类模型**：
+
+- `catalog.Model` 增加 `Audio`（TTS / 转写）与 `Embedding`（embedding / rerank）；站点列表 `kind` 是 `audio`/`speech`/`tts`/`transcription`、`embedding`/`rerank` 的各自归位，只给模态不给 `kind` 的按输出模态认。
+- `catalog.Chat()` 四类都不算「能聊的」；供应商列表与 Agent 的模型列表只留对话模型（`providerInfoWith` 里统一过滤）。
+- 插件侧 `capabilities.output` 的 `image`/`video`/`audio`/`embedding` 在 `pluginCatalog` 直接映射到 `Draws`/`Films`/`Audio`/`Embedding`，插件不用再改。
+- 供应商编辑页：原「图像模型」一块扩成**图像 / 视频 / 语音 / 向量四块**（`renderModelKinds`），各自一份取消勾选集合（`hiddenFilms`/`hiddenAudios`/`hiddenEmbeddings`）随保存进 `providers.json`。
+- 核心脚本预算随实测上调到 **1,535,469**（`app.js` +1,040 字节），理由写在常量注释里。
+- **没做**：`设置 → 图像` 那种模型选择入口（视频/语音/向量各一个）与 `/v1/models` 的 `kind` 补值。
+
 ## 构建
 
 ```powershell
@@ -57,15 +66,15 @@ python tools\download-go.py
 git clone --filter=blob:none --no-checkout https://github.com/yetone/magpie.git upstream
 git -C upstream fetch --depth=1 origin tag v0.1.2799
 git -C upstream worktree add ..\upstream-2799 v0.1.2799
-git -C ..\upstream-2799 apply --check patches\magpie-v0.1.2799+fish.12.patch
-git -C ..\upstream-2799 apply patches\magpie-v0.1.2799+fish.12.patch
+git -C ..\upstream-2799 apply --check patches\magpie-v0.1.2799+fish.13.patch
+git -C ..\upstream-2799 apply patches\magpie-v0.1.2799+fish.13.patch
 
 # 3) 编（本机没有 make，手跑 release-windows 的两段式）
 #    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
   -UpstreamRoot ..\upstream-2799 `
-  -VersionTag 'v0.1.2799+fish.12' -FileVersion '0.1.2799.12' -ProductName 'magpie fish' `
+  -VersionTag 'v0.1.2799+fish.13' -FileVersion '0.1.2799.13' -ProductName 'magpie fish' `
   -WinresJson ..\upstream-2799\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
@@ -82,8 +91,8 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 | 位置 | 值 |
 |---|---|
-| `magpie version` | `magpie v0.1.2799+fish.12` |
-| FileVersion | `0.1.2799.12`（四段数字，Windows 资源要求） |
+| `magpie version` | `magpie v0.1.2799+fish.13` |
+| FileVersion | `0.1.2799.13`（四段数字，Windows 资源要求） |
 | ProductName | `magpie fish` |
 | FileDescription | `magpie fish (FISH Dock build)` |
 | manifest identity | `ai.usemagpie.magpie.fish` |
