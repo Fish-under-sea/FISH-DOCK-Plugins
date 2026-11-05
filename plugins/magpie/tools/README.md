@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2799`，加上 `patches/magpie-v0.1.2799+fish.13.patch`（2.1.9 起；2.1.8 是同一基线的 `fish.12`，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1–fish.8`，旧补丁留在 `patches/` 备查）。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2799`，加上 `patches/magpie-v0.1.2799+fish.15.patch`（2.2.1；累计包含 `fish.14` 及本版新增）。旧补丁留在 `patches/` 备查：`fish.13` 用于 2.1.9–2.2.0，`fish.12` 用于 2.1.8，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1–fish.8`。
 
 ## 为什么要自己编
 
@@ -66,15 +66,15 @@ python tools\download-go.py
 git clone --filter=blob:none --no-checkout https://github.com/yetone/magpie.git upstream
 git -C upstream fetch --depth=1 origin tag v0.1.2799
 git -C upstream worktree add ..\upstream-2799 v0.1.2799
-git -C ..\upstream-2799 apply --check patches\magpie-v0.1.2799+fish.13.patch
-git -C ..\upstream-2799 apply patches\magpie-v0.1.2799+fish.13.patch
+git -C ..\upstream-2799 apply --check patches\magpie-v0.1.2799+fish.15.patch
+git -C ..\upstream-2799 apply patches\magpie-v0.1.2799+fish.15.patch
 
 # 3) 编（本机没有 make，手跑 release-windows 的两段式）
 #    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
   -UpstreamRoot ..\upstream-2799 `
-  -VersionTag 'v0.1.2799+fish.13' -FileVersion '0.1.2799.13' -ProductName 'magpie fish' `
+  -VersionTag 'v0.1.2799+fish.15' -FileVersion '0.1.2799.15' -ProductName 'magpie fish' `
   -WinresJson ..\upstream-2799\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
