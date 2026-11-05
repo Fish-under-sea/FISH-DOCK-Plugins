@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 宿主（FISH Dock 桌面端）的问题
+    url: https://github.com/Fish-under-sea/FISH-Dock/issues
+    about: 安装、更新、内存、设置面板、Windhawk 与插件管理界面的问题属于宿主仓；本仓只管插件本体与商店目录。
+  - name: 提交规则与标签口径
+    url: https://github.com/Fish-under-sea/FISH-DOCK-Plugins/blob/main/.github/CONTRIBUTING.md
+    about: 查重、类型标签、维护者身份、Milestone 版本与侧边栏六项的要求都写在这里。

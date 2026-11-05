@@ -1,0 +1,162 @@
+name: 插件问题 / 需求
+description: 提交前先查重、填类型标签与侧边栏；维护者还要挂 Milestone 版本
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **提交前五关**（缺一项维护者会打回）：
+        1. **查重**：按「插件名 + 现象 + 版本号」搜过，同问题的证据补到原 issue，不新开；
+        2. **类型标签**：至少 1 个（`bug` / `performance` / `ui` / `accessibility` / `enhancement` / `documentation` / `question`）——**标签不表达版本**；
+        3. **是否维护者**：必答；
+        4. **版本**：用右侧栏 **Milestone** 表达（插件版本以 `catalog/stable.json` 为准），维护者必挂；
+        5. **侧边栏六项**：Assignees / Labels / Projects / Milestone / Relationships / Development 提交后逐项补齐。
+
+        **宿主本身**的问题请提到 [`Fish-under-sea/FISH-Dock`](https://github.com/Fish-under-sea/FISH-Dock/issues)。
+        规则全文见 [CONTRIBUTING.md](../blob/main/.github/CONTRIBUTING.md)。
+
+  - type: checkboxes
+    id: duplicate-search
+    attributes:
+      label: 重复检查（必做）
+      options:
+        - label: 我已经在 Issues 里搜过插件名、现象与版本号，并确认这不是重复 issue
+          required: true
+        - label: 如果它与某条 issue 相关但不相同，我会在下面写清区别
+          required: true
+
+  - type: input
+    id: duplicate-keywords
+    attributes:
+      label: 搜索关键词与排除的 issue
+      description: 写清搜过什么词、排除的 issue 编号（例：`magpie 预装 供应商页`，排除 #11 #18）
+      placeholder: 关键词：…；已排除：#…
+    validations:
+      required: true
+
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: 涉及哪个插件
+      options:
+        - feishu（飞书通知）
+        - clash（Clash 代理）
+        - magpie（Magpie 网关）
+        - ofm（OFM 本地模型，已退役）
+        - 商店目录 / 发版与校验（catalog、Release、npm）
+        - 多个插件
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 类型（对应类型标签）
+      description: 选完请真的把对应标签打上；拿不准选「question」。
+      options:
+        - bug（可复现的缺陷）
+        - performance（内存 / 体积 / 耗时）
+        - ui（界面 / 视觉 / 交互）
+        - accessibility（无障碍）
+        - enhancement（新能力 / 行为变更）
+        - documentation（文档与文案）
+        - question（需要澄清）
+        - 上游缺陷或宿主契约问题（请在正文写明为什么不进本仓修）
+    validations:
+      required: true
+
+  - type: input
+    id: labels-applied
+    attributes:
+      label: 标签自检
+      description: 列出实际打上的类型标签（版本用 Milestone，不用标签）。
+      placeholder: bug
+    validations:
+      required: true
+
+  - type: dropdown
+    id: maintainer
+    attributes:
+      label: 是否为维护者
+      options:
+        - 否
+        - 是
+    validations:
+      required: true
+
+  - type: input
+    id: fix-version
+    attributes:
+      label: 预修复版本（维护者必填）
+      description: 与右侧栏 **Milestone** 同一个号（插件版本，如 `2.2.2`）；定不下来写「待定」。非维护者写「非维护者」。
+      placeholder: 2.2.2
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: 插件版本与宿主版本
+      description: 两个都要；知道的话再写驱动版本（magpie 上游 tag / 补丁号、mihomo 版本）。
+      placeholder: 插件 2.2.1 / 宿主 2.1.1 / magpie v0.1.2799+fish.15
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 现象
+      description: 一句话说清发生了什么；有数字就给数字，没测的写「未测」。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 证据
+      description: 截图、脱敏日志、`catalog/stable.json` 条目、包 sha256。**不要贴令牌、凭据、私钥或他人账号与用量明细。**
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已按第五节脱敏，正文里没有令牌、凭据、私钥或他人账号与用量数据
+          required: true
+
+  - type: checkboxes
+    id: sidebar
+    attributes:
+      label: 侧边栏自查（提交后把右侧栏这六项补齐）
+      options:
+        - label: Assignees —— 已挂负责人
+          required: true
+        - label: Labels —— 已打 ≥1 个类型标签
+          required: true
+        - label: Projects —— 本仓未启用，已在正文写「无」
+          required: true
+        - label: Milestone —— 已挂版本位，与「预修复版本」同号
+          required: true
+        - label: Relationships —— 已写明关联/依赖/并入的 issue（跨仓写全 owner/repo#n）
+          required: true
+        - label: Development —— 开工后挂分支或 PR；未开工写「未开工」
+          required: true
