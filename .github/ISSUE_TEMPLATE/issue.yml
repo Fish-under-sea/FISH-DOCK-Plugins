@@ -1,5 +1,5 @@
 name: 插件问题 / 需求
-description: 提交前先查重、填类型标签与侧边栏；维护者还要挂 Milestone 版本
+description: 提交前先查重、打类型标签 + 插件标签、填侧边栏；维护者还要挂 Milestone 版本
 labels: []
 body:
   - type: markdown
@@ -7,7 +7,7 @@ body:
       value: |
         **提交前五关**（缺一项维护者会打回）：
         1. **查重**：按「插件名 + 现象 + 版本号」搜过，同问题的证据补到原 issue，不新开；
-        2. **类型标签**：至少 1 个（`bug` / `performance` / `ui` / `accessibility` / `enhancement` / `documentation` / `question`）——**标签不表达版本**；
+        2. **标签两类都要打**：类型标签（`bug` / `performance` / `ui` / `accessibility` / `enhancement` / `documentation` / `question` / `tooling`）**+ 插件标签**（`magpie` / `clash` / `feishu` / `ofm` / `catalog`）——**覆盖了几个插件就打几个**，标签不表达版本；
         3. **是否维护者**：必答；
         4. **版本**：用右侧栏 **Milestone** 表达（插件版本以 `catalog/stable.json` 为准），维护者必挂；
         5. **侧边栏六项**：Assignees / Labels / Projects / Milestone / Relationships / Development 提交后逐项补齐。
@@ -37,14 +37,15 @@ body:
   - type: dropdown
     id: plugin
     attributes:
-      label: 涉及哪个插件
+      label: 涉及哪些插件（可多选）
+      description: 选了几个，右侧栏就要打上几个同名插件标签（`magpie` / `clash` / `feishu` / `ofm` / `catalog`）。覆盖两个就打两个，不许只打一个。
+      multiple: true
       options:
-        - feishu（飞书通知）
+        - magpie（Magpie 网关 / 内置页面插件 / 预装基线）
         - clash（Clash 代理）
-        - magpie（Magpie 网关）
-        - ofm（OFM 本地模型，已退役）
-        - 商店目录 / 发版与校验（catalog、Release、npm）
-        - 多个插件
+        - feishu（飞书通知）
+        - ofm（OFM 本地模型，已退役，仅历史条目）
+        - catalog（商店目录 / 发版校验 / npm，不针对单个插件）
     validations:
       required: true
 
@@ -52,7 +53,7 @@ body:
     id: kind
     attributes:
       label: 类型（对应类型标签）
-      description: 选完请真的把对应标签打上；拿不准选「question」。
+      description: 选完请真的把对应类型标签打上；拿不准选「question」。
       options:
         - bug（可复现的缺陷）
         - performance（内存 / 体积 / 耗时）
@@ -61,6 +62,7 @@ body:
         - enhancement（新能力 / 行为变更）
         - documentation（文档与文案）
         - question（需要澄清）
+        - tooling（构建 / 补丁链 / 上游跟随）
         - 上游缺陷或宿主契约问题（请在正文写明为什么不进本仓修）
     validations:
       required: true
@@ -69,8 +71,8 @@ body:
     id: labels-applied
     attributes:
       label: 标签自检
-      description: 列出实际打上的类型标签（版本用 Milestone，不用标签）。
-      placeholder: bug
+      description: 列出实际打上的**类型标签 + 插件标签**（多插件逐个写；版本用 Milestone，不用标签）。
+      placeholder: bug, magpie, clash
     validations:
       required: true
 
@@ -150,7 +152,7 @@ body:
       options:
         - label: Assignees —— 已挂负责人
           required: true
-        - label: Labels —— 已打 ≥1 个类型标签
+        - label: Labels —— 已打 ≥1 个类型标签 + ≥1 个插件标签（覆盖多插件就逐個打）
           required: true
         - label: Projects —— 本仓未启用，已在正文写「无」
           required: true
