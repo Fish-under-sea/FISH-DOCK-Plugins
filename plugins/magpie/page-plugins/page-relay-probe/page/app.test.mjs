@@ -3,6 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { createRelayPage } from "./app.js";
 
@@ -243,4 +244,20 @@ test("保存时把表单值原样交给 magpie，并在成功后清空 Key 输�
   assert.equal(saveCall.params.apiKey, "sk-live-1234567890");
   assert.equal(doc.getElementById("apiKey").value, "", "存过之后 Key 不该留在输入框");
   assert.equal(doc.getElementById("notice").textContent, "已保存。");
+});
+
+// #34：这一页曾经在 `#relay` 上写像素上限，把内容锁成固定宽度，面板一拉宽右侧就
+// 空出一条。布局是纯 CSS，用静态断言钉住四件事：`#relay` 没有像素上限、有内衬、
+// 超宽屏走栅格、长串可断行（免得一个 URL 把表格撑出横向滚动）。
+// 注意：`@media (max-width: 560px)` 里的 max-width 是断点，不是内容上限，别误判。
+test("#34 布局：铺满宽度、有内衬、超宽屏栅格、长串可断行", async () => {
+  const css = await readFile(new URL("./style.css", import.meta.url), "utf8");
+  const relayRule = /#relay\s*\{[^}]*\}/.exec(css)?.[0] ?? "";
+  assert.match(relayRule, /max-width:\s*none/, "#relay 的宽度要放开");
+  assert.doesNotMatch(relayRule, /max-width:\s*\d/, "#relay 不该有像素上限");
+  assert.match(css, /^body\s*\{[^}]*padding:/m, "要自己给内衬，别贴边");
+  assert.match(css, /@media\s*\(min-width:\s*1200px\)/, "超宽屏要有栅格");
+  assert.match(css, /grid-template-columns/, "栅格要真的是列");
+  assert.match(css, /overflow-wrap:\s*anywhere/, "长串要能断行");
+  assert.match(css, /@media\s*\(max-width:\s*560px\)/, "窄面板要有堆叠布局");
 });
