@@ -17,10 +17,25 @@ param(
   [string]$WinresJson = '',
   # 上游源码目录；留空用本目录旁的 upstream
   [string]$UpstreamRoot = '',
-  [string]$Out = ''
+  [string]$Out = '',
+  # 落后闸门：默认开着，基线跟不上就拒绝编译（#31）。明确「这次不算发版产物」
+  # 时才关掉。
+  [switch]$SkipFreshness
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 落后闸门（#31 第二节第 5 条）：基线跟不上就别编了——编出来的东西迟早要重打。
+# 判据在 check-upstream-freshness.ps1 里：≤24 小时 或 ≤10 个 tag，两项都超才拦。
+if (-not $SkipFreshness) {
+  $gate = Join-Path $PSScriptRoot 'check-upstream-freshness.ps1'
+  if (Test-Path $gate) {
+    & $gate -RequireLatest
+    if ($LASTEXITCODE -ne 0) {
+      throw "上游落后闸门未通过（exit $LASTEXITCODE）：先跑 tools\follow-upstream.ps1 追平，或用 -SkipFreshness 明确跳过"
+    }
+  }
+}
 
 # 版本串的兜底来源：**最新那份补丁的文件名**——它本来就写着基线 tag 与 fish 序号
 # （`magpie-v0.1.2799+fish.16.patch`），是「这棵树打了什么」的唯一权威。

@@ -236,3 +236,50 @@ LAN 关闭（默认）走随机；LAN 开启才走 `gatewayPortCandidates()`。�
 - **#33**（`neartoken:prefs` + usage 逐条 rows）：现在追平落地了，可以在 `v0.1.3140` 基线上动 Go 了；
 - 落后闸门（≤24h 或 ≤10 tag）还没接进发布脚本；
 - 没出包（用户明确「暂时不打包发版」）。
+---
+
+## 八、#33 与落后闸门（2026-11-06 落实）
+
+### 8.1 落后闸门（#31 第二节第 5 条 + 验收第 4 条）
+
+新增 `plugins/magpie/tools/check-upstream-freshness.ps1`：
+
+- 判据：**记录的基线 ≤24 小时内抓的** 或 **基线之上上游只多了 ≤10 个 tag**，两项都超才算落后（任一满足即放行）；
+- 数据源：`patches/upstream.json` 的 `baseTag`/`fetchedAt` + 现场 `gh api repos/yetone/magpie/tags`（不读缓存记录，缓存本身可能就是旧的）；
+- 退出码：`0` 新鲜 / `2` 落后（`-RequireLatest` 时）/ `3` 判不了（记录缺失、取不到上游）；
+- 离线可复现：`-LatestTag` 覆盖最新 tag、`-Now` 覆盖时钟、`-Record` 指向别的记录。
+
+接进构建：`build-magpie.ps1` 开头调它 `-RequireLatest`，**跟不上直接 throw 不编**（`-SkipFreshness` 才跳过）。
+
+验收演练（#31 要求的那次）：
+
+```
+pwsh tools\check-upstream-freshness.ps1 `
+  -Record .work\preview\fake-behind.json -LatestTag v0.1.3140 `
+  -Now '2026-11-06T17:50:00+08:00' -RequireLatest
+
+  基线      v0.1.3110（11-03 17:46 抓的，72.1 小时前）
+  上游最新  v0.1.3140
+  落后      30 个 tag
+  结论      落后：72.1 小时前抓的基线，上游已多 30 个 tag
+  → exit 2
+```
+
+现状是「新鲜」：基线 0.3 小时前抓的，上游已到 v0.1.3148，只多 8 个 tag（≤10）。
+
+一个踩到的坑记在这里：局部变量不能叫 `$now`——PowerShell 变量名**不区分大小写**，会和参数 `$Now` 撞名，赋值时又被转回 `[string]`，报的却是「无法把日期转成 Int32」。改用 `$clockNow` / `$recordedAt`。
+
+### 8.2 #33 neartoken 设置界面通道 + 用量逐条流水
+
+**① `neartoken:prefs`（已落，fish.18）**
+
+- 新增 `internal/neartoken/prefs.go`：`Prefs{disabled, hiddenGroups, pinned, updatedAt}` 落 `<config>/neartoken-prefs.json`，先写 `.tmp` 再改名；
+- `manager.go` 的 `dispatch` 加 `case "neartoken:prefs"`，三种动作 `get`（缺省）/ `set` / `clear`，参数形状不对报 `INVALID_PARAM`；
+- **不经插件 options 通道**：只写这个文件与内存缓存，插件不重建 ⇒ 供应商列表不进不出。用例 `TestPrefsLeaveProvidersAlone` 直接比对 `providers.json` 字节不变。
+- 页面侧还要在插件自己的 `package.json` 的 `magpie.calls` 里加一条 `neartoken:prefs`（宿主白名单），那在社区插件仓，不在本仓。
+
+**② `neartoken:usage` 逐条 rows（已落契约，等站点）**
+
+- `UsageWindow` 加 `Rows []UsageRow`（`time/timestamp/kind/tokenName/group/model/effort/tps/input/output/bytes/cost/costText/ttft/dur/detail`）；
+- `readUsage` 解析应答里的 `rows`（站点自己的下划线字段名），**没有这层数据时给空数组而不是 nil**，`Available` 仍为 true——页面据此说「这个窗口没有逐条记录」，不把「站点没这功能」说成「查询失败」；
+- 站点逐条日志的真实路径仍未验证（现有只有一个汇总端点 `/api/dsh/device/usage`），所以这一步是**契约先行**：站点一旦在同一个应答里给出 `rows`，页面立即可用；不给就一直是空数组。
