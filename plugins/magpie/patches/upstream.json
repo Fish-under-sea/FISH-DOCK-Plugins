@@ -3,17 +3,17 @@
   "upstream": "yetone/magpie",
   "baseTag": "v0.1.3140",
   "baseSha": "45f1af077eb7e5d7a8b0fcbd382d0b048b98f3d6",
-  "fetchedAt": "2026-11-07T03:55:00.0000000+08:00",
-  "patch": "magpie-v0.1.3140+fish.25.patch",
-  "versionTag": "v0.1.3140+fish.25",
-  "fileVersion": "0.1.3140.25",
+  "fetchedAt": "2026-11-07T05:00:00.0000000+08:00",
+  "patch": "magpie-v0.1.3140+fish.26.patch",
+  "versionTag": "v0.1.3140+fish.26",
+  "fileVersion": "0.1.3140.26",
   "product": "magpie fish",
   "result": "clean",
   "counts": {
     "files": 118,
-    "hunks": 163,
+    "hunks": 176,
     "appliedFiles": 118,
-    "appliedHunks": 163,
+    "appliedHunks": 176,
     "conflictFiles": 0,
     "conflictHunks": 0
   },
@@ -21,5 +21,6 @@
   "note": "第一次真正追平：基线从 v0.1.2799 走到 v0.1.3140（落后 337+ tag），26 个冲突 hunk 全部消化。补丁里的模型分类改为上游的 Serves。",
   "note2": "#33：neartoken 设置界面通道（neartoken:prefs）+ usage 逐条 rows 落进 fish.18。",
   "note3": "fish.24（magpie 插件 2.2.9）：#36 四项入内——插件页刷新触发重列、handOver 防抖（只认插件已登录那条、不再清 catalog）、分组语义口径钉住、旧 options 三键迁移；另加页面内嵌帧支持（frame-src 放行页面自己目录、bridge.js 任意深度可取），供合并后的「签到&探针」页内两页切换。",
-  "note4": "fish.25：供应商编辑弹窗（.modal .dialog.roomy）宽度恢复为窗口的 72%（上限 1100px；原先 56%/880px 在宽窗口里显得窄、账号卡右侧留白过多）。只动 app.css 一条规则。"
+  "note4": "fish.25：供应商编辑弹窗（.modal .dialog.roomy）宽度恢复为窗口的 72%（上限 1100px；原先 56%/880px 在宽窗口里显得窄、账号卡右侧留白过多）。只动 app.css 一条规则。",
+  "note5": "fish.26：名称、价格与推理档位里每个模型多一个「上下文」输入框（128k/1m），写的是高级里 model=size 的同一份 contexts；两边双向同步，恢复默认一并清掉。不新增按钮，只加这一个字段。"
 }
