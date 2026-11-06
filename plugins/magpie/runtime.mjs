@@ -112,15 +112,24 @@ export function createRuntime(context){
     else do{listeningPort=await freePort()}while(listeningPort===port||listeningPort===upstreamPort);
     if(!listeningPort)throw serviceError('PORT_IN_USE');
     const gateway=gatewayAddr(gatewayHost(prefs.lan),listeningPort);
-    // 出厂预置的页面插件随 Dock 内置在 page-plugins/ 下。启动前逐个同步到
-    // <data>/plugins/<name>，并让 plugins.json 只用这个稳定路径引用：升级之后路径
-    // 不变，页面才跟着换版本；旧包目录被清理也不会 404。
+    // 出厂预置的插件随 Dock 内置在 page-plugins/（页面插件）与 provider-plugins/
+    // （供应商插件，Meoo 模型直连）下。启动前逐个同步到 <data>/plugins/<name>，并让
+    // plugins.json 只用这个稳定路径引用：升级之后路径不变，插件才跟着换版本；旧包
+    // 目录被清理也不会 404。
     // 没有内置目录（普通 magpie）时不碰清单，仍由原生按包名装 npm 上的同名包。
-    const bundledPages=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins');
+    // package 是各插件自己的包名：页面插件在社区命名空间 @magpie-community/（#32 的
+    // 更名未落地，保持不变），我们自己的供应商插件用 @fish-under-sea/；
+    // rewriteSeedSpec 据此只改写同一个包的旧条目，不动用户自己装的别的插件。
+    const bundled=[
+     {folder:'page-plugins',name:'page-checkin',package:'@magpie-community/page-checkin'},
+     {folder:'page-plugins',name:'page-relay-probe',package:'@magpie-community/page-relay-probe'},
+     {folder:'provider-plugins',name:'opencode-meoo-auth',package:'@fish-under-sea/opencode-meoo-auth'},
+    ];
     try{
-     for(const name of ['page-checkin','page-relay-probe']){
-      const seeded=await syncPageDirectory({source:path.join(bundledPages,name),data:portable.data,name,onPhase:track,signal});
-      if(seeded)await registerSeedPage({data:portable.data,name,directory:seeded.directory,onPhase:track,signal});
+     for(const entry of bundled){
+      const source=path.join(path.dirname(fileURLToPath(import.meta.url)),entry.folder,entry.name);
+      const seeded=await syncPageDirectory({source,data:portable.data,name:entry.name,onPhase:track,signal});
+      if(seeded)await registerSeedPage({data:portable.data,name:entry.name,package:entry.package,directory:seeded.directory,onPhase:track,signal});
      }
     }catch(error){if(error.name==='AbortError')throw error;throw serviceError('DATA_MIGRATION_FAILED')}
     // 出厂预装的社区供应商插件按「当前基线 − 已登记」增量补登记（#71）：基线新增

@@ -83,6 +83,26 @@ test('npm 包名条目与重复条目都被收束到第一条稳定路径',async
  assert.deepEqual(JSON.parse(rows.text).plugins,[{spec,off:true}],'同包多条只留第一条');
 });
 
+test('第一方包名（@fish-under-sea/）的旧条目被收束，社区名不受影响',async()=>{
+ const spec=path.join(os.tmpdir(),'magpie-stable','plugins','opencode-meoo-auth');
+ const nl=String.fromCharCode(10);
+ // 传了 package：第一方命名空间下的三种 spec 形态都收束到稳定路径
+ for(const stale of ['@fish-under-sea/opencode-meoo-auth@latest','@fish-under-sea/opencode-meoo-auth','@fish-under-sea/opencode-meoo-auth#plugins/magpie/provider-plugins/opencode-meoo-auth']){
+  const next=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:'@fish-under-sea/page-usage@latest'},{spec:stale,options:{collapsed:true}}]},null,2)+nl,spec,name:'opencode-meoo-auth',package:'@fish-under-sea/opencode-meoo-auth'});
+  assert.equal(next.changed,true,`${stale} 应被改写`);
+  const manifest=JSON.parse(next.text);
+  assert.equal(manifest.plugins.length,2);
+  assert.deepEqual(manifest.plugins[1],{spec,options:{collapsed:true}});
+ }
+ // 同名不同 scope 的社区包不是同一个插件，不动
+ const other=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:'@magpie-community/opencode-meoo-auth@latest'}]},null,2)+nl,spec,name:'opencode-meoo-auth',package:'@fish-under-sea/opencode-meoo-auth'});
+ assert.equal(JSON.parse(other.text).plugins.length,2,'社区名追加，原位保留');
+ // 不传 package 时默认仍是社区命名空间（既有行为不回退）
+ const legacy=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:'@magpie-community/page-checkin@latest'}]},null,2)+nl,spec:path.join(os.tmpdir(),'magpie-stable','plugins','page-checkin')});
+ assert.equal(JSON.parse(legacy.text).plugins.length,1);
+ assert.match(JSON.parse(legacy.text).plugins[0].spec,/magpie-stable/);
+});
+
 test('别的插件与相似名不受影响',async()=>{
  const spec=path.join(os.tmpdir(),'magpie-stable','plugins','page-checkin');
  const plugins=[{spec:'@magpie-community/page-usage@latest'},{spec:'@magpie-community/page-checkin-extra@latest'},{spec:'C:\\x\\page-checkin-extra'},{spec:'C:\\x\\prepage-checkin'}];

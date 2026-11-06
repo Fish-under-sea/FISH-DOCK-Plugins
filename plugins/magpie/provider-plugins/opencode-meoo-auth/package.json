@@ -1,0 +1,41 @@
+{
+  "name": "@fish-under-sea/opencode-meoo-auth",
+  "version": "0.1.0",
+  "description": "OpenCode & Magpie provider plugin for Meoo 秒悟 (meoo.com)：浏览器 PKCE 授权 / 复用 dsh-meoo-connect 登录态 / 手填项目服务 AK，模型目录实时同步",
+  "type": "module",
+  "main": "./opencode.mjs",
+  "exports": {
+    ".": "./opencode2.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "opencode.mjs",
+    "opencode2.mjs",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "magpie",
+    "meoo",
+    "秒悟",
+    "openai-compatible"
+  ],
+  "license": "MIT",
+  "magpie": {
+    "icon": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAADbElEQVR4nOWZ51IVQRCF52nIlxwlq6CEhxKzYkQQxQBmxYSoiOFdFEQQlYyCCNXW7N4tL1VwxgP3zsLOqepf++v7pqe7plYpMi2HV6X5yB9pPupX0zFdK9J0fEUO6jqh67ccOBmvU8vSqOv0sjS2L0tD+5I0nFmS/brO6vol+87F6/xP2avrgl/1FxelvsOvuku6FqSuc0FqdXXNS42uy35Vd895xfIY09q2Ji1tq6LBdzp89ZU5qbqqa1aqemalsmd260JaD63JboevvDbj1Z7rM5yIqMF7dWP6/yREFb5C102DhKjDV/ROS3nv1MYSXIEv75uSsr4NJLgEX3brhzgNr6v0doIEF+HXC3AQvvTO9/UCXIMvCQS4Cl9yV9c3US7DF9/TAkh4FBvwKCx88f24AObkjQJSfPJQAAnvCWDbHgqw0PYoLHzRg0ktgLvzKDbuPBRAwvsCyIEHBVgYeCYBDHzRw0lR7LQ3CUj1tEdh4Qs9AeSqQ7Gx6owCCPjCR1+1gGjveQRfoAWw8LADOhbh92TseRQWvqA/EECcPIo+eZRk7HkogIQv6J8QxbY9FrBgFrDNPY8FcPD5jydEsXceCug0CEjCnkdh4X0B5MBDqTUISMaehwJI+PwnWgA57aGArnmDgO3veZMABj7v6bgodtWh1JgEJGHPo7DwvoCI73kEn/dsXBQLDzvAwnsedgAJn+sJIE8excZ7HoWFz33+RQvg2t4oIMXveSiAhPcEsHceCrDwnkdh4WMDgQBi4KHYeM9DASR8bGBMFDvtsYDUv+exAA4+9mJMFLvqoAAL73kUFj7HExDxPY/gcwbjAhh4FBvwsANI+OzBz6LYkzcJSPXJo7Dw2S+1ALLtUWy0vVEAAZ/9Ki6AufNGASm+81AACZ+lBbADDwqwMPBQWPis16NaADftUWxMeyiAhPcFkKsOCrCw6kwCGPjMoVFRUd/zCD5zaERU2P/nWXgUFj7zzYiosP/PsycPBZDwGZ6AkP/Ps22PwsJnDMcFhPl/nr3zUAAJnzH8SVTY/+fZgYfCwqe/DQSE+H+enfZQAAnvCdAJ8/88u+qggK3A+wKiu+c3g09/lyjAQfi09x//CXARfp0AT4LL8Douwad92ECAJ8Fl+CBOwwdxGj6I0/CJ2e3wWwbfLDsdnuX5C8g/SO/MmyfJAAAAAElFTkSuQmCC"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fish-under-sea/FISH-DOCK-Plugins.git",
+    "directory": "plugins/magpie/provider-plugins/opencode-meoo-auth"
+  },
+  "scripts": {
+    "test": "node --test test/offline.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -115,6 +115,17 @@ Magpie、OFM 的 `gateway.open` 是宿主提供的特定管理页入口，地址
 
 预装厂商在插件页、供应商页、侧边栏、路由与用量卡片上的图标由 magpie 侧接管，不在插件包里：素材编进 exe（`internal/provider/brandicons/`，22 份，覆盖 13 个插件注册的 22 个 provider id；含 2.1.4 移出预装但素材保留的 `opencode-zen-free` 与新增的 `meoo-agent`），开关是数据目录下 `icons/brand/on` 一个标记文件，页面那两颗按钮是 `brand:status` / `brand:set`。之所以不放插件包，是因为社区插件一升级 `magpie.icon` 就回原样——那正是「更新完图标就掉」的成因。改素材要重编 exe，步骤见 [自编译 Magpie](../../plugins/magpie/tools/README.md)。
 
+## Magpie 的供应商插件
+
+`plugins/magpie/provider-plugins/` 下是随 Magpie 包一起分发、首启装进 magpie 插件清单的**供应商插件**（provider plugin，目前只有 `opencode-meoo-auth`，见 #20 ②）。与页面插件同机首：启动前由 `runtime.mjs` 的种子循环同步到 `<data>/plugins/<name>`，`plugins.json` 只写稳定绝对路径；升级换内容不换路径。它们同样不是本仓的发行单元。
+
+供应商插件按 magpie 的 provider 契约写（与社区 `@magpie-community/opencode-*-auth` 同款）：`package.json` 的 `main` 指向 1.x 插件函数、`exports["."]` 指向 2.x 适配层，导出 `config`（注册 provider）、`provider.models`（模型目录）、`auth`（登录方法、续期、每请求 loader）。要点：
+
+- **包名用第一方命名空间** `@fish-under-sea/<name>`，不占社区的 `@magpie-community/`（页面插件的更名见 #32，未落地前仍是社区名）。`page-seed.mjs` 的 `isSeedSpec` / `rewriteSeedSpec` / `registerSeedPage` 因此收一个 `package` 参数，默认仍是 `@magpie-community/<name>`，调用方显式传第一方包名。
+- **凭证只进 magpie 的账号记录**（`client.auth.set`），插件自己不落文件、不写日志；读本机既有登录态（如 Meoo 的 dsh 登录态）必须严格只读。
+- **思考档位**在模型条目上声明 `variants`（`{ low: { reasoningEffort: "low" }, … }`），AI SDK 的 openai-compatible 线会映射成请求体的 `reasoning_effort`；不声明则宿主 UI 无档位可选、请求也不带（2026-11 实测 Meoo 网关接受 low/medium/high 且真实影响思考长度）。
+- 新增一个内置供应商插件 = 建目录 + 在 `runtime.mjs` 的 `bundled` 列表加一行（folder/name/package）。打包无需改 `stage-development.mjs`：它递归复制 `plugins/magpie/` 下所有非点目录。
+
 ## 事件与数据
 
 声明 `events` 后通过 `onEvent` 接收宿主规范化事件。飞书按配置筛选通知，不接收远程指令。配置变更与 Webhook 测试分别处理；测试按钮会向用户配置的机器人发送消息，自动回归使用替身。

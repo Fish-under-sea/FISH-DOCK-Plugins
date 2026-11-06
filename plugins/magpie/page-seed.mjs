@@ -70,21 +70,23 @@ export async function syncPageDirectory({source,data,name=seedDirectoryName,onPh
  return {directory,digest:written?await directoryDigest(directory,{signal}):wanted,written};
 }
 
-// 条目指向签到页的判定：spec 是绝对路径（旧版把包目录写死），或以包名开头
+// 条目指向内置插件的判定：spec 是绝对路径（旧版把包目录写死），或以包名开头
 // （npm 的 @magpie-community/page-checkin@latest、git 地址与「包名#目录」同理）。
 // 不认其他插件，避免误改用户自己装的同名以外的东西。
-export function isSeedSpec(spec,name=seedDirectoryName){
+// package 是包名（默认社区命名空间 @magpie-community/<name>）；我们自己的内置件
+// 用 @fish-under-sea/<name>（#32 的方向），由调用方显式传入。
+export function isSeedSpec(spec,name=seedDirectoryName,packageName){
  if(typeof spec!=='string'||!spec)return false;
  if(path.isAbsolute(spec)){
   return path.basename(spec.replace(/[\\/]+$/,''))===name||spec.replace(/\\/g,'/').split('/').includes(name);
  }
- const packageName=`@magpie-community/${name}`;
- return spec===packageName||spec.startsWith(`${packageName}@`)||spec.startsWith(`${packageName}/`)||spec.startsWith(`${packageName}#`);
+ const packageNameFull=packageName||`@magpie-community/${name}`;
+ return spec===packageNameFull||spec.startsWith(`${packageNameFull}@`)||spec.startsWith(`${packageNameFull}/`)||spec.startsWith(`${packageNameFull}#`);
 }
 
 // plugins.json 只由结构相同的 {spec,off,options} 条目组成。改写后逐字比较：没变化就
 // 不动磁盘，也不刷新时间戳。
-export function rewriteSeedSpec({raw,spec,name=seedDirectoryName}){
+export function rewriteSeedSpec({raw,spec,name=seedDirectoryName,package:packageName}){
  const hasRaw=raw!==undefined&&raw!==null;
  const text=hasRaw?String(raw):'';
  const body=text.replace(/^\uFEFF/,'');
@@ -98,7 +100,7 @@ export function rewriteSeedSpec({raw,spec,name=seedDirectoryName}){
  // 否则 magpie 会按包名去重成随机的那一份。
  let kept=false;
  manifest.plugins=manifest.plugins.filter(entry=>{
-  if(!entry||typeof entry!=='object'||!isSeedSpec(entry.spec,name))return true;
+  if(!entry||typeof entry!=='object'||!isSeedSpec(entry.spec,name,packageName))return true;
   if(kept)return false;
   kept=true;entry.spec=spec;return true;
  });
@@ -124,12 +126,12 @@ export async function writeManifest(file,text,signal){
  finally{await fs.unlink(temporary).catch(error=>{if(error.code!=='ENOENT')throw error})}
 }
 
-// 让 <data>/plugins.json 用稳定路径引用签到页，其余条目原样保留。
-export async function registerSeedPage({data,directory,name=seedDirectoryName,onPhase=()=>{},signal}={}){
+// 让 <data>/plugins.json 用稳定路径引用内置插件（页面或供应商），其余条目原样保留。
+export async function registerSeedPage({data,directory,name=seedDirectoryName,package:packageName,onPhase=()=>{},signal}={}){
  const file=path.join(data,'plugins.json');
  let raw;
  try{raw=await fs.readFile(file,'utf8')}catch(error){if(error.code!=='ENOENT')throw error}
- const next=rewriteSeedSpec({raw,spec:directory,name});
+ const next=rewriteSeedSpec({raw,spec:directory,name,package:packageName});
  if(!next.changed)return {written:false,file,spec:directory};
  onPhase('prepare-data');
  signal?.throwIfAborted();
