@@ -4,9 +4,9 @@
   "baseTag": "v0.1.3140",
   "baseSha": "45f1af077eb7e5d7a8b0fcbd382d0b048b98f3d6",
   "fetchedAt": "2026-11-06T17:26:44.1012743+08:00",
-  "patch": "magpie-v0.1.3140+fish.18.patch",
-  "versionTag": "v0.1.3140+fish.18",
-  "fileVersion": "0.1.3140.18",
+  "patch": "magpie-v0.1.3140+fish.19.patch",
+  "versionTag": "v0.1.3140+fish.19",
+  "fileVersion": "0.1.3140.19",
   "product": "magpie fish",
   "result": "clean",
   "counts": {
