@@ -34,7 +34,19 @@ export function managedUpdateScript(source){
  return;
 `);
  source=source.replace(/(function renderUpdateBadge\([^)]*\)\s*\{)/,`$1\n document.querySelector('#update')?.setAttribute('hidden',''); document.querySelector('.update-wrap')?.setAttribute('hidden',''); return;\n`);
- const start=source.indexOf('  // what changed in this version, and in one waiting;'),end=source.indexOf('  const open = el("button", "text", t("Open"));',start);
- if(start<0||end<start)throw Error('Magpie 管理页更新设置已变更，请更新 Dock 适配层');
- return source.slice(0,start)+source.slice(end);
+ // 这里原先按「从某条注释切到下一个 const open = el("button", "text", t("Open"))」删块，
+ // 但在上游 0.1.3140 上那个终点挪到了两百多行之后：一刀切掉的是「命令行 / 网关地址 /
+ // 日志 / 配置目录」这些与更新无关的设置行，管理页于是只剩个空壳（用户看到的
+ // 「界面全错、body 空」）。改成**只删与 What's new 有关的那三行**，再补一句把入口
+ // 变成空操作；一行都没命中就什么都不切，绝不抛错——抛错在代理那边是 502，等于把
+ // 整页打死。
+ const dropRows=[
+  /^[ \t]*const notes = el\("button", "text", t\("Open"\)\);\r?\n/m,
+  /^[ \t]*notes\.onclick = \(\) => openWhatsNew\(notes\);\r?\n/m,
+  /^[ \t]*row\(t\("What's new"\)[^\n]*\r?\n/m,
+ ];
+ for(const pattern of dropRows)source=source.replace(pattern,'');
+ // 兜底：即使上游把这段搬了家，那个入口也点不出东西（函数声明可以重新赋值）。
+ source+=`\n;(function(){try{openWhatsNew=function(){};}catch(e){}})();\n`;
+ return source;
 }

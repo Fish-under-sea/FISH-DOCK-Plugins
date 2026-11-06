@@ -35,8 +35,19 @@ export function pluginPagePolicy(requestPath,policy){
   "$1$2'self' http://tauri.localhost$3");
 }
 // 仅适配插件持有的回环服务，模型流不缓存、不重试。
-export async function embedProxy({port,upstreamPort,retries=2,delays=[120,240]}){
+export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120,240]}){
  const sockets=new Set();
+ // Dock 把管理页装在跨站 iframe 里（宿主是 tauri://），浏览器不会把 magpie 那条
+ // SameSite=None/Partitioned 的鉴权 cookie 带回来：HTML 能出来，boot.js / app.css
+ // 全 401，用户看到的就是「界面全错、内容空白、字体回退」。这里由代理在转发时
+ // 无条件补上鉴权 cookie——浏览器带不带都不影响，页面恢复。
+ const authCookie=key?`magpie_web_${upstreamPort}=${key}`:'';
+ const withAuth=value=>{
+  if(!authCookie)return value;
+  const parts=String(value||'').split(';').map(p=>p.trim()).filter(Boolean).filter(p=>!p.startsWith(`magpie_web_${upstreamPort}=`));
+  parts.push(authCookie);
+  return parts.join('; ');
+ };
  const cookie=value=>value.replace(/;\s*(?:SameSite=[^;]*|Secure|Partitioned)(?=;|$)/gi,'')+'; SameSite=None; Secure; Partitioned';
  const server=http.createServer(async(req,res)=>{
   let pathname;try{pathname=new URL(req.url,'http://127.0.0.1').pathname}catch{res.writeHead(400);res.end();return}
@@ -45,6 +56,7 @@ export async function embedProxy({port,upstreamPort,retries=2,delays=[120,240]})
    res.end(JSON.stringify({managed:true,state:'managed',releases:[],message:'版本由 FISH Dock 插件管理'}));return;
   }
   const headers={...req.headers};let body;
+  if(authCookie)headers.cookie=withAuth(headers.cookie);
   if(pathname==='/api/settings'&&req.method==='POST'){
    try{
     const chunks=[];let size=0;

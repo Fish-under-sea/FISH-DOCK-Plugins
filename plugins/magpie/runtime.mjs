@@ -102,7 +102,8 @@ export function createRuntime(context){
    // 端口先占后拉：代理在复制运行时之前就绑住服务端口（冲突转 PORT_IN_USE，短重试）。
    // 之后几十秒的复制、页面同步、就绪等待期间端口一直在手，别的实例抢不走，也就
    // 不会出现「magpie 已经拉起来，最后一步绑端口失败再被回滚」。
-   const proxy=await embedProxy({port,upstreamPort});
+   // key 传进代理：它在转发时补鉴权 cookie，Dock 的跨站 iframe 里页面资源才不会 401。
+ const proxy=await embedProxy({port,upstreamPort,key});
 	// #30：listeningPort / fellBack 要留到 return 那一行用，声明必须在 try 外面——
 	// 之前写在 try 里，启动成功时 return 反而抛 ReferenceError，插件永远报服务异常。
 	let portable,child,listeningPort=0,fellBack=false;
