@@ -1,10 +1,10 @@
 # 插件开发者指南
 
-当前协议为 v1。已发布的四个：飞书 **2.2.0**、Clash **2.2.8**、Magpie **2.2.9**（exe `v0.1.3140+fish.24`）、OFM **2.0.1**（暂停维护）；作者用数组、不再有维护者字段。`plugins/relay-probe` 是开发中的中转站行为探针（决策与调用通道都走宿主），尚未进入发行目录；`plugins/magpie/bundled-plugins/` 下的两个内置件随 Magpie 包分发、不单独发行：`magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `magpie-purge`（破甲）。两者的源码在本仓留一份内置副本，主仓分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1。已发布的四个：飞书 **2.2.0**、Clash **2.2.8**、Magpie **2.2.9**（exe `v0.1.3140+fish.24`）、OFM **2.0.1**（暂停维护）；作者用数组、不再有维护者字段。`plugins/relay-probe` 是开发中的中转站行为探针（决策与调用通道都走宿主），尚未进入发行目录；两个内置件按 npm 包登记、不单独发行：`@fish-under-sea/magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `@fish-under-sea/magpie-purge`（破甲），首装与后续更新都交给 magpie 自己的更新循环，Dock 不随包分发它们的目录。两者的源码分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
-Dock 仓维护桌面宿主、Node SDK、浏览器桥、安装更新与回滚、Windhawk、「插件」管理页和标签排序。本仓维护 `plugins/feishu`、`plugins/clash`、`plugins/magpie`（含 `bundled-plugins/` 两个内置件）、`plugins/ofm`，以及开发中的 `plugins/relay-probe`、`shared`、`tools/stage-development.mjs`、商店目录和插件文档。
+Dock 仓维护桌面宿主、Node SDK、浏览器桥、安装更新与回滚、Windhawk、「插件」管理页和标签排序。本仓维护 `plugins/feishu`、`plugins/clash`、`plugins/magpie`、`plugins/ofm`，以及开发中的 `plugins/relay-probe`、`shared`、`tools/stage-development.mjs`、商店目录和插件文档。
 
 不要把业务页面重新写入 Dock 设置页，也不要把源码目录当成用户数据目录。正常发行版默认不预装这些插件；调试版通过明确的开发目录装载。
 
@@ -99,7 +99,9 @@ Magpie、OFM 的 `gateway.open` 是宿主提供的特定管理页入口，地址
 
 ## Magpie 的页面插件
 
-`plugins/magpie/bundled-plugins/` 下是随 Magpie 包一起分发、首启同步进 magpie 数据目录并写进它 `plugins.json` 的内置插件：`magpie-checkin-relay-probe`（一个页面插件、页内「签到 / 中转站探针」两页切换）与 `magpie-purge`（破甲 · Purge，页面 + 网关钩子）。它们不是本仓的发行单元；主仓各自独立（npm 同名包），这里只是内置副本，发版时同步一次。
+`plugins/magpie/page-seed.mjs` 里列出两个**按 npm 包登记**的内置插件：`@fish-under-sea/magpie-checkin-relay-probe`（一个页面插件、页内「签到 / 中转站探针」两页切换）与 `@fish-under-sea/magpie-purge`（破甲 · Purge，页面 + 网关钩子）。Dock 只把它们写进 magpie 的 `plugins.json`，**不随包分发目录**：首装与后续更新都交给 magpie 自己的更新循环（与 `@magpie-community` 那批预装供应商插件同一条路），所以上游发版之后 Dock 不用跟着发一次。两者的源码分别维护在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。
+
+2.2.8 及更早的两个内置页（`page-checkin` / `page-relay-probe`）升级时整条删除；2.2.9 留下的「同步目录 + 绝对路径」写法也会在启动时迁成 npm spec。
 
 页面跑在 magpie 的沙箱帧里（CSP `connect-src 'none'`，一条请求都发不出去），所以页面想做的每件事都要回到宿主，靠 `package.json` 的两个字段声明：
 

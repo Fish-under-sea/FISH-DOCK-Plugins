@@ -49,9 +49,9 @@ export function stage({out,sdk,ofm,ofmStaged,magpie,mihomo,only,include}={}){
    if(item.isDirectory()&&!item.name.startsWith('.'))copyDir(source,target);
    else if(item.isFile()&&!item.name.includes('.test.')&&item.name!=='stage.mjs'&&!item.name.endsWith('.cs'))copy(source,target);
   }
-  // Magpie 的内置插件（2.2.9 起两个：签到&探针、破甲）以目录随插件发布：
-  // plugins/magpie/bundled-plugins/ 由上面这一轮按目录整体复制带走，首启由
-  // runtime.mjs 同步到 magpie 数据目录并写进它的 plugins.json。
+  // Magpie 的内置插件（签到&探针、破甲）不随包分发目录：它们以 npm spec 写进
+  // magpie 的 plugins.json（page-seed.mjs），首装与更新都走 magpie 自己的更新
+  // 循环。所以这里没有额外的内置资源要复制。
   for(const item of fs.readdirSync(path.join(repository,'shared'),{withFileTypes:true}))if(item.isFile()&&!item.name.includes('.test.'))copy(path.join(repository,'shared',item.name),path.join(root,'shared',item.name));
   copy(path.join(sdk,'node','plugin.mjs'),path.join(root,'plugins',key,'sdk.mjs'));
   copy(path.join(sdk,'browser','bridge.js'),path.join(root,'bridge.js'));
