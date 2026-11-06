@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
-import {crc32,deflateRawSync} from 'node:zlib';
+import {deflateRawSync} from 'node:zlib';
+// 自己算 CRC：node:zlib 的 crc32 在本机 Node 24.14 上与 deflate/inflate 同进程混用
+// 会给出不同的值（详见 tools/crc32.mjs 顶部实测），打包与校验必须一致。
+import {crc32} from './crc32.mjs';
 import {fileURLToPath} from 'node:url';
 import {stage,definitions,identity} from './stage-development.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex');

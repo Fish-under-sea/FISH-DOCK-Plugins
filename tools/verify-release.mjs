@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
-import {inflateRawSync,crc32} from 'node:zlib';
+import {inflateRawSync} from 'node:zlib';
+import {crc32} from './crc32.mjs';
 import {fileURLToPath} from 'node:url';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const check=(condition,message)=>{if(!condition)throw Error(message)};
