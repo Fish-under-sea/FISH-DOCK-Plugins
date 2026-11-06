@@ -1,10 +1,10 @@
 # 插件开发者指南
 
-当前协议为 v1。已发布的四个：飞书 **2.1.5**、Clash **2.1.5**、Magpie **2.1.6**（exe `v0.1.2732+fish.10`）、OFM **2.0.1**（暂停维护）；作者用数组、不再有维护者字段。`plugins/relay-probe` 是开发中的中转站行为探针，尚未进入发行目录；`plugins/magpie/page-plugins/` 下的页面插件随 Magpie 包分发，也不单独发行。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1。已发布的四个：飞书 **2.2.0**、Clash **2.2.8**、Magpie **2.2.9**（exe `v0.1.3140+fish.24`）、OFM **2.0.1**（暂停维护）；作者用数组、不再有维护者字段。`plugins/relay-probe` 是开发中的中转站行为探针（决策与调用通道都走宿主），尚未进入发行目录；`plugins/magpie/bundled-plugins/` 下的两个内置件随 Magpie 包分发、不单独发行：`magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `magpie-purge`（破甲）。两者的源码在本仓留一份内置副本，主仓分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
-Dock 仓维护桌面宿主、Node SDK、浏览器桥、安装更新与回滚、Windhawk、「插件」管理页和标签排序。本仓维护 `plugins/feishu`、`plugins/clash`、`plugins/magpie`、`plugins/ofm`，以及开发中的 `plugins/relay-probe`、`shared`、`tools/stage-development.mjs`、商店目录和插件文档。
+Dock 仓维护桌面宿主、Node SDK、浏览器桥、安装更新与回滚、Windhawk、「插件」管理页和标签排序。本仓维护 `plugins/feishu`、`plugins/clash`、`plugins/magpie`（含 `bundled-plugins/` 两个内置件）、`plugins/ofm`，以及开发中的 `plugins/relay-probe`、`shared`、`tools/stage-development.mjs`、商店目录和插件文档。
 
 不要把业务页面重新写入 Dock 设置页，也不要把源码目录当成用户数据目录。正常发行版默认不预装这些插件；调试版通过明确的开发目录装载。
 
@@ -99,7 +99,7 @@ Magpie、OFM 的 `gateway.open` 是宿主提供的特定管理页入口，地址
 
 ## Magpie 的页面插件
 
-`plugins/magpie/page-plugins/` 下是随 Magpie 包一起分发、首启装进 magpie 插件清单的页面插件（`page-checkin`、`page-relay-probe`）。它们不是本仓的发行单元，但代码在这里维护。
+`plugins/magpie/bundled-plugins/` 下是随 Magpie 包一起分发、首启同步进 magpie 数据目录并写进它 `plugins.json` 的内置插件：`magpie-checkin-relay-probe`（一个页面插件、页内「签到 / 中转站探针」两页切换）与 `magpie-purge`（破甲 · Purge，页面 + 网关钩子）。它们不是本仓的发行单元；主仓各自独立（npm 同名包），这里只是内置副本，发版时同步一次。
 
 页面跑在 magpie 的沙箱帧里（CSP `connect-src 'none'`，一条请求都发不出去），所以页面想做的每件事都要回到宿主，靠 `package.json` 的两个字段声明：
 
