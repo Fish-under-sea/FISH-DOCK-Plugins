@@ -28,12 +28,12 @@
         "Elysia395",
         "FISH"
       ],
-      "version": "2.2.7",
+      "version": "2.2.8",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.7/clash.fish-plugin",
-      "sha256": "96340e97b7ab920cef10c2d9b3cfbdbbb3ef150887f1c65fef838736ec8493fb",
-      "bytes": 17184575,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.8/clash.fish-plugin",
+      "sha256": "56366e08e093dd66fbdf3cee0c5b95805e8f02e8cb71b434c4aa4a202ca446db",
+      "bytes": 17184850,
       "dependencies": [
         "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
@@ -47,12 +47,12 @@
         "FISH",
         "Jassdingk"
       ],
-      "version": "2.2.7",
+      "version": "2.2.8",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.7/magpie.fish-plugin",
-      "sha256": "e9bf3ced587b9880387319ce5ebcf0e1793e4a5c254314a026b52a16f99d7ab7",
-      "bytes": 36378611,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.8/magpie.fish-plugin",
+      "sha256": "47427c60eb8a6f573f88ef034092dd3d28084fe5f76e9dd2b576135ab6a86115",
+      "bytes": 36378837,
       "dependencies": [
         "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
