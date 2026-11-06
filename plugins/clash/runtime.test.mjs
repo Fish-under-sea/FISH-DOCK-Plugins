@@ -265,3 +265,73 @@ test('运行中换配置：候选文件只在 apply 成功后转正，失败时�
   assert.equal(existsSync(candidate),false,'失败也把候选文件清掉');
  }finally{await rm(dir,{recursive:true,force:true})}
 });
+// Dock 被强杀留下的系统代理租约：启动时必须自己收干净，否则没有代理进程的机器
+// 整台电脑的网都指向 127.0.0.1（用户报的「网络回环、无法联网」）。
+test('启动自愈：残留租约在 registry 仍是我们那份时被还原',async()=>{
+ let saved=JSON.stringify({schema:1,previous:{ProxyEnable:0,ProxyServer:'',ProxyOverride:''},
+  owned:{ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:'<local>'},
+  owner:{pid:1234,at:1}});
+ let live={ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:'<local>'};
+ const storage={read:async()=>saved,write:async(c,n,v)=>{saved=v}};
+ const adapter={read:async()=>({...live}),write:async values=>{live={...values}}};
+ const lease=createProxyLease({storage,adapter});
+ const result=await lease.recoverStale();
+ assert.equal(result.act,'restore');
+ assert.deepEqual(live,{ProxyEnable:0,ProxyServer:'',ProxyOverride:''},'注册表要还原成上次的原样');
+ assert.equal(saved,'','租约要清掉');
+});
+
+// 别的程序（TUN、另一个代理）改过注册表：只清我们自己的记录，不覆盖别人的设置。
+test('启动自愈：注册表已被别人改过时只丢记录',async()=>{
+ let saved=JSON.stringify({schema:1,previous:{ProxyEnable:0,ProxyServer:'',ProxyOverride:''},
+  owned:{ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:'<local>'}});
+ const live={ProxyEnable:1,ProxyServer:'127.0.0.1:9999',ProxyOverride:'*'};
+ const storage={read:async()=>saved,write:async(c,n,v)=>{saved=v}};
+ const adapter={read:async()=>({...live}),write:async values=>{live={...values}}};
+ const lease=createProxyLease({storage,adapter});
+ await lease.recoverStale();
+ assert.deepEqual(live,{ProxyEnable:1,ProxyServer:'127.0.0.1:9999',ProxyOverride:'*'},'别人的设置不许动');
+ assert.equal(saved,'');
+});
+
+// 没有租约时自愈什么都不做（绝大多数正常启动走这条）。
+test('启动自愈：没有租约时是 no-op',async()=>{
+ const storage={read:async()=>null,write:async()=>{}};
+ let wrote=false;
+ const adapter={read:async()=>({ProxyEnable:0,ProxyServer:'',ProxyOverride:''}),write:async()=>{wrote=true}};
+ const lease=createProxyLease({storage,adapter});
+ assert.equal((await lease.recoverStale()).act,'nothing');
+ assert.equal(wrote,false);
+});
+
+// 看门狗的判定：记录属于自己才还原；记录已换成新实例（owner.pid 不同）就撒手。
+test('看门狗判定：自己的租约还原，新实例的租约不动，对不上只丢记录',async()=>{
+ const {plan}=await import('./watchdog.mjs');
+ const owned={ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:'<local>'};
+ const previous={ProxyEnable:0,ProxyServer:'',ProxyOverride:''};
+ const record={schema:1,previous,owned,owner:{pid:42,at:1}};
+ assert.equal(plan(record,{...owned},42).act,'restore');
+ assert.equal(plan(record,{...owned},7).act,'superseded','新实例接管了租约');
+ assert.equal(plan(record,{ProxyEnable:1,ProxyServer:'127.0.0.1:9999',ProxyOverride:'*'},42).act,'discard');
+ assert.equal(plan(null,{...owned},42).act,'discard');
+});
+// 看门狗真正执行的还原动作（注入 read/write，不碰真注册表）：还原 previous、
+// 清掉租约、并把内核进程结束掉。
+test('看门狗 recover：还原注册表、清租约、结束内核',async()=>{
+ const {recover}=await import('./watchdog.mjs');
+ const {mkdtemp,writeFile,readFile}=await import('node:fs/promises');
+ const {tmpdir}=await import('node:os');
+ const {join}=await import('node:path');
+ const dir=await mkdtemp(join(process.env.FISH_TEST_TMP||tmpdir(),'clash-watchdog-'));
+ const lease=join(dir,'system-proxy.json');
+ await writeFile(lease,JSON.stringify({schema:1,
+  previous:{ProxyEnable:0,ProxyServer:'',ProxyOverride:''},
+  owned:{ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:'<local>'},
+  owner:{pid:4242,at:1}}));
+ let live={ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:'<local>'};
+ const result=await recover({leasePath:lease,parentPid:4242,mihomoPid:0,
+  read:async()=>({...live}),write:async values=>{live={...values}}});
+ assert.equal(result.act,'restore');
+ assert.deepEqual(live,{ProxyEnable:0,ProxyServer:'',ProxyOverride:''});
+ assert.equal(await readFile(lease,'utf8').catch(()=>''),'','租约要清掉');
+});

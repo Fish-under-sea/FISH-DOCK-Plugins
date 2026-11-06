@@ -58,9 +58,11 @@ createPlugin({id:'fish.clash',activate:async context=>{
  // 宿主只在「随 Dock 启动」这一次传 FISH_PLUGIN_AUTOSTART=1（#22）；安装、点启用、回滚
  // 与手动启动都不传 1。自启动判定放在最前面，activate 立刻返回，剩下的交给后台。
  if(process.env.FISH_PLUGIN_AUTOSTART==='1')void autostartKernel(defaultKernel);
- // 系统代理恢复记录被其他程序改过（TUN、别的代理）属于可降级状况：带上 code 记一条，
- // 但不能让 activate 抛出去——插件进程起不来，标签页就跟着消失（#14 现象 C/E）。
- void runtime.proxy.restore().catch(error=>console.error('[clash] 系统代理恢复失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??'')));
+ // 启动自愈：上一次 Dock 被强杀时留下的系统代理租约要先还原，否则没有代理进程的
+ // 机器上整台电脑的网都指向 127.0.0.1（#clash 遗留代理）。这里只触发一次、失败只记
+ // 日志不抛——插件进程起不来标签页就跟着消失（#14 现象 C/E）。start() 会等同一个
+ // promise，两者不会抢注册表。
+ void runtime.recoverStaleOnce();
 },deactivate:async()=>{if(service)await service.shutdown();service=null},commands:{
  ...Object.fromEntries(['view','save','tunSwitch','subscriptionSave','subscriptionToggle','subscriptionRemove','select','mode','reload','proxy','details','nodeTest',
   'tunService','installTunService','uninstallTunService','ipInfo','siteTest'].map(name=>[`clash.${name}`,params=>service[name](params)])),

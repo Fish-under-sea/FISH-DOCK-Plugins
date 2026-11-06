@@ -1,6 +1,7 @@
 import {spawn} from 'node:child_process';
 import {join,dirname} from 'node:path';
 import {createServer,connect as netConnect} from 'node:net';
+import {fileURLToPath} from 'node:url';
 import {connect as tlsConnect} from 'node:tls';
 import http from 'node:http';
 import {mkdir} from 'node:fs/promises';
@@ -40,7 +41,7 @@ export function createProxyLease({storage,adapter}){
   let raw;
   try{raw=await storage.read('config','system-proxy.json')}
   catch(error){throw coded('PROXY_REGISTRY_READ_FAILED','读取系统代理恢复记录失败',error)}
-  if(!raw){active=false;return}
+  if(!raw){active=false;return {act:'nothing'}}
   let record=null;
   try{record=JSON.parse(raw)}catch{/* 坏 JSON 与坏结构同样处理 */}
   if(!record||record.schema!==1||!record.previous||!record.owned){
@@ -51,12 +52,14 @@ export function createProxyLease({storage,adapter}){
   try{current=await adapter.read()}
   catch(error){throw coded('PROXY_REGISTRY_READ_FAILED','读取当前系统代理设置失败',error)}
   try{
-   if(same(current,record.owned))await adapter.write(record.previous);
+   const restored=same(current,record.owned);
+   if(restored)await adapter.write(record.previous);
    await storage.write('config','system-proxy.json','');
    active=false;
+   return {act:restored?'restore':'discard'};
   }catch(error){throw coded('PROXY_REGISTRY_WRITE_FAILED','恢复系统代理失败，请检查注册表写入权限',error)}
  }
- async function enable(port){
+ async function enable(port, ownerPid){
   if(!Number.isInteger(port)||port<1024||port>65535)throw serviceError('PROXY_PORT_INVALID');
   if(active)return;
   // 记录无效等价于「没有可恢复的租约」，不该拦住接管。
@@ -65,11 +68,26 @@ export function createProxyLease({storage,adapter}){
   try{previous=await adapter.read()}
   catch(error){throw coded('PROXY_REGISTRY_READ_FAILED','读取当前系统代理设置失败',error)}
   const owned={ProxyEnable:1,ProxyServer:`127.0.0.1:${port}`,ProxyOverride:'<local>'};
-  await storage.write('config','system-proxy.json',JSON.stringify({schema:1,previous,owned}));
+  // owner 是写这份租约的插件进程：看门狗据此判断「这条记录还是不是自己那一次写的」，
+  // 新实例覆盖租约之后，老看门狗不许再动注册表。
+  const owner=Number.isInteger(ownerPid)&&ownerPid>0?{pid:ownerPid,at:Date.now()}:undefined;
+  await storage.write('config','system-proxy.json',JSON.stringify({schema:1,previous,owned,...(owner?{owner}:{})}));
   try{await adapter.write(owned);active=true}
   catch(error){await restore().catch(()=>{});throw coded('PROXY_REGISTRY_WRITE_FAILED','开启系统代理失败，请检查注册表写入权限',error)}
  }
- return {enable,restore,active:()=>active};
+ // recoverStale 是启动自愈：上一次 Dock 被强杀时留下的租约，只要注册表里还是我们写
+ // 的那一份就立刻还原——否则用户下次开机没有代理进程，网却全指向 127.0.0.1。
+ // 与 restore() 的区别：不看本实例是否 active，只看磁盘上有没有残留记录。
+ async function recoverStale(){
+  let raw;
+  try{raw=await storage.read('config','system-proxy.json')}catch{return {act:'unreadable'}}
+  if(!raw)return {act:'nothing'};
+  try{return await restore()}catch(error){
+   if(error?.code==='PROXY_RESTORE_RECORD_INVALID')return {act:'discard'};
+   throw error;
+  }
+ }
+ return {enable,restore,recoverStale,active:()=>active};
 }
 // 普通模式启动前是否需要让 TUN 服务交出内核：服务已装（job.ini enabled=1）且服务正在
 // 跑，说明内核此刻挂在 SYSTEM 服务名下，占着同一个控制器端口。
@@ -194,6 +212,18 @@ export function createRuntime(context){
  const adapter={async read(){return powershell('read')},async write(values){await powershell('write',values)}};
  const proxy=createProxyLease({storage:context.storage,adapter});
  const tun=context.tun||null;
+ // 启动自愈只跑一次，且 start() 会先等它：上一次 Dock 被强杀留下的租约要先还原，
+ // 否则可能与随后的「启用系统代理」抢注册表（先写新租约、再被旧记录还原掉）。
+ let recovery=null;
+ function recoverStaleOnce(){
+  return recovery??=proxy.recoverStale().then(result=>{
+   if(result?.act==='restore')console.error('[clash] 已还原上次意外退出遗留的系统代理');
+   return result;
+  }).catch(error=>{
+   console.error('[clash] 系统代理自愈失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''));
+   return {act:'failed'};
+  });
+ }
  let viaService=false;
  async function waitController(c,limit=8000){
   const deadline=Date.now()+limit;
@@ -233,6 +263,8 @@ export function createRuntime(context){
  }
  async function start(c){
   c.signal?.throwIfAborted();
+  // 先把上一次的租约收干净（Dock 被强杀时没机会还原），再谈启动。
+  await recoverStaleOnce();
   await checkExecutable(c.kernel);await free(c.mixedPort);await free(c.controllerPort);
   for(const category of ['tmp','config','credentials'])await mkdir(join(context.dataDirectory,category),{recursive:true});
   // 内核 -d 目录：TUN 服务用数据根，普通模式用 config 子目录。
@@ -270,18 +302,26 @@ export function createRuntime(context){
   let failure=null;child.on('error',()=>{failure=Error('mihomo 内核启动失败')});
   const exited=new Promise(resolve=>{child.once('exit',resolve);child.once('error',resolve)});
   const alive=()=>!failure&&child.exitCode===null&&child.signalCode===null;
-  let stopping;
-  function stop(){return stopping??=(async()=>{
-   if(alive()){child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),1500);
-    try{await exited}finally{clearTimeout(timer)}}
-   await context.storage.write('tmp','mihomo-runtime.json','');
-  })()}
+  let stopping,watchdogPid=0;
+  function stop(){
+   return stopping??=(async()=>{
+    // 正常停止：先遣散看门狗，否则它会把下面这次「主动停止」当成宿主意外退出。
+    if(watchdogPid)try{process.kill(watchdogPid,'SIGTERM')}catch{};
+    if(alive()){child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),1500);
+     try{await exited}finally{clearTimeout(timer)}}
+    await context.storage.write('tmp','mihomo-runtime.json','');
+   })();
+  }
   try{
-   if(!(await waitController(c)))throw failure||Error('内核未在时限内就绪，请检查订阅与端口');
-   child.once('exit',()=>{void proxy.restore().catch(()=>{})});return {alive,stop,pid:child.pid,mode:'process'};
+   if(!(await waitController(c)))throw failure||Error('未在时限内就绪，请检查订阅与端口');
+   child.once('exit',()=>{void proxy.restore().catch(()=>{})});
+   // Dock 被强杀时插件进程同时消失，上面那个 exit 回调没机会跑：另起一个看门狗
+   // 盯住本进程，它一消失就还原系统代理并把内核结束掉（watchdog.mjs）。
+   if(proxy.active())watchdogPid=spawnWatchdog({leasePath:join(context.dataDirectory,'config','system-proxy.json'),mihomoPid:child.pid,port:c.mixedPort});
+   return {alive,stop,pid:child.pid,mode:'process',watchdogPid};
   }catch(error){await stop();throw error}
  }
- return {start,proxy,tun,proxiedGet,writeConfig,swapConfig,configPath:()=>join(context.dataDirectory,'tmp',RUNTIME_CONFIG),
+ return {start,proxy,tun,proxiedGet,writeConfig,swapConfig,recoverStaleOnce,configPath:()=>join(context.dataDirectory,'tmp',RUNTIME_CONFIG),
   // 插件重载后留下的内核不由本实例 spawn，只能按 pid 结束；processAlive 供 attach 判活。
   kill:killProcess,processAlive,
   // 停止时若内核由 TUN 服务托管，一并让服务停下，避免遗留提升权限的内核。
@@ -350,4 +390,15 @@ export function proxiedGet(url,{port,timeoutMs=6000,limit=64*1024}={}){
   });
   tunnel.end();
  });
+}
+// spawnWatchdog 起一个脱离本进程的看门狗（stdio 全 ignore：宿主死了管道也断，
+// 不能再依赖它）。它只认三件事：本进程 pid、租约文件、内核 pid 与混合端口。
+function spawnWatchdog({leasePath,mihomoPid,port}){
+ try{
+  const file=fileURLToPath(new URL('./watchdog.mjs',import.meta.url));
+  const child=spawn(process.execPath,[file,String(process.pid),leasePath,String(mihomoPid),String(port)],
+   {detached:true,stdio:'ignore',windowsHide:true,cwd:dirname(file)});
+  child.unref();
+  return child.pid||0;
+ }catch{return 0}
 }

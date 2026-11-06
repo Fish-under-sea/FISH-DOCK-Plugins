@@ -733,7 +733,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   }
   async function proxy({enabled}) {
     if(typeof enabled!=='boolean')throw serviceError('PROXY_STATE_INVALID');
-    if(enabled){if(!alive()||operation)throw serviceError('KERNEL_NOT_RUNNING');await runtime.proxy.enable((await config()).mixedPort)}
+    // 第二个参数是写租约的插件进程：看门狗据此判断租约有没有被新实例接管。
+    if(enabled){if(!alive()||operation)throw serviceError('KERNEL_NOT_RUNNING');await runtime.proxy.enable((await config()).mixedPort,process.pid)}
     else await runtime.proxy.restore();return view();
   }
   async function details({section}) {
