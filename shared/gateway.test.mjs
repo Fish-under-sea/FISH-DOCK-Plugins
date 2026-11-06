@@ -101,3 +101,37 @@ test('端口写盘失败不拦启动，本次服务照常运行',async()=>{
  assert.equal(view.state,'running','写盘失败不影响本次启动');
  assert.ok(writes>=0);
 });
+// 服务端口被别的 magpie 残留进程占住时不再判死：换下一个候选启动，并把新端口
+// 写回配置；三连都被占才报 PORT_IN_USE。
+test('服务端口被占时挨个候选再试，回退值写回配置',async()=>{
+ const files=new Map();const tried=[];
+ const context={storage:{read:async(c,n)=>files.get(`${c}/${n}`),write:async(c,n,v)=>files.set(`${c}/${n}`,v)}};
+ const runtime={start:async config=>{
+  tried.push(config.port);
+  if(config.port===24567)throw serviceError('PORT_IN_USE');
+  return {url:`http://127.0.0.1:${config.port}/`,gatewayPort:3427,gatewayPortFellBack:false,stop:async()=>{},alive:()=>true};
+ }};
+ const service=createGateway({context,runtime,kind:'magpie'});
+ await service.load();
+ await service.save({executable:'C:/runtime/magpie.exe',port:24567});
+ await service.start();
+ assert.deepEqual(tried,[24567,24568],'被占的那个之后换下一个');
+ assert.equal(service.view().state,'running');
+ assert.equal(service.view().url,'http://127.0.0.1:24568/');
+ assert.equal(JSON.parse(files.get('config/gateway.json')).port,24568,'回退的服务端口落盘');
+ await service.stop();
+});
+
+// 三个候选都被占才报错，错误仍是「端口已被占用」那条。
+test('服务端口三个候选都被占才报 PORT_IN_USE',async()=>{
+ const context={storage:{read:async()=>null,write:async()=>{}}};
+ const tried=[];
+ const runtime={start:async config=>{tried.push(config.port);throw serviceError('PORT_IN_USE')}};
+ const service=createGateway({context,runtime,kind:'magpie'});
+ await service.load();
+ await service.save({executable:'C:/runtime/magpie.exe',port:24567});
+ await service.start();
+ assert.deepEqual(tried,[24567,24568,24569]);
+ assert.equal(service.view().state,'error');
+ assert.match(service.view().error,/端口已被占用/);
+});

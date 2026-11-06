@@ -165,3 +165,19 @@ test('#30 网关端口不再在非共享时随机挑，也不许再按 lan 分�
  assert.match(source,/upstreamPort=await freePort\(\)/,'上游端口仍随机（内部用，不对外）');
  assert.match(source,/gatewayPort:listeningPort/,'要把实际监听的端口回给上层，供写回配置');
 });
+// 启动成功要回传网关端口与回退标记——2.2.2 在 return 那一行用了只在 try 里声明的
+// 变量，启动成功后抛 ReferenceError，插件永远报服务异常。这条用例真起一个
+// magpie：没有 FISH_MAGPIE_EXE 时跳过（CI 上没有二进制）。
+test('端口都空闲时启动成功并回传网关端口',{timeout:120000,skip:!process.env.FISH_MAGPIE_EXE&&'没有 FISH_MAGPIE_EXE'},async()=>{
+ const root=await fs.mkdtemp(path.join(process.env.FISH_TEST_TMP||os.tmpdir(),'magpie-boot-ok-'));
+ const port=await freePort();let gatewayPort=await freePort();
+ while(gatewayPort===port)gatewayPort=await freePort();
+ const runtime=createRuntime({dataDirectory:root,secrets:{read:async()=>'a'.repeat(64)}});
+ const instance=await runtime.start({executable:process.env.FISH_MAGPIE_EXE,port,gatewayPort});
+ try{
+  assert.ok(Number.isInteger(instance.gatewayPort)&&instance.gatewayPort>0,'要回传实际监听的网关端口');
+  assert.equal(typeof instance.gatewayPortFellBack,'boolean','要回传是否回退');
+  assert.match(instance.url,new RegExp(`^http://127\\.0\\.0\\.1:${port}/`),'就绪地址用服务端口');
+ }finally{await instance.stop()}
+ await available(port);
+});

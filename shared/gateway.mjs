@@ -54,6 +54,22 @@ export function createGateway({context,runtime,kind,defaultExecutable=''}) {
   await context.storage.write('config','gateway.json',JSON.stringify({...next,bundled:!!defaultExecutable&&next.executable===defaultExecutable}));
   config=next;return port;
  }
+ // 服务端口（网页/管理页那个）被别的程序占住时，按 +0/+1/+2 试：一个跑着老 magpie
+ // 的残留进程就能让整个插件报「端口已被占用」，用户却不知道是谁占的。回退值与
+ // 网关端口一样写回配置，下次直接复用，不会每次启动又跳回首选。
+ function persistServicePort(port) {
+  if(!Number.isInteger(port)||port<1024||port>65535)return null;
+  if(config.port===port)return null;
+  const next=validate({...config,port});
+  return context.storage.write('config','gateway.json',JSON.stringify({...next,bundled:!!defaultExecutable&&next.executable===defaultExecutable})).then(()=>{config=next;return port});
+ }
+ function servicePortCandidates(base) {
+  const out=[];
+  for(const candidate of [base,base+1,base+2]){
+   if(Number.isInteger(candidate)&&candidate>=1024&&candidate<=65535&&!out.includes(candidate))out.push(candidate);
+  }
+  return out;
+ }
  function start() {
   if(starting)return starting;
   if(stopping||view().state==='running')return Promise.resolve(view());
@@ -64,14 +80,26 @@ export function createGateway({context,runtime,kind,defaultExecutable=''}) {
   starting=(async()=>{
    try {
     if(instance){await instance.stop();instance=null;}
-    instance=await runtime.start({...config,signal:currentController.signal,onPhase:value=>{
-     if(controller===currentController&&state==='starting'&&!stopRequested&&['prepare-data','prepare-settings','verify-binary','start-process'].includes(value))phase=value;
-    }});
+    // 服务端口冲突不再直接判死：换下一个候选再试，试完还不行才报 PORT_IN_USE。
+    let usedPort=config.port,lastFailure=null;
+    for(const candidate of servicePortCandidates(config.port)){
+     try{
+      instance=await runtime.start({...config,port:candidate,signal:currentController.signal,onPhase:value=>{
+       if(controller===currentController&&state==='starting'&&!stopRequested&&['prepare-data','prepare-settings','verify-binary','start-process'].includes(value))phase=value;
+      }});
+      usedPort=candidate;lastFailure=null;break;
+     }catch(cause){
+      lastFailure=cause;
+      if(cause?.code!=='PORT_IN_USE')throw cause;
+     }
+    }
+    if(lastFailure)throw lastFailure;
     const url=new URL(instance.url);
-    if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||url.username||url.password||Number(url.port)!==config.port)throw serviceError('INVALID_READY_URL');
+    if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||url.username||url.password||Number(url.port)!==usedPort)throw serviceError('INVALID_READY_URL');
     // #30：记下运行时挑到的网关端口（含回退值）。写不进去只影响下次是否复用，
     // 不拦启动——本次服务已经起来了。
     try{await persistGatewayPort(instance.gatewayPort)}catch{}
+    if(usedPort!==config.port)try{await persistServicePort(usedPort)}catch{}
     if(!stopRequested)state='running';
    } catch(cause) {
     error=publicServiceError(cause);state='error';

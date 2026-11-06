@@ -103,7 +103,9 @@ export function createRuntime(context){
    // 之后几十秒的复制、页面同步、就绪等待期间端口一直在手，别的实例抢不走，也就
    // 不会出现「magpie 已经拉起来，最后一步绑端口失败再被回滚」。
    const proxy=await embedProxy({port,upstreamPort});
-   let portable,child;
+	// #30：listeningPort / fellBack 要留到 return 那一行用，声明必须在 try 外面——
+	// 之前写在 try 里，启动成功时 return 反而抛 ReferenceError，插件永远报服务异常。
+	let portable,child,listeningPort=0,fellBack=false;
    try{
     signal?.throwIfAborted();
     // web --addr 仅设置管理页；模型网关需独立地址。
@@ -113,7 +115,8 @@ export function createRuntime(context){
     const prefs=await readMagpiePrefs(portable.data);
     // #30：不论是否共享都走同一套固定候选——共享只改绑定范围，不改端口值。
     const listening=await gatewayPortFor({configured:gatewayPort,prefs,port,upstreamPort});
-    const listeningPort=listening.port;
+    listeningPort=listening.port;
+    fellBack=listening.fellBack;
     if(!listeningPort)throw serviceError('PORT_IN_USE');
     const gateway=gatewayAddr(gatewayHost(prefs.lan),listeningPort);
     // 出厂预置的页面插件随 Dock 内置在 page-plugins/ 下。启动前逐个同步到
@@ -155,7 +158,7 @@ export function createRuntime(context){
     throw error;
    }
    // #30：把实际监听的网关端口回给上层，它写回配置后下次启动就能复用同一个端口。
-   return {alive:child.alive,url,gatewayPort:listeningPort,gatewayPortFellBack:listening.fellBack,runtime:{executable:portable.executable,sha256:portable.sha256},async stop(){try{await proxy.stop()}finally{await child.stop()}}};
+   return {alive:child.alive,url,gatewayPort:listeningPort,gatewayPortFellBack:fellBack,runtime:{executable:portable.executable,sha256:portable.sha256},async stop(){try{await proxy.stop()}finally{await child.stop()}}};
   }catch(error){
    if(error?.name!=='AbortError')await recordGatewayError(context.dataDirectory,{error,phase,port});
    throw error;
