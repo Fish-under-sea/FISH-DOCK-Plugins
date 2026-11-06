@@ -85,7 +85,21 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Out) | Out-Null
 
 Push-Location $Upstream
 try {
-  Write-Host "== 1/3 winres（图标 / DPI 清单 / 版本资源）"
+  # 补丁会往管理页的脚本里插入东西（i18n 文案、插件页逻辑…）。一个漏掉的逗号就会让
+# 整个管理页白屏（2026-11-06 实翻：i18n.js 少个逗号 → I18N 未定义 → 页面只剩导航栏）。
+# 编之前把 assets 下每个 js 过一遍 `node --check`，有语法错就不许出包。
+$assets = Join-Path $Upstream 'internal\gui\assets'
+$node = (Get-Command node -ErrorAction SilentlyContinue)?.Source
+if ($node -and (Test-Path $assets)) {
+  $broken = @()
+  Get-ChildItem $assets -Recurse -File -Filter '*.js' | ForEach-Object {
+    & $node --check $_.FullName 2>$null
+    if ($LASTEXITCODE -ne 0) { $broken += $_.FullName.Substring($assets.Length + 1) }
+  }
+  if ($broken.Count) { throw "管理页脚本语法错误，拒绝打包：$($broken -join '、')" }
+  Write-Host "== 0/3 管理页脚本语法检查通过"
+}
+Write-Host "== 1/3 winres（图标 / DPI 清单 / 版本资源）"
   # FileVersion 保持四段数字；产品名/版权等字符串来自 winres json，便于与官方版区分。
   $json = if ($WinresJson) { $WinresJson } else { Join-Path $Upstream 'build\windows\winres.json' }
   & go run github.com/tc-hib/go-winres@v0.3.3 make --in $json --arch amd64 --out rsrc `
