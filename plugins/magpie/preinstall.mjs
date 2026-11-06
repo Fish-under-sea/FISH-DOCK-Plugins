@@ -20,12 +20,17 @@ import {writeManifest} from './page-seed.mjs';
 // `zen-free`（OpenCode Zen Free）本版**移出**预装基线：新装环境不再自动登记它，
 // 已装用户不动——不卸载、不禁用、不删数据；它的品牌图标素材也照旧保留（已装用户
 // 还有这个 provider，图标接管按 provider 生效）。
+//
+// `kiro`（Kiro，2.2.2 起 #29）按同一套处置**移出**预装基线：新装环境不再自动登记
+// `@magpie-community/opencode-kiro-auth`，已装用户不动——不卸载、不禁用、不删账号
+// 与数据；品牌素材同样保留（签到页 page/kiro.svg、`kiro-color.svg`、宿主
+// `brandicons/kiro.svg` 与 brandVendors 允许表都不删），否则已装用户的 provider
+// 会掉图标、pruneIcons 还会把图当没人用清掉。
 const BASELINE = [
  ['raccoon', '商汤小浣熊'],
  ['autoclaw', 'AutoClaw'],
  ['cline', 'Cline'],
  ['codearts', 'CodeArts / OfficeAce'],
- ['kiro', 'Kiro'],
  ['loomy', 'Loom'],
  ['meoo-agent', 'Meoo 秒悟（建站 Agent）', {
   // npm 上查不到这个包：主仓 package.json 是 private，没有发布（registry 404）。
