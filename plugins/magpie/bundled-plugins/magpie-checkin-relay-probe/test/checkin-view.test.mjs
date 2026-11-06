@@ -4,7 +4,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-new Function(fs.readFileSync(new URL('../page/view.js', import.meta.url), 'utf8'))();
+new Function(fs.readFileSync(new URL('../page/checkin/view.js', import.meta.url), 'utf8'))();
 const V = globalThis.CheckinView;
 
 const state = {

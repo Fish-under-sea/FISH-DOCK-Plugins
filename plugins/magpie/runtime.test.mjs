@@ -181,3 +181,15 @@ test('端口都空闲时启动成功并回传网关端口',{timeout:120000,skip:
  }finally{await instance.stop()}
  await available(port);
 });
+test('#37 magpie 的 stdout 落进 magpie.log，超过 1 MB 滚动成 .1',async()=>{
+ const {createTailLog}=await import('./runtime.mjs');
+ const root=await fs.mkdtemp(path.join(process.env.FISH_TEST_TMP||os.tmpdir(),'magpie-log-'));
+ const file=path.join(root,'magpie.log');
+ const tail=createTailLog({file,limit:1024});
+ await tail.write('a'.repeat(700));
+ await tail.write('b'.repeat(700));
+ assert.equal(await fs.stat(file).then(st=>st.size),700,'第二段把上一份滚成 .1，新文件从第二段开始');
+ assert.equal(await fs.readFile(`${file}.1`,'utf8'),'a'.repeat(700));
+ assert.equal(await fs.readFile(file,'utf8'),'b'.repeat(700));
+ await fs.rm(root,{recursive:true,force:true});
+});

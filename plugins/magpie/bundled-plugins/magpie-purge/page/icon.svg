@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Purge in Magpie">
+  <rect width="64" height="64" rx="14" fill="#1d2230"/>
+  <path d="M32 10.5 L51 19.5 V36 C51 45.5 42.5 52.5 32 55.5 C21.5 52.5 13 45.5 13 36 V19.5 Z"
+        fill="none" stroke="#e8eaf0" stroke-width="3.2" stroke-linejoin="round" opacity=".92"/>
+  <path d="M21 41 L43 17" stroke="#7c6cf0" stroke-width="4.6" stroke-linecap="round"/>
+  <circle cx="32" cy="36" r="4.1" fill="#f0b24a"/>
+</svg>

@@ -8,7 +8,7 @@ import {available,startChild} from '../../shared/child.mjs';
 import {magpieEnvironment} from './environment.mjs';
 import {preparePortableRuntime} from './portable-runtime.mjs';
 import {gatewayAddr,gatewayHost,gatewayPortCandidates,readMagpiePrefs} from './network.mjs';
-import {registerSeedPage,syncPageDirectory,normalizePageTitles} from './page-seed.mjs';
+import {bundledPlugins,registerBundledPlugins,syncPageDirectory,normalizePageTitles} from './page-seed.mjs';
 import {ensurePreinstallState,preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
 import {serviceError} from '../../shared/errors.mjs';
 
@@ -49,6 +49,28 @@ export async function recordGatewayError(root,{error,phase,port}={}){
  const line=`${JSON.stringify(entry)}\n`;
  try{await fs.mkdir(root,{recursive:true});await fs.appendFile(path.join(root,'gateway-error.log'),line)}catch{}
  return line;
+}
+
+// #37：magpie.exe 自己的 log.Printf 以前只用来判就绪，读完就丢——「供应商掉出 /
+// 模型数突变」于是没有时间线可看。这里把它同时落到 <插件数据目录>/magpie.log：
+// 单文件 1 MB 滚动、保留上一份（magpie.log.1），与 Dock 的 host/plugin-logs 同口径。
+// 写入串行、失败吞掉：日志不能把启动弄挂。路径与端口会出现在里面，密钥不会
+// （magpie 把 key 放在 header 里，不写 stdout）。
+export function createTailLog({file,limit=1024*1024}={}){
+ let queue=Promise.resolve(),size=null;
+ async function append(text){
+  const bytes=Buffer.byteLength(text);
+  if(size===null){
+   try{size=(await fs.stat(file)).size}catch{size=0}
+  }
+  if(size+bytes>limit){
+   // Windows 上目标已存在时 rename 会失败：先删旧的，再改名；都失败就接着写，
+   // 顶多这一轮超出上限一点，下一轮再试。
+   try{await fs.rm(`${file}.1`,{force:true});await fs.rename(file,`${file}.1`);size=0}catch{}
+  }
+  try{await fs.appendFile(file,text);size+=bytes}catch{}
+ }
+ return {file,write(chunk){const text=String(chunk);queue=queue.then(()=>append(text)).catch(()=>{});return queue}};
 }
 
 // gateway 停在 error 时按递增间隔重试；用户停止或已恢复就停手，用尽后定住并保留原因。
@@ -120,18 +142,22 @@ export function createRuntime(context){
     fellBack=listening.fellBack;
     if(!listeningPort)throw serviceError('PORT_IN_USE');
     const gateway=gatewayAddr(gatewayHost(prefs.lan),listeningPort);
-    // 出厂预置的页面插件随 Dock 内置在 page-plugins/ 下。启动前逐个同步到
-    // <data>/plugins/<name>，并让 plugins.json 只用这个稳定路径引用：升级之后路径
-    // 不变，页面才跟着换版本；旧包目录被清理也不会 404。
+    // 内置插件随 Dock 放在 bundled-plugins/ 下（2.2.9 起两个：签到&探针、破甲）。
+    // 启动前逐个同步到 <data>/plugins/<name>，并让 plugins.json 只用这个稳定路径
+    // 引用：升级之后路径不变，页面才跟着换版本；旧包目录被清理也不会 404。
+    // 同时把 2.2.8 及更早的两个内置页（page-checkin / page-relay-probe）从清单里
+    // 删掉——它们已经并进签到&探针，留着就是侧边栏三条。
     // 没有内置目录（普通 magpie）时不碰清单，仍由原生按包名装 npm 上的同名包。
-    const bundledPages=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins');
+    const bundledRoot=path.join(path.dirname(fileURLToPath(import.meta.url)),'bundled-plugins');
     try{
-     for(const name of ['page-checkin','page-relay-probe']){
-      const seeded=await syncPageDirectory({source:path.join(bundledPages,name),data:portable.data,name,onPhase:track,signal});
-      if(seeded)await registerSeedPage({data:portable.data,name,directory:seeded.directory,onPhase:track,signal});
+     const directories=new Map();
+     for(const name of bundledPlugins){
+      const seeded=await syncPageDirectory({source:path.join(bundledRoot,name),data:portable.data,name,onPhase:track,signal});
+      if(seeded)directories.set(name,seeded.directory);
      }
-     // 侧边栏只显示文字（「签到」「中转站探针」），不带 `@用户名/` 前缀。包名仍是
-     // `@fish-under-sea/page-checkin`，只是标题里的 scope 是噪声。幂等，失败不拦启动。
+     await registerBundledPlugins({data:portable.data,directories,onPhase:track,signal});
+     // 侧边栏只显示文字（「签到&探针」「破甲 · Purge」），不带 `@用户名/` 前缀。
+     // 包名不动，只是标题里的 scope 是噪声。幂等，失败不拦启动。
      await normalizePageTitles({data:portable.data,signal}).catch(()=>{});
     }catch(error){if(error.name==='AbortError')throw error;throw serviceError('DATA_MIGRATION_FAILED')}
     // 出厂预装的社区供应商插件按「当前基线 − 已登记」增量补登记（#71）：基线新增
@@ -148,9 +174,13 @@ export function createRuntime(context){
     }catch(error){if(error.name==='AbortError')throw error}
     track('start-process');
     try{
+     // 每次启动先落一条分隔行，日志里才有「这一轮从哪开始」。
+     const tail=createTailLog({file:path.join(root,'magpie.log')});
+     await tail.write(`\n== ${new Date().toISOString()} magpie web start (port ${port}, gateway ${listeningPort}) ==\n`);
      child=await startChild({executable:portable.executable,args:['web','--addr',`127.0.0.1:${upstreamPort}`,'--no-open'],cwd:root,signal,
       env:{...magpieEnvironment({cache,key}),MAGPIE_ADDR:gateway},
       ready:output=>output.includes(`magpie web on http://127.0.0.1:${upstreamPort}/`),
+      onOutput:text=>void tail.write(text),
       probe:async()=>{try{const response=await fetch(upstreamUrl,{redirect:'manual',signal:AbortSignal.timeout(1500)});return response.status===303&&response.headers.get('location')==='/'&&response.headers.has('set-cookie')}catch{return false}}
      });
     }catch(error){throw spawnFailure(error)}

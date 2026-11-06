@@ -4,17 +4,20 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {directoryDigest,registerSeedPage,rewriteSeedSpec,syncPageDirectory} from './page-seed.mjs';
+import {bundledPlugins,directoryDigest,registerBundledPlugins,rewriteBundledSpecs,syncPageDirectory} from './page-seed.mjs';
+
+const MERGED='magpie-checkin-relay-probe';
+const PURGE='magpie-purge';
 
 const utf8=file=>fs.readFile(file,'utf8');
 async function sandbox(){
  const root=await fs.mkdtemp(path.join(process.env.FISH_TEST_TMP||os.tmpdir(),'magpie-pageseed-'));
- return {root,source:path.join(root,'bundled','page-checkin'),data:path.join(root,'data')};
+ return {root,source:path.join(root,'bundled',MERGED),data:path.join(root,'data')};
 }
-// 与仓库里 page-plugins/page-checkin 同形的合成页面目录。
-async function seedSource(source,version='0.1.1'){
+// 与仓库里 bundled-plugins/<名字> 同形的合成插件目录。
+async function seedSource(source,version='1.0.0',name=`@fish-under-sea/${MERGED}`){
  await fs.mkdir(path.join(source,'page'),{recursive:true});
- await fs.writeFile(path.join(source,'package.json'),JSON.stringify({name:'@fish-under-sea/page-checkin',version},null,2)+'\n');
+ await fs.writeFile(path.join(source,'package.json'),JSON.stringify({name,version},null,2)+'\n');
  await fs.writeFile(path.join(source,'page','index.html'),`<html data-v="${version}"></html>`);
  await fs.writeFile(path.join(source,'page','app.js'),`// ${version}\n`);
  await fs.writeFile(path.join(source,'page','icon.svg'),'<svg/>');
@@ -22,148 +25,127 @@ async function seedSource(source,version='0.1.1'){
  return source;
 }
 async function mtime(file){return (await fs.stat(file)).mtimeMs}
+const specsOf=(...names)=>new Map(names.map(name=>[name,path.join(os.tmpdir(),'magpie-stable','plugins',name)]));
 
-test('plugins.json 不存在时新建清单，只写一条稳定路径',async()=>{
- const {root,data}=await sandbox();
- const directory=path.join(data,'plugins','page-checkin');
+test('两个内置件的名字与顺序固定：签到&探针在前，破甲在后',()=>{
+ assert.deepEqual([...bundledPlugins],[MERGED,PURGE]);
+});
+
+test('plugins.json 不存在时新建清单，按顺序写两条稳定路径',async()=>{
+ const {data}=await sandbox();
+ const directories=specsOf(MERGED,PURGE);
  await fs.mkdir(data,{recursive:true});
- const result=await registerSeedPage({data,directory});
+ const result=await registerBundledPlugins({data,directories});
  assert.equal(result.written,true);
  const text=await utf8(path.join(data,'plugins.json'));
  assert.equal(text.endsWith('\n'),true,'结尾换行');
- assert.equal(text,JSON.stringify({plugins:[{spec:directory}]},null,2)+'\n');
- assert.equal(await mtime(path.join(data,'plugins.json.bak')).catch(()=>null),null,'无原文件时不产生备份');
+ assert.deepEqual(JSON.parse(text),{plugins:[...directories].map(([name,directory])=>({spec:directory}))});
 });
 
-test('旧的版本目录绝对路径被换成稳定路径，options 保留且其他条目字节不变',async()=>{
- const {root,data}=await sandbox();
+test('旧的两个内置页整条删掉，新条目补上，其他插件一个字不动',async()=>{
+ const {data}=await sandbox();
  await fs.mkdir(data,{recursive:true});
- const stale=path.join(root,'.fish-dock','host','packages','fish.magpie','1.1.0','08a43e59','plugins','magpie','page-plugins','page-checkin');
+ const directories=specsOf(MERGED,PURGE);
  const others=[{spec:'@magpie-community/page-usage@latest'},{spec:'@magpie-community/opencode-trae-auth@latest',off:true}];
- const original=JSON.stringify({plugins:[...others,{spec:stale,options:{collapsed:true}}]},null,2)+'\n';
+ const legacy=[
+  {spec:'@magpie-community/page-checkin@latest',options:{collapsed:true}},
+  {spec:'@fish-under-sea/page-relay-probe@latest',off:true},
+  {spec:path.join('C:','data','plugins','page-checkin')},
+ ];
  const file=path.join(data,'plugins.json');
+ const original=JSON.stringify({plugins:[...others,...legacy]},null,2)+'\n';
  await fs.writeFile(file,original);
- const directory=path.join(data,'plugins','page-checkin');
- const result=await registerSeedPage({data,directory});
+
+ const result=await registerBundledPlugins({data,directories});
  assert.equal(result.written,true);
- const text=await utf8(file);
- const manifest=JSON.parse(text);
- assert.equal(manifest.plugins.length,3,'不追加重复条目');
- assert.deepEqual(manifest.plugins[2],{spec:directory,options:{collapsed:true}},'稳定路径 + options 保留');
- // 其他条目按对象逐字不变，且整份文件仍是 2 空格缩进 + 结尾换行。
- assert.deepEqual(manifest.plugins.slice(0,2),others);
- assert.equal(text,JSON.stringify({plugins:[...others,{spec:directory,options:{collapsed:true}}]},null,2)+'\n');
- // 备份保存的是改写前的原文。
- assert.equal(await utf8(`${file}.bak`),original);
+ const manifest=JSON.parse(await utf8(file));
+ assert.deepEqual(manifest.plugins,others.concat([...directories].map(([name,directory])=>({spec:directory}))));
+ assert.equal(await utf8(`${file}.bak`),original,'备份是改写前的原文');
+});
+
+test('同名条目收束成一条，options 与 off 保留在第一条上',async()=>{
+ const {data}=await sandbox();
+ await fs.mkdir(data,{recursive:true});
+ const directories=specsOf(MERGED,PURGE);
+ const merged=directories.get(MERGED);
+ const raw=JSON.stringify({plugins:[
+  {spec:'@fish-under-sea/magpie-checkin-relay-probe@0.9.0',options:{collapsed:false}},
+  {spec:'@fish-under-sea/magpie-checkin-relay-probe@latest',off:true},
+ ]},null,2)+'\n';
+ const next=rewriteBundledSpecs({raw,specs:new Map([[MERGED,merged]])});
+ assert.deepEqual(JSON.parse(next.text).plugins,[{spec:merged,options:{collapsed:false}}],'同包多条只留第一条');
 });
 
 test('已是稳定路径时不写磁盘，文件 mtime 不变',async()=>{
  const {data}=await sandbox();
  await fs.mkdir(data,{recursive:true});
- const directory=path.join(data,'plugins','page-checkin');
+ const directories=specsOf(MERGED,PURGE);
  const file=path.join(data,'plugins.json');
- await fs.writeFile(file,JSON.stringify({plugins:[{spec:'@magpie-community/page-usage@latest'},{spec:directory,options:{collapsed:true}}]},null,2)+'\n');
+ const now=[...directories].map(([name,directory])=>({spec:directory}));
+ await fs.writeFile(file,JSON.stringify({plugins:[{spec:'@magpie-community/page-usage@latest'},...now]},null,2)+'\n');
  const before=await mtime(file);
- const result=await registerSeedPage({data,directory});
+ const result=await registerBundledPlugins({data,directories});
  assert.equal(result.written,false);
  assert.equal(await mtime(file),before,'稳定路径下不重写');
  assert.equal(await mtime(`${file}.bak`).catch(()=>null),null,'不写就不备份');
 });
 
-test('npm 包名条目与重复条目都被收束到第一条稳定路径',async()=>{
- const spec=path.join(os.tmpdir(),'magpie-stable','plugins','page-checkin');
- // 旧（第三方 scope）与新（@fish-under-sea）两种包名条目都要认：升级时用户清单里
- // 可能还是旧的 `@magpie-community/page-checkin@latest`。
- for(const stale of ['@magpie-community/page-checkin@latest','@magpie-community/page-checkin','@magpie-community/page-checkin#packages/checkin','@fish-under-sea/page-checkin@latest','@fish-under-sea/page-checkin']){
-  const next=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:'@magpie-community/page-usage@latest'},{spec:stale,options:{collapsed:true}}]},null,2)+'\n',spec});
-  assert.equal(next.changed,true,`${stale} 应被改写`);
-  const manifest=JSON.parse(next.text);
-  assert.equal(manifest.plugins.length,2);
-  assert.deepEqual(manifest.plugins[1],{spec,options:{collapsed:true}});
- }
- // 新旧两条并存时收束成一条，不能两条都留（否则 magpie 当两家装）。
- const rows=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:'@magpie-community/page-checkin@latest',off:true},{spec:'@fish-under-sea/page-checkin@latest'}]}),spec});
- assert.deepEqual(JSON.parse(rows.text).plugins,[{spec,off:true}],'同包多条只留第一条');
-});
-
-// #32：改名不能只改 package.json —— isSeedSpec 里写死了旧 scope，不认新名字的话，
-// 升级后旧条目识别不出来，rewriteSeedSpec 会追加新条目 → 新旧并存。
-test('#32 更名后新旧 scope 都认，且相似名不受影响',async()=>{
- const spec=path.join(os.tmpdir(),'magpie-stable','plugins','page-checkin');
- for(const good of ['@magpie-community/page-checkin@latest','@fish-under-sea/page-checkin','@fish-under-sea/page-checkin@0.2.6','@fish-under-sea/page-checkin#dir']){
-  const next=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:good,options:{collapsed:true}}]},null,2)+'\n',spec});
+test('新旧 scope、绝对路径都认，相似名不受影响',async()=>{
+ const spec=path.join(os.tmpdir(),'magpie-stable','plugins',MERGED);
+ const specs=new Map([[MERGED,spec]]);
+ for(const good of [
+  `@magpie-community/${MERGED}@latest`,
+  `@fish-under-sea/${MERGED}`,
+  `@fish-under-sea/${MERGED}@1.0.0`,
+  `@fish-under-sea/${MERGED}#dir`,
+  path.join('C:','data','plugins',MERGED),
+ ]){
+  const next=rewriteBundledSpecs({raw:JSON.stringify({plugins:[{spec:good,options:{collapsed:true}}]},null,2)+'\n',specs});
   assert.deepEqual(JSON.parse(next.text).plugins,[{spec,options:{collapsed:true}}],`${good} 应命中并改写`);
  }
- for(const bad of ['@fish-under-sea/page-checkin-extra@latest','@other/page-checkin@latest','@fish-under-sea/page-usage@latest']){
+ for(const bad of [`@fish-under-sea/${MERGED}-extra@latest`,`@other/${MERGED}@latest`,'@fish-under-sea/page-usage@latest']){
   const raw=JSON.stringify({plugins:[{spec:bad}]},null,2)+'\n';
-  const next=rewriteSeedSpec({raw,spec});
+  const next=rewriteBundledSpecs({raw,specs});
   assert.equal(JSON.parse(next.text).plugins.length,2,`${bad} 不该命中`);
  }
 });
 
-test('别的插件与相似名不受影响',async()=>{
- const spec=path.join(os.tmpdir(),'magpie-stable','plugins','page-checkin');
- const plugins=[{spec:'@magpie-community/page-usage@latest'},{spec:'@magpie-community/page-checkin-extra@latest'},{spec:'C:\\x\\page-checkin-extra'},{spec:'C:\\x\\prepage-checkin'}];
- const original=JSON.stringify({plugins},null,2)+'\n';
- const next=rewriteSeedSpec({raw:original,spec});
- assert.equal(JSON.parse(next.text).plugins.length,5,'都不命中 → 追加一条');
- assert.deepEqual(JSON.parse(next.text).plugins.slice(0,4),plugins);
- assert.equal(next.changed,true);
-});
-
-test('插件清单没有该条目时追加到末尾，原有内容原样保留',async()=>{
- const {data}=await sandbox();
- await fs.mkdir(data,{recursive:true});
- const file=path.join(data,'plugins.json');
- const original=JSON.stringify({plugins:[{spec:'@magpie-community/page-usage@latest'}]},null,2)+'\n';
- await fs.writeFile(file,original);
- const directory=path.join(data,'plugins','page-checkin');
- const result=await registerSeedPage({data,directory});
- assert.equal(result.written,true);
- const manifest=JSON.parse(await utf8(file));
- assert.equal(manifest.plugins.length,2);
- assert.equal(manifest.plugins[0].spec,'@magpie-community/page-usage@latest');
- assert.deepEqual(manifest.plugins[1],{spec:directory});
-});
-
 test('目录同步写稳定位置，内容一致时不再写且 mtime 不变',async()=>{
  const {source,data}=await sandbox();
- await seedSource(source,'0.1.1');
- const first=await syncPageDirectory({source,data});
+ await seedSource(source,'1.0.0');
+ const first=await syncPageDirectory({source,data,name:MERGED});
  assert.equal(first.written,true);
- assert.equal(first.directory,path.join(data,'plugins','page-checkin'));
- assert.equal(await utf8(path.join(first.directory,'page','app.js')),'// 0.1.1\n');
+ assert.equal(first.directory,path.join(data,'plugins',MERGED));
+ assert.equal(await utf8(path.join(first.directory,'page','app.js')),'// 1.0.0\n');
  assert.equal(await directoryDigest(first.directory),await directoryDigest(source),'内容指纹一致');
  const stamp=await mtime(path.join(first.directory,'page','app.js'));
- const second=await syncPageDirectory({source,data});
+ const second=await syncPageDirectory({source,data,name:MERGED});
  assert.equal(second.written,false,'指纹相同不覆盖');
  assert.equal(await mtime(path.join(first.directory,'page','app.js')),stamp);
  assert.equal(second.digest,first.digest);
 });
 
-test('内置页面升级后整体替换，删除的文件不残留半套',async()=>{
+test('内置插件升级后整体替换，删除的文件不残留半套',async()=>{
  const {source,data}=await sandbox();
- await seedSource(source,'0.1.1');
+ await seedSource(source,'1.0.0');
  await fs.writeFile(path.join(source,'page','legacy.js'),'old');
- const first=await syncPageDirectory({source,data});
+ const first=await syncPageDirectory({source,data,name:MERGED});
  assert.equal(await fs.stat(path.join(first.directory,'page','legacy.js')).then(()=>true),true);
- // 新版本删掉 legacy.js 并改内容：整体替换，不保留上一版文件。
  await fs.rm(path.join(source,'page','legacy.js'));
- await seedSource(source,'0.2.0');
- const second=await syncPageDirectory({source,data});
+ await seedSource(source,'1.1.0');
+ const second=await syncPageDirectory({source,data,name:MERGED});
  assert.equal(second.written,true);
  assert.notEqual(second.digest,first.digest);
- assert.equal(await utf8(path.join(second.directory,'page','app.js')),'// 0.2.0\n');
+ assert.equal(await utf8(path.join(second.directory,'page','app.js')),'// 1.1.0\n');
  await assert.rejects(fs.stat(path.join(second.directory,'page','legacy.js')),{code:'ENOENT'});
- // 发布用的临时目录与备份目录都不残留。
  const left=await fs.readdir(path.join(data,'plugins'));
- assert.deepEqual(left,['page-checkin']);
+ assert.deepEqual(left,[MERGED]);
 });
 
 test('指纹只看内容，不看目录名与时间戳',async()=>{
  const {root}=await sandbox();
- const a=await seedSource(path.join(root,'a'),'0.1.1');
- const b=await seedSource(path.join(root,'b'),'0.1.1');
+ const a=await seedSource(path.join(root,'a'),'1.0.0');
+ const b=await seedSource(path.join(root,'b'),'1.0.0');
  assert.equal(await directoryDigest(a),await directoryDigest(b));
  await fs.writeFile(path.join(b,'page','app.js'),'// changed\n');
  assert.notEqual(await directoryDigest(a),await directoryDigest(b));
@@ -172,82 +154,80 @@ test('指纹只看内容，不看目录名与时间戳',async()=>{
 
 test('来源目录不存在时不创建任何目录',async()=>{
  const {source,data}=await sandbox();
- assert.equal(await syncPageDirectory({source,data}),null);
+ assert.equal(await syncPageDirectory({source,data,name:MERGED}),null);
  await assert.rejects(fs.stat(data),{code:'ENOENT'});
 });
 
 test('发布中途失败时旧目录完好，不残留临时目录',async()=>{
  const {source,data}=await sandbox();
- await seedSource(source,'0.1.1');
- const first=await syncPageDirectory({source,data});
- // 故意把内容改掉，让下一次同步必须写盘。
- await seedSource(source,'0.2.0');
+ await seedSource(source,'1.0.0');
+ const first=await syncPageDirectory({source,data,name:MERGED});
+ await seedSource(source,'1.1.0');
  const controller=new AbortController();
- await assert.rejects(syncPageDirectory({source,data,signal:controller.signal,
-  // 同步已进入发布阶段、临时目录已写完之后再取消。
+ await assert.rejects(syncPageDirectory({source,data,name:MERGED,signal:controller.signal,
   onPhase:()=>controller.abort()}),{name:'AbortError'});
- assert.equal(await utf8(path.join(first.directory,'page','app.js')),'// 0.1.1\n','旧版本仍是完整一套');
+ assert.equal(await utf8(path.join(first.directory,'page','app.js')),'// 1.0.0\n','旧版本仍是完整一套');
  assert.equal(await directoryDigest(first.directory),first.digest);
  const left=await fs.readdir(path.join(data,'plugins'));
- assert.deepEqual(left,['page-checkin'],'没有 .tmp-/.old- 残留');
+ assert.deepEqual(left,[MERGED],'没有 .tmp-/.old- 残留');
 });
 
 test('并发同步同一份内容仍只发布一套完整目录',async()=>{
  const {source,data}=await sandbox();
- await seedSource(source,'0.1.1');
- const rows=await Promise.all(Array.from({length:4},()=>syncPageDirectory({source,data})));
+ await seedSource(source,'1.0.0');
+ const rows=await Promise.all(Array.from({length:4},()=>syncPageDirectory({source,data,name:MERGED})));
  assert.ok(rows.every(row=>row.directory===rows[0].directory));
  assert.equal(await directoryDigest(rows[0].directory),await directoryDigest(source));
  assert.ok(rows.some(row=>row.written),'至少一个实例完成发布');
- assert.equal(await utf8(path.join(rows[0].directory,'page','index.html')),'<html data-v="0.1.1"></html>');
- assert.deepEqual(await fs.readdir(path.join(data,'plugins')),['page-checkin']);
+ assert.deepEqual(await fs.readdir(path.join(data,'plugins')),[MERGED]);
 });
 
-test('仓库里真实的 page-checkin 目录可直接同步并登记',async()=>{
+test('仓库里真实的 bundled-plugins 目录可直接同步并登记',async()=>{
  const {data}=await sandbox();
- const source=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins','page-checkin');
- const seeded=await syncPageDirectory({source,data});
- assert.equal(seeded.written,true);
- for(const file of ['package.json','README.md','page/index.html','page/app.js','page/style.css','page/icon.png','page/view.js']){
-  assert.equal(await fs.stat(path.join(seeded.directory,...file.split('/'))).then(()=>true),true,`缺少 ${file}`);
+ const bundled=path.join(path.dirname(fileURLToPath(import.meta.url)),'bundled-plugins');
+ const directories=new Map();
+ for(const name of bundledPlugins){
+  const seeded=await syncPageDirectory({source:path.join(bundled,name),data,name});
+  assert.equal(seeded?.written,true,`${name} 未同步`);
+  directories.set(name,seeded.directory);
  }
- await registerSeedPage({data,directory:seeded.directory});
+ for(const file of ['package.json','page/index.html','page/app.js','page/style.css','page/icon.png','page/icon.svg']){
+  assert.equal(await fs.stat(path.join(directories.get(MERGED),...file.split('/'))).then(()=>true),true,`合并插件缺少 ${file}`);
+ }
+ for(const file of ['package.json','page/index.html','page/icon.png','hooks.js']){
+  assert.equal(await fs.stat(path.join(directories.get(PURGE),...file.split('/'))).then(()=>true),true,`purge 缺少 ${file}`);
+ }
+ await registerBundledPlugins({data,directories});
  const manifest=JSON.parse(await utf8(path.join(data,'plugins.json')));
- const entry=manifest.plugins.filter(row=>row.spec===seeded.directory);
- assert.equal(entry.length,1);
- assert.equal(JSON.parse(await utf8(path.join(seeded.directory,'package.json'))).name,'@fish-under-sea/page-checkin');
+ assert.equal(manifest.plugins.length,2);
+ assert.deepEqual(manifest.plugins.map(row=>row.spec),[directories.get(MERGED),directories.get(PURGE)]);
 });
 
-// #32：两个内置页面插件统一成 `@用户名/插件名`。包名（发包用）必须全小写——
-// npm 规范，大写 scope 会被拒；页面标题（显示用）用可读的 `@Fish-under-sea/…`。
-test('#32 两个内置页面插件的包名与标题口径一致',async()=>{
- const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins');
- const want={
-  'page-checkin':'@fish-under-sea/page-checkin',
-  'page-relay-probe':'@fish-under-sea/page-relay-probe',
- };
- for(const [dir,name] of Object.entries(want)){
-  const json=JSON.parse(await utf8(path.join(root,dir,'package.json')));
-  assert.equal(json.name,name,`${dir} 的包名`);
-  assert.equal(json.name,json.name.toLowerCase(),`${dir} 的包名必须全小写（npm 规范）`);
-  assert.match(json.name,/^@fish-under-sea\//,`${dir} 要用我们自己的 scope`);
-  assert.match(json.magpie.page.title,/^@Fish-under-sea\//,`${dir} 的页面标题要带可读 scope`);
-  assert.equal(json.repository.url,'git+https://github.com/Fish-under-sea/FISH-DOCK-Plugins.git',`${dir} 的仓库地址要指回本仓`);
+test('合并插件的包名、标题与调用声明',async()=>{
+ const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'bundled-plugins',MERGED);
+ const json=JSON.parse(await utf8(path.join(root,'package.json')));
+ assert.equal(json.name,'@fish-under-sea/magpie-checkin-relay-probe');
+ assert.equal(json.name,json.name.toLowerCase(),'npm 规范：包名全小写');
+ assert.equal(json.magpie.page.title,'签到&探针','侧边栏名称');
+ assert.equal(json.magpie.page.file,'page/index.html');
+ assert.equal(json.magpie.page.icon,'page/icon.svg');
+ assert.deepEqual(json.magpie.permissions,['checkin:state']);
+ const calls=json.magpie.calls||[];
+ assert.ok(calls.length<=16,`调用条数 ${calls.length} 超过页面上限`);
+ for(const name of ['checkin:run','checkin:refresh','relay:start','relay:status','relay:stop','brand:status','brand:set','magpie:open-external']){
+  assert.ok(calls.includes(name),`缺少 ${name}`);
  }
- // 标题与包名同源指的是「同一个 scope + 同一个插件」：标题是给人看的（`签到`），
- // 包名是给 npm 看的（`page-checkin`），只要求 scope 一致、都不是第三方 scope。
- for(const dir of Object.keys(want)){
-  const json=JSON.parse(await utf8(path.join(root,dir,'package.json')));
-  assert.match(json.magpie.page.title.replace('@Fish-under-sea/','@fish-under-sea/'),/^@fish-under-sea\//,`${dir} 标题与包名同 scope`);
-  assert.doesNotMatch(json.magpie.page.title,/@magpie-community\//,`${dir} 标题不该还挂着第三方 scope`);
+ // 两页的代码与图标原样在子目录里
+ for(const file of ['checkin/index.html','checkin/app.js','checkin/view.js','checkin/icon.svg','relay/index.html','relay/app.js','relay/style.css']){
+  assert.equal(await fs.stat(path.join(root,'page',...file.split('/'))).then(()=>true),true,`缺少 page/${file}`);
  }
 });
-// 侧边栏标题只留文字：包名保持 `@fish-under-sea/…`，标题去掉 `@用户名/` 前缀。
-test('标题归一化：@用户/签到 → 签到，包名不动，幂等',async()=>{
+
+test('侧边栏标题只留文字：@用户/签到 → 签到，包名不动，幂等',async()=>{
  const {stripTitleScope,normalizePageManifest}=await import('./page-seed.mjs');
  assert.equal(stripTitleScope('@Fish-under-sea/签到'),'签到');
  assert.equal(stripTitleScope('@Fish-under-sea/中转站探针'),'中转站探针');
- assert.equal(stripTitleScope('签到'),'签到','没有前缀的标题不许动');
+ assert.equal(stripTitleScope('签到&探针'),'签到&探针','没有前缀的标题不许动');
  assert.equal(stripTitleScope('@user/'),'@user/','去掉后为空就保留原样');
  const raw=JSON.stringify({name:'@fish-under-sea/page-checkin',magpie:{page:{title:'@Fish-under-sea/签到',titles:{zh:'@Fish-under-sea/签到',en:'@Fish-under-sea/Check-in'}}}},null,2)+'\n';
  const first=normalizePageManifest(raw);

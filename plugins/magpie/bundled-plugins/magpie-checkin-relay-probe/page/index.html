@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>签到&amp;探针</title>
+<link rel="stylesheet" href="style.css">
+<script src="_magpie/bridge.js"></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<nav class="shell-tabs" role="tablist" aria-label="页面">
+  <button type="button" class="shell-tab" role="tab" id="tab-checkin" aria-controls="pane-checkin" aria-selected="true">签到</button>
+  <button type="button" class="shell-tab" role="tab" id="tab-relay" aria-controls="pane-relay" aria-selected="false" tabindex="-1">中转站探针</button>
+</nav>
+<main class="shell-panes">
+  <iframe class="shell-pane" id="pane-checkin" title="签到" src="checkin/index.html"></iframe>
+  <iframe class="shell-pane" id="pane-relay" title="中转站探针" hidden></iframe>
+</main>
+</body>
+</html>

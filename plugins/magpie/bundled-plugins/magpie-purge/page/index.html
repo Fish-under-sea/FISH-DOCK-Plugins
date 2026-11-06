@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>破甲 · Purge</title>
+<script src="_magpie/bridge.js"></script>
+<script src="catalog.js"></script>
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <img class="mark" src="icon.svg" alt="" width="28" height="28">
+    <div class="brand-text">
+      <h1>破甲 <span class="brand-tail">Purge</span></h1>
+      <p class="tagline">本地 purge 目录 → 网关 system 改写</p>
+    </div>
+  </div>
+
+  <div class="top-controls">
+    <div class="controls-row">
+      <label class="field">
+        <span class="field-label" id="mode-label">改写模式</span>
+        <select id="mode" aria-labelledby="mode-label">
+          <option value="">跟随 agent-purge</option>
+          <option value="off">off · 不动请求</option>
+          <option value="strict">strict · 只留人设</option>
+          <option value="replace">replace · 人设 + 去掉自称</option>
+          <option value="append">append · 人设 + 原样保留</option>
+        </select>
+      </label>
+      <button id="refresh" type="button" class="quiet">重新扫描</button>
+    </div>
+    <p class="top-hint" id="mode-help"></p>
+  </div>
+</header>
+
+<section class="plan" id="plan" aria-label="当前注入状态" aria-live="polite"></section>
+
+<div class="work">
+  <section class="rail" aria-label="条目列表">
+    <div class="rail-tools">
+      <input id="q" type="search" placeholder="搜名字、来源或类型" aria-label="搜索条目" autocomplete="off">
+      <div id="filters" class="chips" role="group" aria-label="按类型筛选"></div>
+    </div>
+    <p class="rail-count" id="count">正在读快照…</p>
+    <div id="list" class="list" role="listbox" aria-label="条目"></div>
+  </section>
+
+  <section class="panel" id="panel" aria-label="注入组装与条目详情" aria-live="polite">
+    <div id="assembly"></div>
+    <div id="inspect"></div>
+  </section>
+</div>
+
+<footer class="foot">
+  <details class="fold">
+    <summary>导入与来源</summary>
+    <div class="fold-body">
+      <label class="field">
+        <span class="field-label">文件路径</span>
+        <div class="inline-row">
+          <input id="import-path" type="text" placeholder="人设、技能、ZIP 导出包" aria-label="要导入的文件路径" spellcheck="false">
+          <button id="import-run" type="button">导入</button>
+        </div>
+      </label>
+      <p class="note">只认 <code>.md</code> <code>.markdown</code> <code>.txt</code> <code>.json</code> <code>.zip</code>；复制进插件的 <code>state/imports</code> 后再清点，原文件不动。</p>
+
+      <label class="field">
+        <span class="field-label">从本机选文件</span>
+        <input id="import-file" type="file" accept=".md,.markdown,.txt" aria-label="从本机选一个人设或技能文件">
+      </label>
+      <p class="note">选文件时正文直接存进插件的 options（<code>inline</code>），不复制、不落盘。</p>
+
+      <label class="field">
+        <span class="field-label">来源目录（一行一个）</span>
+        <textarea id="sources" rows="3" spellcheck="false" aria-label="来源目录，一行一个" placeholder="D:\purge&#10;~/.agent-purge"></textarea>
+      </label>
+      <button id="sources-save" type="button">保存来源并重扫</button>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>校验记录 <span class="fold-count" id="rejects-count"></span></summary>
+    <div class="fold-body"><ul id="rejects"></ul></div>
+  </details>
+
+  <details class="fold">
+    <summary>最近一次生效</summary>
+    <div class="fold-body"><div id="last" class="stack"></div></div>
+  </details>
+
+  <details class="fold">
+    <summary>边界</summary>
+    <div class="fold-body">
+      <p class="note">只处理经过 magpie 网关的 agent 请求；客户端自己写死的行为、不经过网关的流量改不到。</p>
+      <p class="note"><code>strict</code> 会连原 system 里的工具说明文本一起换掉——结构化工具定义不在网关这一层。</p>
+      <p class="note">页面不读磁盘：条目由插件后端扫描后写成快照，页面只显示它。</p>
+    </div>
+  </details>
+</footer>
+
+<p id="status" class="status" role="status" aria-live="polite" hidden></p>
+
+</body>
+</html>

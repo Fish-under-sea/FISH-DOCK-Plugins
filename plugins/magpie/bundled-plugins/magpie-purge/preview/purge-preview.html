@@ -1,0 +1,1564 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>破甲 · Purge（单文件预览）</title>
+<script>
+// mock 的 magpie 页面桥（真品是 magpie 的 internal/gui/pagebridge.js）。
+// 只实现插件页用到的那几样：ready / theme / options.get/set / onVisibility。
+// 主题走 URL 参数：?theme=dark|light，默认 dark。
+;(() => {
+  const q = new URLSearchParams(location.hash.slice(1) || location.search.slice(1))
+  const dark = (q.get('theme') || 'dark') !== 'light'
+  const tokens = dark
+    ? {
+        bg: '#15171c', fg: '#e6e7ea', muted: '#8d93a0', card: '#1c1f26', line: '#2c313b',
+        accent: '#7c8cff', 'accent-soft': '#232844', code: '#a9b1c6',
+        font: '-apple-system, "Segoe UI", "Noto Sans SC", system-ui, sans-serif',
+      }
+    : {
+        bg: '#fbfbf9', fg: '#1c1d21', muted: '#6b7280', card: '#ffffff', line: '#e3e3e6',
+        accent: '#3563e9', 'accent-soft': '#e6edfd', code: '#4b5162',
+        font: '-apple-system, "Segoe UI", "Noto Sans SC", system-ui, sans-serif',
+      }
+
+  const root = document.documentElement
+  root.dataset.theme = dark ? 'dark' : 'light'
+  root.style.colorScheme = dark ? 'dark' : 'light'
+  for (const [k, v] of Object.entries(tokens)) root.style.setProperty('--magpie-' + k, v)
+
+  // 预览里 options 只活在内存：刷新页面就回到默认值。
+  // 第一次 get 时用演示快照的 options 打底——bridge 先于 catalog.js 加载，所以只能惰性取。
+  const store = {
+    mode: '',
+    persona: '',
+    agents: [],
+    enabled: {},
+    pinned: {},
+    imports: [],
+    refreshAt: 0,
+    inline: [],
+  }
+  let seeded = false
+
+  const api = {
+    theme: { dark, lang: 'zh-CN', tokens },
+    context: {},
+    service: '',
+    visible: true,
+    ready: Promise.resolve({ dark, lang: 'zh-CN', tokens }),
+    onTheme() {},
+    onVisibility(fn) {
+      api._vis = fn
+    },
+    onAction() {},
+    options: {
+      async get() {
+        if (!seeded) {
+          seeded = true
+          const snapshot = window.PURGE_CATALOG?.options
+          if (snapshot && typeof snapshot === 'object') Object.assign(store, snapshot)
+        }
+        return JSON.parse(JSON.stringify(store))
+      },
+      async set(next) {
+        seeded = true
+        Object.assign(store, JSON.parse(JSON.stringify(next || {})))
+        return JSON.parse(JSON.stringify(store))
+      },
+    },
+    read: async () => ({}),
+  }
+  window.magpie = api
+})()
+</script>
+<script>
+// 演示快照：给预览用，路径与条目都是占位数据，不指向任何真实目录。
+// 内置专家（builtin: true）与真实一样来自包内 skills/，这里手写几条代表性的。
+//   node preview/serve.mjs --demo
+window.__PURGE_READY__ = {
+  version: 12,
+  generatedAt: 1794561661000,
+  sources: [
+    { path: 'D:/Purge in Magpie/skills', ok: true, count: 9, error: '', bundled: true },
+    { path: 'C:/Users/you/.agent-purge', ok: true, count: 1, error: '' },
+    { path: 'C:/Users/you/.magpie/purge', ok: true, count: 1, error: '' },
+  ],
+  entries: [
+    {
+      id: 'prompt-forge',
+      name: 'Prompt Forge',
+      kind: 'persona',
+      status: 'ok',
+      reason: '',
+      source: { root: 'D:/Purge in Magpie/personas', rel: 'prompt-forge.md' },
+      size: 1200,
+      digest: 'a1b2c3d4e5f60718',
+      importedAt: 0,
+      version: 1,
+      meta: { format: 'bundled', description: '只写成年角色的 Danbooru 标签编译器：一句话描述进，POSITIVE / NEGATIVE / STYLE_VARIANTS 三块出，不带解释。', version: '1.0.0', whenToUse: '要一段能直接粘进 SD / ComfyUI / NovelAI 出图的标签串，或想把画面描述压成 danbooru 风格 tag 时', source: 'DSH 会话导出包里的提示词编译器人设，角色范围收窄为成年' },
+      chars: 480,
+      injectable: true,
+      builtin: true,
+    },
+    {
+      id: 'recon-specialist',
+      name: '侦察测绘专家',
+      kind: 'skill',
+      status: 'ok',
+      reason: '',
+      source: { root: 'D:/Purge in Magpie/skills', rel: 'recon-specialist.md' },
+      size: 8100,
+      digest: 'b7e1c09a34d5f218',
+      importedAt: 0,
+      version: 1,
+      meta: { format: 'bundled', description: '把「一个单位名」铺成「带端口、指纹、标题的资产全景」，覆盖被动公开源、FOFA 测绘与 ProjectDiscovery 流水线。', version: '1.0.0', whenToUse: '拿到域名/单位名要铺资产面；需要确认某 IP 的开放端口与服务版本', source: 'dsh-purge 的 passive-recon、active-scan、web-fingerprint、asset-correlation、recon-pipeline、fofa-recon 六份技能' },
+      chars: 2259,
+      injectable: true,
+      builtin: true,
+    },
+    {
+      id: 'entry-hunter',
+      name: '入口猎手',
+      kind: 'skill',
+      status: 'ok',
+      reason: '',
+      source: { root: 'D:/Purge in Magpie/skills', rel: 'entry-hunter.md' },
+      size: 6900,
+      digest: 'c2d3e4f506172839',
+      importedAt: 0,
+      version: 1,
+      meta: { format: 'bundled', description: '从「站点活着」走到「找到一个能进的门」：目录与文件爆破找后台/备份/源码/配置泄露，浏览器自动化抓 SPA 与接口清单。', version: '1.0.0', whenToUse: '已确认 Web 存活但指纹没有直接 Nday 线索；页面是 SPA、curl 抓不到内容', source: 'dsh-purge 的 dir-bruteforce、browser-automation、kimi-webbridge 三份技能' },
+      chars: 1887,
+      injectable: true,
+      builtin: true,
+    },
+    {
+      id: 'vuln-striker',
+      name: '漏洞打击专家',
+      kind: 'skill',
+      status: 'ok',
+      reason: '',
+      source: { root: 'D:/Purge in Magpie/skills', rel: 'vuln-striker.md' },
+      size: 5900,
+      digest: 'd4e5f60718293a4b',
+      importedAt: 0,
+      version: 1,
+      meta: { format: 'bundled', description: '已知漏洞这一侧的打击手：nuclei 模板化检测，按指纹选模板、按严重度限流、按回显判真伪。', version: '1.0.0', whenToUse: '拿到存活资产清单要做 Nday/1day 批量检测', source: 'dsh-purge 的 nuclei-scan 技能' },
+      chars: 1623,
+      injectable: true,
+      builtin: true,
+    },
+    {
+      id: 'nsfw-prompt-smith',
+      name: '成人提示词专家',
+      kind: 'skill',
+      status: 'ok',
+      reason: '',
+      source: { root: 'D:/Purge in Magpie/skills', rel: 'nsfw-prompt-smith.md' },
+      size: 9800,
+      digest: 'e5f60718293a4b5c',
+      importedAt: 0,
+      version: 1,
+      meta: { format: 'bundled', description: '成人向 NSFW 提示词的编译专家：出图交付参数头 + 正向标签栈 + 全量负向词 + A/B/C 变体，出文交付 system + 场景卡 + 节拍表。角色一律成年。', version: '1.0.0', whenToUse: '要写 NSFW 出图提示词、色情文本的场景卡与节拍表', source: 'dsh-purge 的 nsfw-prompt-gen 技能（角色范围收窄为成年）' },
+      chars: 3151,
+      injectable: true,
+      builtin: true,
+    },
+    {
+      id: 'anima',
+      name: 'Anima',
+      kind: 'persona',
+      status: 'ok',
+      reason: '',
+      source: { root: 'C:/Users/you/.agent-purge', rel: 'personas/anima.md' },
+      size: 1204,
+      digest: 'ef84b655238b9a71',
+      importedAt: 1794561661000,
+      version: 3,
+      meta: { format: 'markdown', description: '话少的写手人设', version: '3' },
+      chars: 486,
+      injectable: true,
+      builtin: false,
+    },
+    {
+      id: '5556',
+      name: '5556',
+      kind: 'session-archive',
+      status: 'ok',
+      reason: '',
+      source: { root: 'C:/Users/you/.magpie/purge', rel: 'Anima loli tag.zip' },
+      size: 177986,
+      digest: '948c5f9615e0c1d2',
+      importedAt: 1794561661000,
+      version: 1,
+      meta: { format: 'dsh-session-archive', version: 1, sessions: 1, turns: 12, cwd: '/root/comfy ui' },
+      chars: 0,
+      injectable: false,
+    },
+  ],
+  rejected: [],
+  options: { mode: 'replace', persona: 'anima', enabled: { 'recon-specialist': true }, agents: [] },
+  imports: [],
+  duplicates: [],
+  purge: { bound: false, mode: '', persona: '', disabled: [], error: '' },
+  plan: {
+    mode: 'replace',
+    modeFrom: 'page',
+    personaId: 'anima',
+    personaName: 'Anima',
+    personaFrom: 'page',
+    skills: [{ id: 'recon-specialist', name: '侦察测绘专家', text: '…' }],
+    blocked: '',
+    blockedCode: '',
+    ready: true,
+  },
+  last: {
+    at: 1794561421000,
+    agent: 'claude',
+    protocol: 'anthropic',
+    model: 'claude-sonnet-4.5',
+    mode: 'replace',
+    persona: 'anima',
+    skills: ['recon-specialist'],
+    chars: 2510,
+    missingPin: [],
+    catalogVersion: 12,
+  },
+}
+</script>
+<script>
+// 演示快照（没就绪的那种）：只有素材、没人设、模式也没选。
+// 用来复看「导入了一个 zip，为什么不会注入」这一屏。
+//   node preview/serve.mjs --demo=blocked
+window.__PURGE_BLOCKED__ = {
+  version: 9,
+  generatedAt: 1794564000000,
+  sources: [
+    { path: 'D:/Fish-code/DSH/purge', ok: true, count: 1, error: '' },
+    { path: 'C:/Users/you/.agent-purge', ok: false, count: 0, error: '目录不存在或没有权限' },
+    { path: 'C:/Users/you/.magpie/purge', ok: false, count: 0, error: '目录不存在或没有权限' },
+  ],
+  entries: [
+    {
+      id: '5556',
+      name: '5556',
+      kind: 'session-archive',
+      status: 'ok',
+      reason: '',
+      source: { root: 'D:/Fish-code/DSH/purge', rel: 'Anima loli tag.zip' },
+      size: 177986,
+      digest: '948c5f9615e0',
+      importedAt: 1794564000000,
+      version: 1,
+      meta: { format: 'dsh-session-archive', version: 1, sessions: 1, turns: 12, cwd: '/root/comfy ui' },
+      chars: 0,
+      injectable: false,
+    },
+  ],
+  rejected: [],
+  options: { mode: '', persona: '', enabled: {}, agents: [] },
+  imports: [],
+  purge: { bound: false, mode: '', persona: '', disabled: [], error: '' },
+  plan: {
+    mode: 'off',
+    modeFrom: 'default',
+    personaId: '',
+    personaName: '',
+    personaFrom: '',
+    skills: [],
+    blocked: '还没选模式：模式是 off，请求原样放行。选一个模式（比如 replace）就开始注入',
+    blockedCode: 'no-mode',
+    ready: false,
+  },
+  last: null,
+}
+
+</script>
+<script>
+;(() => {
+  const pick = () => {
+    const q = new URLSearchParams(location.hash.slice(1) || location.search.slice(1))
+    return { theme: q.get('theme') === 'light' ? 'light' : 'dark', snap: q.get('snap') === 'blocked' ? 'blocked' : 'ready' }
+  }
+  const { snap } = pick()
+  window.PURGE_CATALOG = snap === 'blocked' ? window.__PURGE_BLOCKED__ : window.__PURGE_READY__
+  window.__PURGE_PICK__ = pick
+})()
+</script>
+<style>
+/* 破甲 · Purge 的页面样式。
+   颜色一律吃 magpie 自己的主题变量（--magpie-*），没给就用中和的回落值：
+   页面在 magpie 窗口里，跟随宿主明暗是硬要求。
+
+   没有按「六种类型各给一个颜色」上色——那会变成彩虹。
+   只留三类语义色（人设 / 技能 / 素材），其余全部让给墨色与分隔线。 */
+:root {
+  --ink: var(--magpie-fg, #1c1d21);
+  --muted: var(--magpie-muted, #6b7280);
+  --bg: var(--magpie-bg, #fbfbf9);
+  --card: var(--magpie-card, #ffffff);
+  --line: var(--magpie-line, #e3e3e6);
+  --accent: var(--magpie-accent, #3563e9);
+  --accent-soft: var(--magpie-accent-soft, #e6edfd);
+  --mono: var(--magpie-code, ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace);
+
+  --kind-persona: #6f5bd6;
+  --kind-skill: #1f8f9c;
+  --kind-material: #8a7f70;
+  --ok: #2f8f5b;
+  --danger: #c25556;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); color: var(--ink); }
+body {
+  margin: 0;
+  padding: 20px 24px calc(40px + env(safe-area-inset-bottom));
+  font: 13px/1.55 var(--magpie-font, -apple-system, "Segoe UI", "Noto Sans SC", system-ui, sans-serif);
+  max-width: 1160px;
+  touch-action: manipulation;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 顶部 ---------- */
+.top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 20px;
+  align-items: center;
+}
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mark { width: 28px; height: 28px; flex: none; border-radius: 8px; }
+.brand-text { min-width: 0; }
+h1 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 620;
+  letter-spacing: .005em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.brand-tail {
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 2px;
+}
+.tagline { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+
+.top-controls { display: grid; gap: 4px; justify-items: end; min-width: 0; }
+.controls-row { display: flex; align-items: flex-end; gap: 10px; }
+.field { display: grid; gap: 4px; }
+.field-label { font-size: 12px; color: var(--muted); }
+#mode { min-width: 196px; }
+/* 模式说明跟着下拉走：它解释的是这个选择，不该飘到页面左边去。
+   max-width 用 100% 而不是固定值：窄屏上固定值会让这一行把整页撑出横向滚动。 */
+.top-hint {
+  margin: 0;
+  max-width: 100%;
+  text-align: right;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 控件 ---------- */
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 12px;
+  min-height: 30px;
+  cursor: pointer;
+  transition: border-color .12s ease, background-color .12s ease;
+}
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: transparent; color: #fff; }
+button.quiet { background: transparent; }
+button.danger { color: var(--danger); border-color: color-mix(in oklab, var(--danger) 40%, var(--line)); }
+
+select, input[type="search"], input[type="text"], textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+}
+@media (max-width: 620px) { select, input, textarea { font-size: 16px; } }
+textarea { width: 100%; resize: vertical; font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- 注入状态：整页最该被看见的一行 ---------- */
+.plan {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: 4px 14px;
+  align-items: center;
+  margin: 16px 0 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+.plan[data-state="ready"] { border-color: color-mix(in oklab, var(--ok) 42%, var(--line)); }
+.plan[data-state="blocked"] { border-color: color-mix(in oklab, var(--danger) 34%, var(--line)); }
+.plan .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.plan[data-state="ready"] .dot { background: var(--ok); }
+.plan[data-state="blocked"] .dot { background: var(--danger); }
+.plan .who { font-size: 15px; font-weight: 560; }
+.plan .who.is-empty { color: var(--muted); font-weight: 400; }
+.plan .why { grid-column: 2 / -1; color: var(--muted); font-size: 12.5px; }
+.plan .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.plan .tag {
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.plan .tag b { color: var(--ink); font-weight: 560; }
+
+/* ---------- 主体：左列表 / 右组装 ---------- */
+.work {
+  display: grid;
+  grid-template-columns: minmax(300px, 352px) minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
+}
+@media (max-width: 900px) { .work { grid-template-columns: minmax(0, 1fr); } }
+
+.rail { min-width: 0; }
+.rail-tools { display: grid; gap: 10px; }
+.rail-tools input { width: 100%; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  font-size: 12px;
+  padding: 3px 10px;
+  min-height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.rail-count { margin: 12px 0 8px; color: var(--muted); font-size: 12px; }
+
+.list { display: grid; gap: 1px; border-top: 1px solid var(--line); }
+/* 桌面端列表自己滚：条目多时不让整页跟着长，右栏也不会剩一大片空白。
+   窄屏不做嵌套滚动——那比页面滚动难用。
+   底部加一层淡出：滚动区硬切会把最后一行切成半截，看起来像坏了。 */
+@media (min-width: 901px) {
+  .list {
+    max-height: min(58vh, 540px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 4px;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+  }
+  .list:has(> .row:last-child:first-child) { mask-image: none; }
+}
+.group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 2px 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.group-head:first-child { padding-top: 8px; }
+.group-head .n { font-variant-numeric: tabular-nums; }
+
+.row {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px 9px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.row:hover { background: color-mix(in oklab, var(--card) 78%, transparent); }
+.row[aria-selected="true"] { background: var(--accent-soft); }
+.row > span { min-width: 0; }
+.row .spine { align-self: stretch; border-radius: 2px; background: var(--spine, var(--line)); }
+.row .title {
+  display: block;
+  font-weight: 520;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .meta {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .side {
+  text-align: right;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* 状态胶囊跟名字同行：放右侧会把行高撑到 70px，十条就多出一屏 */
+.row .badge {
+  display: inline-block;
+  vertical-align: 1px;
+  font-size: 12px;
+  padding: 0 7px;
+  margin-left: 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.badge.reject { color: var(--danger); }
+.badge.off { color: var(--muted); }
+.badge.on { color: var(--ok); }
+
+/* ---------- 右栏：组装 / 详情 ---------- */
+.panel { min-width: 0; min-height: 320px; }
+
+.panel h2 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 580;
+  letter-spacing: .005em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.panel .h2-sub { color: var(--muted); font-size: 12px; font-weight: 400; }
+
+/* 组装预览：把「会拼成什么」摊开成按顺序的积木，这是本页最有辨识度的一块 */
+.stack-view { display: grid; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+.stack-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: baseline;
+  padding: 11px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.stack-row:last-child { border-bottom: 0; }
+.stack-row .ord {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.stack-row .body { min-width: 0; }
+.stack-row .name { font-weight: 520; display: block; }
+.stack-row .desc {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stack-row .size { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.stack-row.is-persona { box-shadow: inset 3px 0 0 var(--kind-persona); }
+.stack-row.is-skill { box-shadow: inset 3px 0 0 var(--kind-skill); }
+.stack-row.is-host { box-shadow: inset 3px 0 0 var(--line); color: var(--muted); }
+.stack-row.is-empty { color: var(--muted); }
+
+.stack-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 一键启用：把九个专家的开关摊平，点一下即生效 */
+.picker { margin-top: 28px; }
+.picker h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 560;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.picks { display: flex; flex-wrap: wrap; gap: 8px; }
+.pick {
+  font-size: 12.5px;
+  padding: 4px 12px;
+  min-height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+.pick:hover:not(:disabled) { color: var(--ink); }
+.pick.is-on {
+  background: color-mix(in oklab, var(--kind-skill) 14%, transparent);
+  border-color: color-mix(in oklab, var(--kind-skill) 45%, var(--line));
+  color: var(--ink);
+}
+
+/* 详情 */
+.kind { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.kind.persona { color: var(--kind-persona); }
+.kind.skill { color: var(--kind-skill); }
+.kind.material { color: var(--kind-material); }
+.sub-note { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 16px 0 0; font-size: 12.5px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+.facts code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+.warn { color: var(--danger); font-size: 12.5px; margin: 10px 0 0; }
+.note { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+
+.budget { margin: 16px 0 0; }
+.budget .track { height: 4px; border-radius: 2px; background: var(--line); }
+.budget .fill { height: 100%; min-width: 3px; border-radius: 2px; background: var(--accent); }
+.budget .label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+pre.text {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  max-height: 280px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  white-space: pre-wrap;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 16px 2px;
+  margin: 0;
+}
+
+/* ---------- 底部：四块可折叠，平时只占一行 ---------- */
+.foot {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 24px;
+  margin-top: 30px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  align-items: start;
+}
+.fold { min-width: 0; }
+.fold > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 0;
+  min-height: 32px;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform .12s ease;
+}
+.fold[open] > summary { color: var(--ink); }
+.fold[open] > summary::before { transform: rotate(90deg); }
+.fold-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.fold-body { display: grid; gap: 8px; padding: 6px 0 4px; }
+.fold-body .inline-row { display: flex; gap: 8px; }
+.fold-body .inline-row input { flex: 1; min-width: 0; }
+.fold-body ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
+.fold-body li { margin-bottom: 5px; overflow-wrap: anywhere; }
+.fold-body code { font-family: var(--mono); }
+.stack { display: grid; gap: 6px; }
+
+.status { margin: 16px 0 0; font-size: 12.5px; color: var(--muted); }
+.status[data-tone="bad"] { color: var(--danger); }
+.status[data-tone="good"] { color: var(--ok); }
+
+/* 右栏不加「入场淡入」：这一栏每次点条目、每次改设置都整块重画，
+   动画会跟着重放一遍，读起来像页面在闪。工作台的动效预算留给真正的状态变化（比如状态点变色）。 */
+
+@media (max-width: 620px) {
+  body { padding: 16px 16px 32px; }
+  .top { grid-template-columns: minmax(0, 1fr); }
+  .top-controls { justify-content: flex-start; }
+  .plan { grid-template-columns: max-content minmax(0, 1fr); }
+  .plan .actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .plan .why { grid-column: 1 / -1; }
+}
+/* ---- 预览控制条 ---- */
+.pv-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--card);font:12px/1.4 var(--magpie-font,system-ui);color:var(--ink)}
+.pv-bar b{font-size:13px;font-weight:600}
+.pv-hint{color:var(--muted);margin-right:auto}
+.pv-bar label{display:flex;align-items:center;gap:6px;color:var(--muted)}
+.pv-bar select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+</style>
+
+</head>
+<body>
+
+<div class="pv-bar" role="region" aria-label="预览控制">
+  <b>破甲 · Purge</b>
+  <span class="pv-hint">单文件预览：数据是演示快照，不跑网关、不写设置</span>
+  <label>主题
+    <select id="pv-theme">
+      <option value="dark">深色</option>
+      <option value="light">浅色</option>
+    </select>
+  </label>
+  <label>状态
+    <select id="pv-snap">
+      <option value="ready">就绪</option>
+      <option value="blocked">未就绪</option>
+    </select>
+  </label>
+</div>
+<script>
+;(() => {
+  const q = new URLSearchParams(location.hash.slice(1) || location.search.slice(1))
+  const theme = document.getElementById('pv-theme')
+  const snap = document.getElementById('pv-snap')
+  theme.value = q.get('theme') === 'light' ? 'light' : 'dark'
+  snap.value = q.get('snap') === 'blocked' ? 'blocked' : 'ready'
+  const go = () => {
+    const next = new URLSearchParams()
+    next.set('theme', theme.value)
+    next.set('snap', snap.value)
+    location.hash = next.toString()
+    location.reload()
+  }
+  theme.onchange = go
+  snap.onchange = go
+
+  // #row=N 直接打开某条的详情，省得每次都手点
+  const row = q.get('row')
+  if (row !== null) {
+    addEventListener('load', () => setTimeout(() => {
+      document.querySelectorAll('#list .row')[Number(row)]?.click()
+    }, 120))
+  }
+})()
+</script>
+
+
+<header class="top">
+  <div class="brand">
+    <img class="mark" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlB1cmdlIGluIE1hZ3BpZSI+CiAgPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiMxZDIyMzAiLz4KICA8cGF0aCBkPSJNMzIgMTAuNSBMNTEgMTkuNSBWMzYgQzUxIDQ1LjUgNDIuNSA1Mi41IDMyIDU1LjUgQzIxLjUgNTIuNSAxMyA0NS41IDEzIDM2IFYxOS41IFoiCiAgICAgICAgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZThlYWYwIiBzdHJva2Utd2lkdGg9IjMuMiIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgb3BhY2l0eT0iLjkyIi8+CiAgPHBhdGggZD0iTTIxIDQxIEw0MyAxNyIgc3Ryb2tlPSIjN2M2Y2YwIiBzdHJva2Utd2lkdGg9IjQuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGNpcmNsZSBjeD0iMzIiIGN5PSIzNiIgcj0iNC4xIiBmaWxsPSIjZjBiMjRhIi8+Cjwvc3ZnPg==" alt="" width="28" height="28">
+    <div class="brand-text">
+      <h1>破甲 <span class="brand-tail">Purge</span></h1>
+      <p class="tagline">本地 purge 目录 → 网关 system 改写</p>
+    </div>
+  </div>
+
+  <div class="top-controls">
+    <div class="controls-row">
+      <label class="field">
+        <span class="field-label" id="mode-label">改写模式</span>
+        <select id="mode" aria-labelledby="mode-label">
+          <option value="">跟随 agent-purge</option>
+          <option value="off">off · 不动请求</option>
+          <option value="strict">strict · 只留人设</option>
+          <option value="replace">replace · 人设 + 去掉自称</option>
+          <option value="append">append · 人设 + 原样保留</option>
+        </select>
+      </label>
+      <button id="refresh" type="button" class="quiet">重新扫描</button>
+    </div>
+    <p class="top-hint" id="mode-help"></p>
+  </div>
+</header>
+
+<section class="plan" id="plan" aria-label="当前注入状态" aria-live="polite"></section>
+
+<div class="work">
+  <section class="rail" aria-label="条目列表">
+    <div class="rail-tools">
+      <input id="q" type="search" placeholder="搜名字、来源或类型" aria-label="搜索条目" autocomplete="off">
+      <div id="filters" class="chips" role="group" aria-label="按类型筛选"></div>
+    </div>
+    <p class="rail-count" id="count">正在读快照…</p>
+    <div id="list" class="list" role="listbox" aria-label="条目"></div>
+  </section>
+
+  <section class="panel" id="panel" aria-label="注入组装与条目详情" aria-live="polite">
+    <div id="assembly"></div>
+    <div id="inspect"></div>
+  </section>
+</div>
+
+<footer class="foot">
+  <details class="fold">
+    <summary>导入与来源</summary>
+    <div class="fold-body">
+      <label class="field">
+        <span class="field-label">文件路径</span>
+        <div class="inline-row">
+          <input id="import-path" type="text" placeholder="人设、技能、ZIP 导出包" aria-label="要导入的文件路径" spellcheck="false">
+          <button id="import-run" type="button">导入</button>
+        </div>
+      </label>
+      <p class="note">只认 <code>.md</code> <code>.markdown</code> <code>.txt</code> <code>.json</code> <code>.zip</code>；复制进插件的 <code>state/imports</code> 后再清点，原文件不动。</p>
+
+      <label class="field">
+        <span class="field-label">从本机选文件</span>
+        <input id="import-file" type="file" accept=".md,.markdown,.txt" aria-label="从本机选一个人设或技能文件">
+      </label>
+      <p class="note">选文件时正文直接存进插件的 options（<code>inline</code>），不复制、不落盘。</p>
+
+      <label class="field">
+        <span class="field-label">来源目录（一行一个）</span>
+        <textarea id="sources" rows="3" spellcheck="false" aria-label="来源目录，一行一个" placeholder="D:\purge&#10;~/.agent-purge"></textarea>
+      </label>
+      <button id="sources-save" type="button">保存来源并重扫</button>
+    </div>
+  </details>
+
+  <details class="fold">
+    <summary>校验记录 <span class="fold-count" id="rejects-count"></span></summary>
+    <div class="fold-body"><ul id="rejects"></ul></div>
+  </details>
+
+  <details class="fold">
+    <summary>最近一次生效</summary>
+    <div class="fold-body"><div id="last" class="stack"></div></div>
+  </details>
+
+  <details class="fold">
+    <summary>边界</summary>
+    <div class="fold-body">
+      <p class="note">只处理经过 magpie 网关的 agent 请求；客户端自己写死的行为、不经过网关的流量改不到。</p>
+      <p class="note"><code>strict</code> 会连原 system 里的工具说明文本一起换掉——结构化工具定义不在网关这一层。</p>
+      <p class="note">页面不读磁盘：条目由插件后端扫描后写成快照，页面只显示它。</p>
+    </div>
+  </details>
+</footer>
+
+<p id="status" class="status" role="status" aria-live="polite" hidden></p>
+
+<script>
+// 破甲 · Purge 的页面逻辑。
+//
+// 页面在 magpie 的沙箱帧里：不能 fetch、读不到磁盘，只有三样东西可用——
+//   1. window.PURGE_CATALOG：后端扫描后写下的快照（page/catalog.js）；
+//   2. magpie.options.get/set：这个插件在 plugins.json 里的设置；
+//   3. magpie.ready / onVisibility：主题与可见性。
+// 所以页面只做「显示 + 改设置」，真正的清点与改写都在 hooks.js 那一侧。
+;(() => {
+  'use strict'
+
+  const bridge = window.magpie
+  const $ = (id) => document.getElementById(id)
+  const KINDS = {
+    'session-archive': { label: '会话导出包', cls: 'material' },
+    'cordis-plugin': { label: 'DSH 插件包', cls: 'material' },
+    persona: { label: '人设', cls: 'persona' },
+    skill: { label: '技能', cls: 'skill' },
+    manifest: { label: '清单', cls: 'material' },
+    text: { label: '文本', cls: 'skill' },
+  }
+  /** 三类语义色：人设 / 技能 / 素材。六种类型各给一色会变成彩虹，信息量却没增加。 */
+  const kindClass = (kind) => KINDS[kind]?.cls || 'material'
+  /** builtinFolder 从内置条目的 root 里取出它所在的目录名（skills / personas）。 */
+  const builtinFolder = (e) => String(e.source?.root || '').split(/[\\/]/).filter(Boolean).pop() || 'skills'
+  const MODE_HELP = {
+    off: '请求原样放行，什么也不改。',
+    strict: '整段可控 system 换成人设；原 system 里的工具说明文本也会一起没了。',
+    replace: '人设放最前，宿主 system 里「自称 + 点名模型/厂商」的行删掉。',
+    append: '人设放最前，宿主 system 原样保留。',
+  }
+  /** NOT_INJECTABLE 说清「这条为什么不会进 system」，并指出下一步：导入的是素材，不是人设。 */
+  const NOT_INJECTABLE =
+    '素材条目：可查、可归档，不会写进 system。要注入请导入人设或技能（.md / .markdown / .txt），' +
+    '或在下方「从本机选文件」里挑一个 md。'
+
+  let options = {}
+  let catalog = window.PURGE_CATALOG ?? null
+  let selected = ''
+  let filter = ''
+  let query = ''
+  let saveTimer = 0
+  let pendingSave = null
+  let busy = false
+
+  // ---------- 小工具 ----------
+
+  const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MiB` : `${Math.max(1, Math.round(n / 1024))} KiB`)
+  const fmtTime = (ms) => (ms ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : '—')
+  const short = (digest) => (digest ? String(digest).slice(0, 12) : '—')
+
+  function say(text, tone = '') {
+    const el = $('status')
+    el.textContent = text
+    el.dataset.tone = tone
+    el.hidden = !text
+    if (!text) return
+    clearTimeout(say.timer)
+    say.timer = setTimeout(() => { el.hidden = true }, 6000)
+  }
+
+  function el(tag, attrs = {}, ...kids) {
+    const node = document.createElement(tag)
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v === null || v === undefined || v === false) continue
+      if (k === 'class') node.className = v
+      else if (k === 'text') node.textContent = v
+      else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v)
+      else node.setAttribute(k, v === true ? '' : String(v))
+    }
+    for (const kid of kids.flat()) {
+      if (kid === null || kid === undefined || kid === false) continue
+      node.append(kid instanceof Node ? kid : document.createTextNode(String(kid)))
+    }
+    return node
+  }
+
+  const entries = () => (Array.isArray(catalog?.entries) ? catalog.entries : [])
+  const inlineEntries = () => (Array.isArray(options.inline) ? options.inline : [])
+  const findEntry = (id) => entries().find((e) => e.id === id) || inlineEntries().find((e) => e.id === id) || null
+  const isEnabled = (id) => (options.enabled?.[id] !== undefined ? options.enabled[id] : findEntry(id)?.kind === 'persona')
+
+  // ---------- 与宿主说话 ----------
+
+  /** save 把整份 options 写回magpie；options.set 每秒只收一次，这里攒 1.1 秒再发。 */
+  function save(patch, note) {
+    options = { ...options, ...patch }
+    if (pendingSave) Object.assign(pendingSave, patch)
+    else pendingSave = { ...patch }
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(flush, 1100)
+    if (note) say(note)
+    render()
+  }
+
+  async function flush() {
+    if (!pendingSave || !bridge?.options?.set) return
+    const body = { ...options }
+    pendingSave = null
+    try {
+      const saved = await bridge.options.set(body)
+      if (saved && typeof saved === 'object') options = { ...body, ...saved }
+    } catch (error) {
+      say(`保存失败：${error?.message || error}`, 'bad')
+    }
+  }
+
+  // ---------- 渲染 ----------
+
+  function renderFilters() {
+    const host = $('filters')
+    const kinds = [...new Set(entries().map((e) => e.kind))]
+    host.replaceChildren(
+      el('button', { type: 'button', class: 'chip', 'aria-pressed': filter === '', onclick: () => { filter = ''; render() } }, `全部 ${entries().length}`),
+      ...kinds.map((kind) => {
+        const n = entries().filter((e) => e.kind === kind).length
+        return el('button', {
+          type: 'button',
+          class: 'chip',
+          'aria-pressed': filter === kind,
+          onclick: () => { filter = filter === kind ? '' : kind; render() },
+        }, `${KINDS[kind]?.label || kind} ${n}`)
+      }),
+    )
+  }
+
+  function visible() {
+    const q = query.trim().toLowerCase()
+    return entries()
+      .filter((e) => (filter ? e.kind === filter : true))
+      .filter((e) => (q ? `${e.name} ${e.id} ${e.source?.rel ?? ''} ${KINDS[e.kind]?.label ?? ''}`.toLowerCase().includes(q) : true))
+      .concat(
+        inlineEntries()
+          .filter((e) => (filter ? e.kind === filter : true))
+          .filter((e) => (q ? `${e.name} ${e.id}`.toLowerCase().includes(q) : true))
+          .map((e) => ({
+            ...e,
+            status: 'ok',
+            source: { rel: '页面导入（options）', root: 'inline' },
+            size: 0,
+            meta: { format: 'inline', description: '' },
+            version: 1,
+            chars: String(e.text || '').length,
+            injectable: true,
+            digest: '',
+          })),
+      )
+  }
+
+  function renderList() {
+    const host = $('list')
+    const rows = visible()
+    if (!catalog) {
+      host.replaceChildren(el('p', { class: 'empty', text: '还没有快照：后端没跑过扫描。点右上角「重新扫描」。' }))
+      return
+    }
+    if (!rows.length) {
+      host.replaceChildren(el('p', { class: 'empty', text: '没有匹配的条目。清掉搜索，或往来源目录里放点东西再扫一次。' }))
+      return
+    }
+    // 分组比逐行挂「内置」胶囊干净：内置是「这一整组都随包来」，说一次就够。
+    const groups = [
+      { key: 'builtin', label: '内置专家与技能', rows: rows.filter((e) => e.builtin) },
+      { key: 'mine', label: '我的来源', rows: rows.filter((e) => !e.builtin) },
+    ].filter((g) => g.rows.length)
+
+    const nodes = []
+    for (const group of groups) {
+      nodes.push(el('div', { class: 'group-head' },
+        el('span', { text: group.label }),
+        el('span', { class: 'n', text: String(group.rows.length) }),
+      ))
+      for (const e of group.rows) nodes.push(rowOf(e))
+    }
+    host.replaceChildren(...nodes)
+  }
+
+  /** rowOf 画一行条目；状态只用「未启用 / 已启用 / 拒绝」三种胶囊，不再叠「内置」。 */
+  function rowOf(e) {
+    const kind = KINDS[e.kind] || { label: e.kind }
+    const badge = e.status === 'rejected'
+      ? el('span', { class: 'badge reject', text: '拒绝' })
+      : !e.injectable ? null
+        : isEnabled(e.id) ? null : el('span', { class: 'badge off', text: '未启用' })
+    return el('button', {
+      type: 'button',
+      class: 'row',
+      role: 'option',
+      'aria-selected': selected === e.id,
+      onclick: () => { selected = selected === e.id ? '' : e.id; render() },
+    },
+      el('span', { class: 'spine', style: `--spine:var(--kind-${kindClass(e.kind)})` }),
+      el('span', {},
+        el('span', { class: 'title' }, e.name, badge || null),
+        el('span', { class: 'meta', text: `${kind.label} · ${e.builtin ? '随插件' : e.source?.rel ?? ''}` }),
+      ),
+      el('span', { class: 'side' }, e.version > 1 ? `v${e.version} ` : '',
+        el('span', { class: 'meta', text: e.injectable ? `${e.chars || 0} 字` : fmtSize(e.size || 0) })),
+    )
+  }
+
+  /**
+   * renderAssembly 是右栏默认内容：把「这次会拼成什么」按顺序摊开。
+   *
+   * 为什么值得占这一整栏：这个插件的产物就是一段被拼起来的 system 文本，
+   * 但它平时在请求里，用户看不见。摊开成积木（人设 → 技能 → 宿主原文），
+   * 一眼能看出顺序对不对、谁没启用、总量吃不吃得下预算。
+   */
+  function renderAssembly() {
+    const host = $('assembly')
+    const plan = catalog?.plan
+    const last = catalog?.last
+    if (!plan) {
+      host.replaceChildren(el('h2', {}, '注入组装'))
+      host.append(el('p', { class: 'empty', text: '还没有判定：等后端第一次扫描。' }))
+      return
+    }
+    const personaEntry = findEntry(plan.personaId)
+    const skills = (plan.skills || []).map((s) => findEntry(s.id) || s)
+    const total = (personaEntry?.chars || 0) + skills.reduce((n, s) => n + (s.chars || 0), 0)
+
+    const rows = []
+    if (plan.ready && personaEntry) {
+      rows.push(stackRow('01', 'persona', personaEntry.name, personaEntry.meta?.description || '人设正文', `${personaEntry.chars || 0} 字`))
+      skills.forEach((s, i) => rows.push(stackRow(String(i + 2).padStart(2, '0'), 'skill', s.name, s.meta?.description || '技能正文', `${s.chars || 0} 字`)))
+      rows.push(el('div', { class: 'stack-row is-host' },
+        el('span', { class: 'ord', text: String(skills.length + 2).padStart(2, '0') }),
+        el('span', { class: 'body' },
+          el('span', { class: 'name', text: '宿主自己的 system' }),
+          el('span', { class: 'desc', text: plan.mode === 'strict' ? 'strict：整段换掉，不会保留' : '原样保留，接在上面这些之后' }),
+        ),
+        el('span', { class: 'size', text: plan.mode === 'strict' ? '—' : '保留' }),
+      ))
+    } else {
+      rows.push(el('div', { class: 'stack-row is-empty' },
+        el('span', { class: 'ord', text: '—' }),
+        el('span', { class: 'body' },
+          el('span', { class: 'name', text: '还没有可组装的内容' }),
+          // 具体原因在顶部状态条里已经说过一遍，这里只说「这里将来会显示什么」，不重复。
+          el('span', { class: 'desc', text: '按上面的提示处理后，这段会显示人设与技能的拼装顺序' }),
+        ),
+        el('span', { class: 'size', text: '' }),
+      ))
+    }
+
+    host.replaceChildren(...[
+      el('h2', {}, '注入组装',
+        el('span', { class: 'h2-sub', text: plan.ready ? '下一次请求会拼成这段' : '这次放行，下面是原因' })),
+      el('div', { class: 'stack-view' }, ...rows),
+      el('div', { class: 'stack-foot' },
+        el('span', { text: plan.ready ? `合计 ${total.toLocaleString('zh-CN')} 字符 · 预算 65,536` : `模式 ${plan.mode}` }),
+        last?.at ? el('span', { text: last.skipped ? `上次 ${fmtTime(last.at)} · 未注入` : `上次 ${fmtTime(last.at)} · ${last.agent || '—'}` }) : null,
+      ),
+      renderExpertPicker(),
+    ].filter(Boolean))
+  }
+
+  /**
+   * renderExpertPicker 是「一键启用专家」：这里是每天重复最多的动作。
+   * 不用逐条点开再点启用——九个专家的开关摊在同一行，点一下就切。
+   * 只列技能：人设是「谁来写」，走另一条路（详情里的「设为当前人设」）。
+   */
+  function renderExpertPicker() {
+    const skills = entries().filter((e) => e.injectable && e.kind === 'skill' && e.builtin)
+    const mine = entries().filter((e) => e.injectable && e.kind === 'skill' && !e.builtin)
+    const all = [...skills, ...mine]
+    if (!all.length) return null
+    const chip = (e) => {
+      const on = isEnabled(e.id)
+      return el('button', {
+        type: 'button',
+        class: `pick${on ? ' is-on' : ''}`,
+        'aria-pressed': on ? 'true' : 'false',
+        title: on ? `停用「${e.name}」` : `启用「${e.name}」`,
+        onclick: () => save({ enabled: { ...(options.enabled || {}), [e.id]: !on } }, on ? `已停用「${e.name}」` : `已启用「${e.name}」`),
+      }, on ? '✓ ' : '', e.name)
+    }
+    return el('section', { class: 'picker', 'aria-label': '启用专家' },
+      el('h3', {}, '启用的专家',
+        el('span', { class: 'h2-sub', text: '点一下即生效，不必逐条打开' })),
+      el('div', { class: 'picks' }, ...all.map(chip)),
+    )
+  }
+
+  /** stackRow 是组装里的一层：序号 + 名字 + 一句描述 + 体积。 */
+  function stackRow(ord, cls, name, desc, size) {
+    return el('div', { class: `stack-row is-${cls}` },
+      el('span', { class: 'ord', text: ord }),
+      el('span', { class: 'body' },
+        el('span', { class: 'name', text: name }),
+        el('span', { class: 'desc', text: desc }),
+      ),
+      el('span', { class: 'size', text: size }),
+    )
+  }
+
+  function renderInspector() {
+    const host = $('inspect')
+    const e = findEntry(selected)
+    if (!e) {
+      // 没选中时让位给「组装预览」：右栏不留一片空白，那是最浪费的一屏。
+      host.replaceChildren()
+      return
+    }
+    const kind = KINDS[e.kind] || { label: e.kind }
+    const kindCls = kindClass(e.kind)
+    const inline = e.source?.root === 'inline' || e.meta?.format === 'inline'
+    // 只有复制进插件自己的 state/imports 的副本才谈得上「删副本」：来源目录里的原件不动。
+    const imported = Boolean(e.source?.root && /[\\/]state[\\/]imports\/?$/.test(e.source.root))
+    const enabled = isEnabled(e.id)
+    const pinned = options.pinned?.[e.id]
+    const history = Array.isArray(e.history) ? e.history : []
+    const text = inline ? String(e.text || '') : ''
+
+    const actions = []
+    // 人设才有「设为当前人设」；技能是「启用/停用」。混着写会让人以为技能能当人设用。
+    if (e.injectable && e.kind === 'persona') {
+      actions.push(el('button', {
+        type: 'button',
+        class: options.persona === e.id ? 'primary' : '',
+        onclick: () => save({ persona: e.id }, `已把「${e.name}」设为当前人设`),
+      }, options.persona === e.id ? '当前人设' : '设为当前人设'))
+    }
+    if (e.injectable) {
+      actions.push(el('button', {
+        type: 'button',
+        onclick: () => save({ enabled: { ...(options.enabled || {}), [e.id]: !enabled } }, enabled ? `已停用「${e.name}」` : `已启用「${e.name}」`),
+      }, enabled ? '停用' : '启用'))
+    }
+    if (pinned) {
+      actions.push(el('button', {
+        type: 'button',
+        class: 'quiet',
+        onclick: () => {
+          const next = { ...(options.pinned || {}) }
+          delete next[e.id]
+          save({ pinned: next }, '已回到最新版本')
+        },
+      }, '取消版本固定'))
+    }
+    if (inline) {
+      actions.push(el('button', {
+        type: 'button',
+        class: 'danger',
+        onclick: () => {
+          const kept = inlineEntries().filter((x) => x.id !== e.id)
+          const enabledNext = { ...(options.enabled || {}) }
+          delete enabledNext[e.id]
+          save({ inline: kept, enabled: enabledNext, persona: options.persona === e.id ? '' : options.persona }, '已从页面导入里删掉')
+          if (selected === e.id) selected = ''
+        },
+      }, '删除'))
+    } else if (imported) {
+      actions.push(el('button', {
+        type: 'button',
+        class: 'danger',
+        onclick: () => importRequest({ op: 'delete', path: e.source.rel }, `已请求删除「${e.name}」的副本（只删插件自己的 state/imports）`),
+      }, '删除副本'))
+    }
+
+    const versionPicker = history.length
+      ? el('label', { class: 'note' },
+        '回滚到：',
+        el('select', {
+          onchange: (ev) => {
+            const digest = ev.target.value
+            const next = { ...(options.pinned || {}) }
+            if (digest) next[e.id] = digest
+            else delete next[e.id]
+            save({ pinned: next }, digest ? '已固定到旧版本' : '已回到最新版本')
+          },
+        },
+          el('option', { value: '', selected: !pinned }, `最新 v${e.version ?? 1}`),
+          ...history.map((h) => el('option', { value: h.digest, selected: pinned === h.digest }, `v${h.version ?? '?'} · ${fmtTime(h.at)}`)),
+        ),
+      )
+      : null
+
+    // replaceChildren 会把 null 变成 "null" 字符串，所以先过滤。
+    host.replaceChildren(...[
+      el('div', {},
+        el('h2', {}, e.name, el('span', { class: `kind ${kindCls}` }, kind.label)),
+        el('p', { class: 'sub-note', text: e.meta?.description || (e.injectable ? '可写进 system 段的人设/技能文本。' : NOT_INJECTABLE) }),
+      ),
+      // 内置专家：说清它是随包来的，不是用户导入的，所以没有「删除」只有「停用」。
+      // 「何时用」与「提炼自」分两行：一行里塞两件事读起来像免责声明。
+      e.builtin && e.meta?.whenToUse
+        ? el('p', { class: 'sub-note', text: `何时用：${e.meta.whenToUse}` })
+        : null,
+      e.builtin && e.meta?.source
+        ? el('p', { class: 'sub-note', text: `提炼自 ${e.meta.source}` })
+        : null,
+      el('dl', { class: 'facts' },
+        el('dt', { text: '来源' }), el('dd', { text: e.source?.root === 'inline' ? '页面导入（存在 options 里）' : e.builtin ? `插件内置 ${builtinFolder(e)}/` : e.source?.root || '—' }),
+        el('dt', { text: '路径' }), el('dd', {}, el('code', { text: e.source?.rel || '—' })),
+        el('dt', { text: '大小' }), el('dd', { text: e.injectable ? `${e.chars || 0} 字符（上限 64 KB）` : fmtSize(e.size || 0) }),
+        el('dt', { text: '摘要' }), el('dd', {}, el('code', { text: short(e.digest) })),
+        el('dt', { text: '版本' }), el('dd', { text: `v${e.version ?? 1}${history.length ? ` · 保留 ${history.length} 个旧版` : ''}` }),
+        el('dt', { text: '导入于' }), el('dd', { text: e.builtin ? '随插件' : fmtTime(e.importedAt) }),
+        e.meta?.sessions !== undefined ? el('dt', { text: '会话数' }) : null,
+        e.meta?.sessions !== undefined ? el('dd', { text: String(e.meta.sessions) }) : null,
+        e.meta?.turns !== undefined ? el('dt', { text: '选定轮次' }) : null,
+        e.meta?.turns !== undefined ? el('dd', { text: String(e.meta.turns) }) : null,
+      ),
+      e.injectable
+        ? el('div', { class: 'budget' },
+          el('div', { class: 'track' }, el('div', { class: 'fill', style: `width:${Math.min(100, Math.round((e.chars || 0) / 65536 * 100))}%` })),
+          el('div', { class: 'label', text: `${(e.chars || 0).toLocaleString('zh-CN')} / 65,536 字符会进入 system` }),
+        )
+        : null,
+      el('div', { class: 'actions' }, ...actions),
+      versionPicker,
+      pinned ? el('p', { class: 'note', text: `当前固定到 ${short(pinned)}：网关用那一版的正文，不是最新的。` }) : null,
+      inline && text ? el('pre', { class: 'text', text: text.slice(0, 3200) + (text.length > 3200 ? '\n…' : '') }) : null,
+    ].filter(Boolean))
+  }
+
+  function renderRejects() {
+    const host = $('rejects')
+    const rows = Array.isArray(catalog?.rejected) ? catalog.rejected : []
+    const badge = $('rejects-count')
+    if (badge) badge.textContent = rows.length ? `${rows.length}` : ''
+    if (!rows.length) {
+      const n = entries().length
+      host.replaceChildren(el('li', {
+        text: n
+          ? '没有拒绝项：来源目录里每个文件都认得出来。'
+          : '还没有扫描结果。先确认来源目录里放了东西，再点右上角「重新扫描」。',
+      }))
+      return
+    }
+    host.replaceChildren(...rows.slice(0, 24).map((r) => el('li', {}, el('strong', { text: r.name }), `：${r.reason}`)))
+  }
+
+  function renderLast() {
+    const host = $('last')
+    const last = catalog?.last
+    if (!last) {
+      host.replaceChildren(el('p', { class: 'note', text: '还没有请求经过网关。改完模式后，下一次 agent 请求会写下这一行。' }))
+      return
+    }
+    if (last.skipped) {
+      // 放行了也要说清为什么：只显示「没注入」等于什么也没说
+      host.replaceChildren(
+        el('p', { class: 'note', text: `${fmtTime(last.at)} · ${last.agent || '未知 agent'} · ${last.protocol || '—'}` }),
+        el('p', { class: 'warn', text: `这次没有注入：${last.skipped}` }),
+      )
+      return
+    }
+    host.replaceChildren(
+      el('p', { class: 'note', text: `${fmtTime(last.at)} · ${last.agent || '未知 agent'} · ${last.protocol} · ${last.mode}` }),
+      el('p', { class: 'note', text: `人设 ${last.persona || '（无）'} · 技能 ${(last.skills || []).length} 条 · 注入 ${last.chars} 字符` }),
+      ...(last.missingPin?.length ? [el('p', { class: 'warn', text: `固定的版本不在当前表里：${last.missingPin.join('、')}` })] : []),
+    )
+  }
+
+  function render() {
+    if (!catalog) {
+      $('count').textContent = '没有快照'
+    } else {
+      const shown = visible().length
+      $('count').textContent = `${shown} / ${entries().length + inlineEntries().length} 条 · 快照 v${catalog.version} · ${fmtTime(catalog.generatedAt)}`
+    }
+    $('mode').value = MODES().includes(options.mode) ? options.mode : ''
+    $('mode-help').textContent = modeHelp($('mode').value)
+    renderPlan()
+    renderFilters()
+    renderList()
+    // 选着条目就看详情，没选就回组装预览：右栏永远有东西，不留空屏。
+    renderAssembly()
+    renderInspector()
+    const picked = Boolean(findEntry(selected))
+    $('assembly').hidden = picked
+    $('inspect').hidden = !picked
+    renderRejects()
+    renderLast()
+    renderSources()
+  }
+
+  /** MODES 是模式下拉的全部取值：空串 = 跟随 agent-purge。 */
+  const MODES = () => ['', 'off', 'strict', 'replace', 'append']
+
+  /** modeHelp 说清当前值到底意味着什么，尤其是「跟随 agent-purge」时用的是它的什么值。 */
+  function modeHelp(value) {
+    if (value) return MODE_HELP[value] || ''
+    const p = catalog?.purge
+    if (!p?.bound) return '没装 agent-purge 或读不到它的 state.json：等价于 off，不会改请求。'
+    if (p.error) return `agent-purge 的 state.json 有问题：${p.error}；等价于 off。`
+    return `跟随 agent-purge：当前 ${p.mode || '未设置'}${p.persona ? ` · 人设 ${p.persona}` : ''}`
+  }
+
+  /**
+   * renderPlan 是「现在到底注不注、注谁、为什么没注」那一行。
+   * 判定由后端算好放在快照的 plan 里（页面不能读 agent-purge 的 state.json）。
+   */
+  function renderPlan() {
+    const host = $('plan')
+    const plan = catalog?.plan
+    if (!plan) {
+      host.dataset.state = 'idle'
+      host.replaceChildren(
+        el('span', { class: 'dot' }),
+        el('span', { class: 'empty', text: '还没有判定：等后端第一次扫描' }),
+      )
+      return
+    }
+    const ready = Boolean(plan.ready)
+    const fromText = { page: '本页设置', 'agent-purge': 'agent-purge', auto: '自动（第一个启用的人设）', default: '默认' }
+    host.dataset.state = ready ? 'ready' : 'blocked'
+
+    // 没就绪时给一个能点的下一步：光说「不会注入」等于把问题丢回给人。
+    // 每个按钮都顺带 refreshAt：宿主重建插件进程后按新设置重扫，plan 才会跟着变。
+    const fix = []
+    const fixed = (patch, note) => {
+      save({ ...patch, refreshAt: Date.now() }, note)
+      pollSnapshot('等后端按新设置重扫…', 25)
+    }
+    if (!ready) {
+      if (plan.blockedCode === 'no-mode' || plan.blockedCode === 'mode-off') {
+        fix.push(el('button', { type: 'button', class: 'primary', onclick: () => fixed({ mode: 'replace' }, '模式改为 replace') }, '用 replace 开始注入'))
+      }
+      if (plan.blockedCode === 'no-persona' || plan.blockedCode === 'persona-missing') {
+        fix.push(el('button', {
+          type: 'button',
+          class: 'primary',
+          onclick: () => { filter = 'persona'; query = ''; render() },
+        }, '去看人设'))
+      }
+      if (plan.blockedCode === 'no-persona-file') {
+        fix.push(el('button', {
+          type: 'button',
+          class: 'primary',
+          onclick: () => { $('import-file')?.focus(); $('import-file')?.click?.() },
+        }, '导入一份人设'))
+      }
+    }
+
+    const rows = [
+      el('span', { class: 'dot' }),
+      el('span', { class: ready ? 'who' : 'who is-empty' }, ready
+        ? `下一次 agent 请求会注入「${plan.personaName || plan.personaId}」`
+        : '现在不会注入：请求原样放行'),
+      el('span', { class: 'actions' },
+        el('span', { class: 'tag', text: `模式 ${plan.mode} · ${fromText[plan.modeFrom] || plan.modeFrom || '默认'}` }),
+        ready && plan.skills?.length ? el('span', { class: 'tag', text: `技能 ${plan.skills.length} 条` }) : null,
+        ...fix,
+        el('button', { type: 'button', class: 'quiet', onclick: () => refresh() }, '重扫确认'),
+      ),
+      el('span', { class: 'why', text: ready
+        ? `人设来源：${fromText[plan.personaFrom] || plan.personaFrom}${catalog?.purge?.bound ? '；agent-purge 的 state.json 已读到' : '；没读到 agent-purge 的 state.json'}`
+        : `${plan.blocked}${catalog?.purge?.bound ? '' : '（没读到 agent-purge 的 state.json）'}` }),
+    ]
+    host.replaceChildren(...rows.filter(Boolean))
+  }
+
+  function renderSources() {
+    const el2 = $('sources')
+    if (!el2 || document.activeElement === el2) return
+    const list = Array.isArray(options.sources) && options.sources.length
+      ? options.sources
+      : (catalog?.sources || []).filter((s) => s.path && !/[\\/]state[\\/]imports\/?$/.test(s.path)).map((s) => s.path)
+    el2.value = list.join('\n')
+  }
+
+  // ---------- 动作 ----------
+
+  function importRequest(req, note) {
+    const imports = Array.isArray(options.imports) ? options.imports.slice(-19) : []
+    imports.push({ ...req, at: Date.now() })
+    save({ imports, refreshAt: Date.now() }, note)
+    pollSnapshot(`等待后端处理：${req.path}`, 25)
+  }
+
+  /** pollSnapshot 每隔 1.2 秒重新加载 catalog.js（加时间戳绕缓存），版本变了就重画。 */
+  function pollSnapshot(reason, seconds = 12) {
+    const before = catalog?.version ?? 0
+    const until = Date.now() + seconds * 1000
+    say(reason)
+    const tick = () => {
+      const script = document.createElement('script')
+      script.src = `catalog.js?t=${Date.now()}`
+      script.onload = () => {
+        script.remove()
+        const next = window.PURGE_CATALOG
+        if (next && next.version !== before) {
+          catalog = next
+          render()
+          say('快照已更新', 'good')
+          return
+        }
+        if (Date.now() < until) setTimeout(tick, 1200)
+        else say('后端还没写出新快照：magpie 里插件可能没重启，或来源目录没权限。', 'bad')
+      }
+      script.onerror = () => {
+        script.remove()
+        if (Date.now() < until) setTimeout(tick, 1200)
+      }
+      document.head.append(script)
+    }
+    setTimeout(tick, 900)
+  }
+
+  async function refresh() {
+    if (busy) return
+    busy = true
+    $('refresh').disabled = true
+    try {
+      save({ refreshAt: Date.now() })
+      await flush()
+      pollSnapshot('正在让后端重新扫描…', 25)
+    } finally {
+      busy = false
+      $('refresh').disabled = false
+    }
+  }
+
+  function wire() {
+    $('mode').addEventListener('change', (e) => {
+      const value = e.target.value
+      save({ mode: value }, value ? `模式改为 ${value}` : '改为跟随 agent-purge')
+    })
+    $('refresh').addEventListener('click', refresh)
+    $('q').addEventListener('input', (e) => { query = e.target.value; render() })
+
+    $('import-run').addEventListener('click', () => {
+      const path = $('import-path').value.trim()
+      if (!path) return say('先填一个文件路径', 'bad')
+      importRequest({ op: 'import', path }, '已请求导入')
+      $('import-path').value = ''
+    })
+
+    $('import-file').addEventListener('change', async (e) => {
+      const file = e.target.files?.[0]
+      if (!file) return
+      try {
+        const raw = await file.text()
+        if (raw.length > 64 * 1024) throw new Error('超过 64 KB：这么大的正文不该塞进 options')
+        const id = (file.name.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-') || 'inline').slice(0, 48)
+        const kept = inlineEntries().filter((x) => x.id !== id)
+        const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').trim()
+        const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+        const name = fm?.[1]?.match(/^name:\s*(.+)$/m)?.[1]?.replace(/^["']|["']$/g, '') || file.name.replace(/\.[^.]+$/, '')
+        save({ inline: [...kept, { id, name, kind: 'persona', text: body }] }, `已把「${name}」存进 options`)
+        e.target.value = ''
+      } catch (error) {
+        say(`导入失败：${error?.message || error}`, 'bad')
+      }
+    })
+
+    const sources = $('sources-save')
+    sources?.addEventListener('click', () => {
+      const list = $('sources').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+      save({ sources: list, refreshAt: Date.now() }, '来源目录已保存')
+      pollSnapshot('等待后端按新来源扫描…', 25)
+    })
+  }
+
+  async function boot() {
+    if (bridge?.ready?.then) {
+      try {
+        await Promise.race([bridge.ready, new Promise((r) => setTimeout(r, 1500))])
+      } catch {
+        /* 宿主没答也要能画 */
+      }
+    }
+    if (bridge?.onVisibility) bridge.onVisibility((visible) => { if (visible && !busy) refreshFromDisk() })
+    try {
+      options = (await bridge?.options?.get?.()) || {}
+    } catch (error) {
+      say(`读不到 options：${error?.message || error}`, 'bad')
+      options = {}
+    }
+    wire()
+    render()
+    if (!catalog) pollSnapshot('还没有快照，等后端第一次扫描…', 20)
+  }
+
+  /** 页面被切回来时顺手换一份快照：宿主可能在背后扫过一次。 */
+  function refreshFromDisk() {
+    const script = document.createElement('script')
+    script.src = `catalog.js?t=${Date.now()}`
+    script.onload = () => {
+      script.remove()
+      const next = window.PURGE_CATALOG
+      if (next && next.version !== catalog?.version) {
+        catalog = next
+        render()
+      }
+    }
+    script.onerror = () => script.remove()
+    document.head.append(script)
+  }
+
+  boot()
+})()
+</script>
+</body>
+</html>

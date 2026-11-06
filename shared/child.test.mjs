@@ -31,3 +31,22 @@ test('启动期间取消会回收未就绪的真实合成子进程',async()=>{
  assert.ok(pid>0);
  assert.throws(()=>process.kill(pid,0));
 });
+
+test('#37 子进程输出同时交给 onOutput，就绪匹配照旧',async()=>{
+ const seen=[];
+ const instance=await startChild({executable:process.execPath,
+  args:['-e',`process.stdout.write('REA');setTimeout(()=>process.stdout.write('DY'),20);setTimeout(()=>process.exit(),10000)`],
+  ready:text=>text.includes('READY'),probe:async()=>true,timeout:5000,
+  onOutput:text=>seen.push(text)});
+ await instance.stop();
+ assert.ok(seen.join('').includes('READY'),'onOutput 拿到的是同一份输出');
+});
+
+test('#37 onOutput 抛错不影响就绪匹配',async()=>{
+ const instance=await startChild({executable:process.execPath,
+  args:['-e',`process.stdout.write('READY');setTimeout(()=>process.exit(),10000)`],
+  ready:text=>text.includes('READY'),probe:async()=>true,timeout:5000,
+  onOutput:()=>{throw new Error('log sink is broken')}});
+ assert.equal(instance.alive(),true);
+ await instance.stop();
+});

@@ -8,12 +8,15 @@ export async function available(port){
  await new Promise(resolve=>socket.close(resolve));
 }
 // 持有唯一子进程句柄，日志仅用于就绪匹配，不向调用者转发凭据或上游输出。
-export async function startChild({executable,args,env,cwd,ready,probe,timeout=45000,shutdown,signal}){
+// onOutput 是可选的一条出口：子进程每来一段输出就交出去一份（#37：magpie 的
+// internal 日志要落盘，否则「供应商掉出」只能靠磁盘快照猜时间线）。它只拿得到
+// 文本，拿不到进程句柄；抛错按丢掉处理，不许把就绪匹配弄挂。
+export async function startChild({executable,args,env,cwd,ready,probe,timeout=45000,shutdown,signal,onOutput}){
  signal?.throwIfAborted();
  const child=spawn(executable,args,{env,cwd,windowsHide:true,stdio:['pipe','pipe','pipe']});
  let exited=false,spawnError=false,seen=false,buffer='',stopping;
  const exit=new Promise(resolve=>{child.once('exit',()=>{exited=true;resolve()});child.once('error',()=>{spawnError=true;exited=true;resolve()})});
- function data(chunk){buffer+=chunk.toString();if(ready(buffer))seen=true;buffer=buffer.slice(-16384)}
+ function data(chunk){const text=chunk.toString();if(onOutput)try{onOutput(text)}catch{};buffer+=text;if(ready(buffer))seen=true;buffer=buffer.slice(-16384)}
  child.stdout.on('data',data);child.stderr.on('data',data);child.stdin.on('error',()=>{});
  async function terminate(){
   if(exited)return;

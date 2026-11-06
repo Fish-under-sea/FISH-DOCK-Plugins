@@ -1,0 +1,427 @@
+/* 破甲 · Purge 的页面样式。
+   颜色一律吃 magpie 自己的主题变量（--magpie-*），没给就用中和的回落值：
+   页面在 magpie 窗口里，跟随宿主明暗是硬要求。
+
+   没有按「六种类型各给一个颜色」上色——那会变成彩虹。
+   只留三类语义色（人设 / 技能 / 素材），其余全部让给墨色与分隔线。 */
+:root {
+  --ink: var(--magpie-fg, #1c1d21);
+  --muted: var(--magpie-muted, #6b7280);
+  --bg: var(--magpie-bg, #fbfbf9);
+  --card: var(--magpie-card, #ffffff);
+  --line: var(--magpie-line, #e3e3e6);
+  --accent: var(--magpie-accent, #3563e9);
+  --accent-soft: var(--magpie-accent-soft, #e6edfd);
+  --mono: var(--magpie-code, ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace);
+
+  --kind-persona: #6f5bd6;
+  --kind-skill: #1f8f9c;
+  --kind-material: #8a7f70;
+  --ok: #2f8f5b;
+  --danger: #c25556;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); color: var(--ink); }
+body {
+  margin: 0;
+  padding: 20px 24px calc(40px + env(safe-area-inset-bottom));
+  font: 13px/1.55 var(--magpie-font, -apple-system, "Segoe UI", "Noto Sans SC", system-ui, sans-serif);
+  max-width: 1160px;
+  touch-action: manipulation;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 顶部 ---------- */
+.top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 20px;
+  align-items: center;
+}
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mark { width: 28px; height: 28px; flex: none; border-radius: 8px; }
+.brand-text { min-width: 0; }
+h1 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 620;
+  letter-spacing: .005em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.brand-tail {
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 2px;
+}
+.tagline { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+
+.top-controls { display: grid; gap: 4px; justify-items: end; min-width: 0; }
+.controls-row { display: flex; align-items: flex-end; gap: 10px; }
+.field { display: grid; gap: 4px; }
+.field-label { font-size: 12px; color: var(--muted); }
+#mode { min-width: 196px; }
+/* 模式说明跟着下拉走：它解释的是这个选择，不该飘到页面左边去。
+   max-width 用 100% 而不是固定值：窄屏上固定值会让这一行把整页撑出横向滚动。 */
+.top-hint {
+  margin: 0;
+  max-width: 100%;
+  text-align: right;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 控件 ---------- */
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 12px;
+  min-height: 30px;
+  cursor: pointer;
+  transition: border-color .12s ease, background-color .12s ease;
+}
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: transparent; color: #fff; }
+button.quiet { background: transparent; }
+button.danger { color: var(--danger); border-color: color-mix(in oklab, var(--danger) 40%, var(--line)); }
+
+select, input[type="search"], input[type="text"], textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+}
+@media (max-width: 620px) { select, input, textarea { font-size: 16px; } }
+textarea { width: 100%; resize: vertical; font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- 注入状态：整页最该被看见的一行 ---------- */
+.plan {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: 4px 14px;
+  align-items: center;
+  margin: 16px 0 20px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+.plan[data-state="ready"] { border-color: color-mix(in oklab, var(--ok) 42%, var(--line)); }
+.plan[data-state="blocked"] { border-color: color-mix(in oklab, var(--danger) 34%, var(--line)); }
+.plan .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.plan[data-state="ready"] .dot { background: var(--ok); }
+.plan[data-state="blocked"] .dot { background: var(--danger); }
+.plan .who { font-size: 15px; font-weight: 560; }
+.plan .who.is-empty { color: var(--muted); font-weight: 400; }
+.plan .why { grid-column: 2 / -1; color: var(--muted); font-size: 12.5px; }
+.plan .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.plan .tag {
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.plan .tag b { color: var(--ink); font-weight: 560; }
+
+/* ---------- 主体：左列表 / 右组装 ---------- */
+.work {
+  display: grid;
+  grid-template-columns: minmax(300px, 352px) minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
+}
+@media (max-width: 900px) { .work { grid-template-columns: minmax(0, 1fr); } }
+
+.rail { min-width: 0; }
+.rail-tools { display: grid; gap: 10px; }
+.rail-tools input { width: 100%; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  font-size: 12px;
+  padding: 3px 10px;
+  min-height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.rail-count { margin: 12px 0 8px; color: var(--muted); font-size: 12px; }
+
+.list { display: grid; gap: 1px; border-top: 1px solid var(--line); }
+/* 桌面端列表自己滚：条目多时不让整页跟着长，右栏也不会剩一大片空白。
+   窄屏不做嵌套滚动——那比页面滚动难用。
+   底部加一层淡出：滚动区硬切会把最后一行切成半截，看起来像坏了。 */
+@media (min-width: 901px) {
+  .list {
+    max-height: min(58vh, 540px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 4px;
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+  }
+  .list:has(> .row:last-child:first-child) { mask-image: none; }
+}
+.group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 2px 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.group-head:first-child { padding-top: 8px; }
+.group-head .n { font-variant-numeric: tabular-nums; }
+
+.row {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px 9px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+.row:hover { background: color-mix(in oklab, var(--card) 78%, transparent); }
+.row[aria-selected="true"] { background: var(--accent-soft); }
+.row > span { min-width: 0; }
+.row .spine { align-self: stretch; border-radius: 2px; background: var(--spine, var(--line)); }
+.row .title {
+  display: block;
+  font-weight: 520;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .meta {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .side {
+  text-align: right;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* 状态胶囊跟名字同行：放右侧会把行高撑到 70px，十条就多出一屏 */
+.row .badge {
+  display: inline-block;
+  vertical-align: 1px;
+  font-size: 12px;
+  padding: 0 7px;
+  margin-left: 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.badge.reject { color: var(--danger); }
+.badge.off { color: var(--muted); }
+.badge.on { color: var(--ok); }
+
+/* ---------- 右栏：组装 / 详情 ---------- */
+.panel { min-width: 0; min-height: 320px; }
+
+.panel h2 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 580;
+  letter-spacing: .005em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.panel .h2-sub { color: var(--muted); font-size: 12px; font-weight: 400; }
+
+/* 组装预览：把「会拼成什么」摊开成按顺序的积木，这是本页最有辨识度的一块 */
+.stack-view { display: grid; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+.stack-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: baseline;
+  padding: 11px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.stack-row:last-child { border-bottom: 0; }
+.stack-row .ord {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.stack-row .body { min-width: 0; }
+.stack-row .name { font-weight: 520; display: block; }
+.stack-row .desc {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stack-row .size { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.stack-row.is-persona { box-shadow: inset 3px 0 0 var(--kind-persona); }
+.stack-row.is-skill { box-shadow: inset 3px 0 0 var(--kind-skill); }
+.stack-row.is-host { box-shadow: inset 3px 0 0 var(--line); color: var(--muted); }
+.stack-row.is-empty { color: var(--muted); }
+
+.stack-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 一键启用：把九个专家的开关摊平，点一下即生效 */
+.picker { margin-top: 28px; }
+.picker h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 560;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.picks { display: flex; flex-wrap: wrap; gap: 8px; }
+.pick {
+  font-size: 12.5px;
+  padding: 4px 12px;
+  min-height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+.pick:hover:not(:disabled) { color: var(--ink); }
+.pick.is-on {
+  background: color-mix(in oklab, var(--kind-skill) 14%, transparent);
+  border-color: color-mix(in oklab, var(--kind-skill) 45%, var(--line));
+  color: var(--ink);
+}
+
+/* 详情 */
+.kind { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.kind.persona { color: var(--kind-persona); }
+.kind.skill { color: var(--kind-skill); }
+.kind.material { color: var(--kind-material); }
+.sub-note { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 16px 0 0; font-size: 12.5px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+.facts code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+.warn { color: var(--danger); font-size: 12.5px; margin: 10px 0 0; }
+.note { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+
+.budget { margin: 16px 0 0; }
+.budget .track { height: 4px; border-radius: 2px; background: var(--line); }
+.budget .fill { height: 100%; min-width: 3px; border-radius: 2px; background: var(--accent); }
+.budget .label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+pre.text {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  max-height: 280px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  white-space: pre-wrap;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 16px 2px;
+  margin: 0;
+}
+
+/* ---------- 底部：四块可折叠，平时只占一行 ---------- */
+.foot {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 24px;
+  margin-top: 30px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  align-items: start;
+}
+.fold { min-width: 0; }
+.fold > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 0;
+  min-height: 32px;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::before {
+  content: "";
+  width: 0; height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform .12s ease;
+}
+.fold[open] > summary { color: var(--ink); }
+.fold[open] > summary::before { transform: rotate(90deg); }
+.fold-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.fold-body { display: grid; gap: 8px; padding: 6px 0 4px; }
+.fold-body .inline-row { display: flex; gap: 8px; }
+.fold-body .inline-row input { flex: 1; min-width: 0; }
+.fold-body ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
+.fold-body li { margin-bottom: 5px; overflow-wrap: anywhere; }
+.fold-body code { font-family: var(--mono); }
+.stack { display: grid; gap: 6px; }
+
+.status { margin: 16px 0 0; font-size: 12.5px; color: var(--muted); }
+.status[data-tone="bad"] { color: var(--danger); }
+.status[data-tone="good"] { color: var(--ok); }
+
+/* 右栏不加「入场淡入」：这一栏每次点条目、每次改设置都整块重画，
+   动画会跟着重放一遍，读起来像页面在闪。工作台的动效预算留给真正的状态变化（比如状态点变色）。 */
+
+@media (max-width: 620px) {
+  body { padding: 16px 16px 32px; }
+  .top { grid-template-columns: minmax(0, 1fr); }
+  .top-controls { justify-content: flex-start; }
+  .plan { grid-template-columns: max-content minmax(0, 1fr); }
+  .plan .actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .plan .why { grid-column: 1 / -1; }
+}
