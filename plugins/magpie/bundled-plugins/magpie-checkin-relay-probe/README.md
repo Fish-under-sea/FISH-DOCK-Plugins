@@ -60,8 +60,8 @@ node --test --test-isolation=none "test/*.test.mjs"
 node --test --test-isolation=none "page/relay/app.test.mjs"
 ```
 
-`test/relay.test.mjs` 是这层壳自己的；`page/relay/app.test.mjs` 与
-`page/checkin/test/view.test.mjs` 是两页各自的，原样保留。
+`test/relay.test.mjs` 是这层壳自己的；`page/relay/app.test.mjs` 与 `test/checkin-view.test.mjs`
+是两页各自的（签到那份只改了加载路径，内容原样）。
 
 ## 许可
 
