@@ -14,7 +14,7 @@ async function sandbox(){
 // 与仓库里 page-plugins/page-checkin 同形的合成页面目录。
 async function seedSource(source,version='0.1.1'){
  await fs.mkdir(path.join(source,'page'),{recursive:true});
- await fs.writeFile(path.join(source,'package.json'),JSON.stringify({name:'@magpie-community/page-checkin',version},null,2)+'\n');
+ await fs.writeFile(path.join(source,'package.json'),JSON.stringify({name:'@fish-under-sea/page-checkin',version},null,2)+'\n');
  await fs.writeFile(path.join(source,'page','index.html'),`<html data-v="${version}"></html>`);
  await fs.writeFile(path.join(source,'page','app.js'),`// ${version}\n`);
  await fs.writeFile(path.join(source,'page','icon.svg'),'<svg/>');
@@ -72,15 +72,33 @@ test('已是稳定路径时不写磁盘，文件 mtime 不变',async()=>{
 
 test('npm 包名条目与重复条目都被收束到第一条稳定路径',async()=>{
  const spec=path.join(os.tmpdir(),'magpie-stable','plugins','page-checkin');
- for(const stale of ['@magpie-community/page-checkin@latest','@magpie-community/page-checkin','@magpie-community/page-checkin#packages/checkin']){
+ // 旧（第三方 scope）与新（@fish-under-sea）两种包名条目都要认：升级时用户清单里
+ // 可能还是旧的 `@magpie-community/page-checkin@latest`。
+ for(const stale of ['@magpie-community/page-checkin@latest','@magpie-community/page-checkin','@magpie-community/page-checkin#packages/checkin','@fish-under-sea/page-checkin@latest','@fish-under-sea/page-checkin']){
   const next=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:'@magpie-community/page-usage@latest'},{spec:stale,options:{collapsed:true}}]},null,2)+'\n',spec});
   assert.equal(next.changed,true,`${stale} 应被改写`);
   const manifest=JSON.parse(next.text);
   assert.equal(manifest.plugins.length,2);
   assert.deepEqual(manifest.plugins[1],{spec,options:{collapsed:true}});
  }
- const rows=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:'@magpie-community/page-checkin@latest',off:true},{spec:'C:\\old\\page-checkin'}]}),spec});
+ // 新旧两条并存时收束成一条，不能两条都留（否则 magpie 当两家装）。
+ const rows=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:'@magpie-community/page-checkin@latest',off:true},{spec:'@fish-under-sea/page-checkin@latest'}]}),spec});
  assert.deepEqual(JSON.parse(rows.text).plugins,[{spec,off:true}],'同包多条只留第一条');
+});
+
+// #32：改名不能只改 package.json —— isSeedSpec 里写死了旧 scope，不认新名字的话，
+// 升级后旧条目识别不出来，rewriteSeedSpec 会追加新条目 → 新旧并存。
+test('#32 更名后新旧 scope 都认，且相似名不受影响',async()=>{
+ const spec=path.join(os.tmpdir(),'magpie-stable','plugins','page-checkin');
+ for(const good of ['@magpie-community/page-checkin@latest','@fish-under-sea/page-checkin','@fish-under-sea/page-checkin@0.2.6','@fish-under-sea/page-checkin#dir']){
+  const next=rewriteSeedSpec({raw:JSON.stringify({plugins:[{spec:good,options:{collapsed:true}}]},null,2)+'\n',spec});
+  assert.deepEqual(JSON.parse(next.text).plugins,[{spec,options:{collapsed:true}}],`${good} 应命中并改写`);
+ }
+ for(const bad of ['@fish-under-sea/page-checkin-extra@latest','@other/page-checkin@latest','@fish-under-sea/page-usage@latest']){
+  const raw=JSON.stringify({plugins:[{spec:bad}]},null,2)+'\n';
+  const next=rewriteSeedSpec({raw,spec});
+  assert.equal(JSON.parse(next.text).plugins.length,2,`${bad} 不该命中`);
+ }
 });
 
 test('别的插件与相似名不受影响',async()=>{
@@ -197,5 +215,30 @@ test('仓库里真实的 page-checkin 目录可直接同步并登记',async()=>{
  const manifest=JSON.parse(await utf8(path.join(data,'plugins.json')));
  const entry=manifest.plugins.filter(row=>row.spec===seeded.directory);
  assert.equal(entry.length,1);
- assert.equal(JSON.parse(await utf8(path.join(seeded.directory,'package.json'))).name,'@magpie-community/page-checkin');
+ assert.equal(JSON.parse(await utf8(path.join(seeded.directory,'package.json'))).name,'@fish-under-sea/page-checkin');
+});
+
+// #32：两个内置页面插件统一成 `@用户名/插件名`。包名（发包用）必须全小写——
+// npm 规范，大写 scope 会被拒；页面标题（显示用）用可读的 `@Fish-under-sea/…`。
+test('#32 两个内置页面插件的包名与标题口径一致',async()=>{
+ const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'page-plugins');
+ const want={
+  'page-checkin':'@fish-under-sea/page-checkin',
+  'page-relay-probe':'@fish-under-sea/page-relay-probe',
+ };
+ for(const [dir,name] of Object.entries(want)){
+  const json=JSON.parse(await utf8(path.join(root,dir,'package.json')));
+  assert.equal(json.name,name,`${dir} 的包名`);
+  assert.equal(json.name,json.name.toLowerCase(),`${dir} 的包名必须全小写（npm 规范）`);
+  assert.match(json.name,/^@fish-under-sea\//,`${dir} 要用我们自己的 scope`);
+  assert.match(json.magpie.page.title,/^@Fish-under-sea\//,`${dir} 的页面标题要带可读 scope`);
+  assert.equal(json.repository.url,'git+https://github.com/Fish-under-sea/FISH-DOCK-Plugins.git',`${dir} 的仓库地址要指回本仓`);
+ }
+ // 标题与包名同源指的是「同一个 scope + 同一个插件」：标题是给人看的（`签到`），
+ // 包名是给 npm 看的（`page-checkin`），只要求 scope 一致、都不是第三方 scope。
+ for(const dir of Object.keys(want)){
+  const json=JSON.parse(await utf8(path.join(root,dir,'package.json')));
+  assert.match(json.magpie.page.title.replace('@Fish-under-sea/','@fish-under-sea/'),/^@fish-under-sea\//,`${dir} 标题与包名同 scope`);
+  assert.doesNotMatch(json.magpie.page.title,/@magpie-community\//,`${dir} 标题不该还挂着第三方 scope`);
+ }
 });

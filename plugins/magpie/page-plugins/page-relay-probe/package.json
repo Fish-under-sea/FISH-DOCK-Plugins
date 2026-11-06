@@ -1,5 +1,5 @@
 {
-  "name": "page-relay-probe",
+  "name": "@fish-under-sea/page-relay-probe",
   "version": "0.1.3",
   "private": true,
   "description": "中转站真伪检测：页面在 magpie 窗口里，探测由 magpie 本体发出",
@@ -7,13 +7,14 @@
   "scripts": {
     "test": "node --test page/app.test.mjs"
   },
+  "repository": { "type": "git", "url": "git+https://github.com/Fish-under-sea/FISH-DOCK-Plugins.git", "directory": "plugins/magpie/page-plugins/page-relay-probe" },
   "magpie": {
     "icon": "page/icon.png",
     "page": {
-      "title": "中转站探针",
+      "title": "@Fish-under-sea/中转站探针",
       "titles": {
-        "zh": "中转站探针",
-        "en": "Relay probe"
+        "zh": "@Fish-under-sea/中转站探针",
+        "en": "@Fish-under-sea/Relay probe"
       },
       "file": "page/index.html",
       "icon": "page/icon.svg"

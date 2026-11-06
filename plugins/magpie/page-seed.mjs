@@ -70,16 +70,20 @@ export async function syncPageDirectory({source,data,name=seedDirectoryName,onPh
  return {directory,digest:written?await directoryDigest(directory,{signal}):wanted,written};
 }
 
-// 条目指向签到页的判定：spec 是绝对路径（旧版把包目录写死），或以包名开头
-// （npm 的 @magpie-community/page-checkin@latest、git 地址与「包名#目录」同理）。
+// 条目指向内置页面的判定：spec 是绝对路径（旧版把包目录写死），或以包名开头。
+// 包名认两套 scope：#32 之前的 `@magpie-community/<name>` 与之后的 `@fish-under-sea/<name>`
+// ——升级时用户清单里可能还是旧的，不认旧的就会重复登记成两条。
 // 不认其他插件，避免误改用户自己装的同名以外的东西。
+const SEED_SCOPES=['@magpie-community','@fish-under-sea'];
 export function isSeedSpec(spec,name=seedDirectoryName){
  if(typeof spec!=='string'||!spec)return false;
  if(path.isAbsolute(spec)){
   return path.basename(spec.replace(/[\\/]+$/,''))===name||spec.replace(/\\/g,'/').split('/').includes(name);
  }
- const packageName=`@magpie-community/${name}`;
- return spec===packageName||spec.startsWith(`${packageName}@`)||spec.startsWith(`${packageName}/`)||spec.startsWith(`${packageName}#`);
+ return SEED_SCOPES.some(scope=>{
+  const packageName=`${scope}/${name}`;
+  return spec===packageName||spec.startsWith(`${packageName}@`)||spec.startsWith(`${packageName}/`)||spec.startsWith(`${packageName}#`);
+ });
 }
 
 // plugins.json 只由结构相同的 {spec,off,options} 条目组成。改写后逐字比较：没变化就

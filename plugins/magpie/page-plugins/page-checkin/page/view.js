@@ -3,7 +3,7 @@
 (() => {
   const TEXT = {
     en: {
-      title: "Check-in", all: "Check every signed-in account in once a day",
+      title: "@Fish-under-sea/Check-in", all: "Check every signed-in account in once a day",
       run: "Check in now", running: "Checking in…", refresh: "Re-read credits", refreshing: "Re-reading…",
       expand: "Expand", collapse: "Collapse",
       switchOn: "On", switchOff: "Off",
@@ -25,7 +25,7 @@
       pendingPlugins: "Preparing {n} vendor plugin(s) (first install, about 1 minute)",
     },
     zh: {
-      title: "自动签到", all: "每天替每个已登录账号签到一次",
+      title: "@Fish-under-sea/签到", all: "每天替每个已登录账号签到一次",
       run: "立即签到", running: "正在签到…", refresh: "重新读取额度", refreshing: "正在读取…",
       expand: "展开", collapse: "收起",
       switchOn: "开", switchOff: "关",

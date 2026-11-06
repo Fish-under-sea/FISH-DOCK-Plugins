@@ -2,8 +2,8 @@
 
 magpie 窗口里的一个页面：按厂商分组显示每个已登录账号今天的签到结果、实得积分与连续天数，可逐厂商 / 逐账号开关，可一键手动签到。
 
-- 包名：`@magpie-community/page-checkin`
-- 页面标题：`自动签到`（`en`：Check-in）
+- 包名：`@fish-under-sea/page-checkin`（#32 起从第三方的 `@magpie-community` scope 改到我们自己的；旧 scope 的条目升级时会被识别并改写，不会重复登记）
+- 页面标题：`@Fish-under-sea/签到`
 - 版本：0.2.6（配合 magpie 1.2.1 的 `checkin:state` 读取，以及 `brand:*` 的预装插件美化开关）
 
 ## 宿主需要提供什么
@@ -42,8 +42,8 @@ magpie 窗口里的一个页面：按厂商分组显示每个已登录账号今�
 
 ## 装在哪
 
-- magpie 的插件页 → 添加插件 → 填 `@magpie-community/page-checkin`；
-- 或随 FISH Dock 的 Magpie 插件内置：目录放在 Dock 的 `plugins/magpie/page-plugins/page-checkin`，打包时 `stage-development.mjs` 递归复制进产物，Dock 启动 Magpie 时用 `MAGPIE_SEED_EXTRA` 指向它，首启装进插件清单（装的是目录副本，不依赖 npm）。没带这份目录的普通 magpie 则退回 `DefaultSpecs` 里的 `@magpie-community/page-checkin@latest`。
+- magpie 的插件页 → 添加插件 → 填 `@fish-under-sea/page-checkin`；
+- 或随 FISH Dock 的 Magpie 插件内置：目录放在 Dock 的 `plugins/magpie/page-plugins/page-checkin`，打包时 `stage-development.mjs` 递归复制进产物，Dock 启动 Magpie 时用 `MAGPIE_SEED_EXTRA` 指向它，首启装进插件清单（装的是目录副本，不依赖 npm）。没带这份目录的普通 magpie 则退回 `DefaultSpecs` 里的 `@fish-under-sea/page-checkin@latest`。
 
 写动作（`checkin:set-provider` 等）声明在 `package.json` 的 `magpie.calls` 里 —— 这是 magpie 1.2 起的「页面可写动作」白名单字段（1.1 及更早用的是 `magpie.actions`）。
 

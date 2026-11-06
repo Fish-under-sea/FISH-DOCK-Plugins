@@ -1,16 +1,16 @@
 {
-  "name": "@magpie-community/page-checkin",
+  "name": "@fish-under-sea/page-checkin",
   "version": "0.2.6",
   "description": "A page in magpie's window for daily check-ins: each vendor's accounts, today's credits and streak, one switch per vendor or account, a manual check-in, and the switch that keeps FISH Dock's own artwork on the preinstalled plugins.",
   "files": ["page", "README.md"],
   "keywords": ["magpie", "magpie-page", "checkin", "credits"],
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/magpie-community/plugins.git", "directory": "packages/checkin" },
+  "repository": { "type": "git", "url": "git+https://github.com/Fish-under-sea/FISH-DOCK-Plugins.git", "directory": "plugins/magpie/page-plugins/page-checkin" },
   "magpie": {
     "icon": "page/icon.png",
     "page": {
-      "title": "Check-in",
-      "titles": { "zh": "自动签到", "zh-TW": "自動簽到" },
+      "title": "@Fish-under-sea/签到",
+      "titles": { "zh": "@Fish-under-sea/签到", "zh-TW": "@Fish-under-sea/簽到" },
       "file": "page/index.html",
       "icon": "page/icon.svg"
     },
