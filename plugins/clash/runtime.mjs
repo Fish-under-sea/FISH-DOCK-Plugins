@@ -328,7 +328,12 @@ export function createRuntime(context){
   }
   try{
    if(!(await waitController(c)))throw failure||Error('未在时限内就绪，请检查订阅与端口');
-   child.once('exit',()=>{void proxy.restore(c.mixedPort).catch(()=>{})});
+      // 内核没了就一定要把 TUN 收掉：虚拟网卡还在、内核已经不在，等于所有流量打进
+   // 一个死内核——用户看到的就是「偶发掉线、网络回环、整机没网」。
+   child.once('exit',()=>{
+    void proxy.restore(c.mixedPort).catch(()=>{});
+    void (async()=>{try{const info=await tun?.status();if(info?.enabled)await tun.disable()}catch{/* 服务未装或已停 */}})();
+   });
    // Dock 被强杀时插件进程同时消失，上面那个 exit 回调没机会跑：另起一个看门狗
    // 盯住本进程，它一消失就还原系统代理并把内核结束掉（watchdog.mjs）。
    if(proxy.active())watchdogPid=spawnWatchdog({leasePath:join(context.dataDirectory,'config','system-proxy.json'),mihomoPid:child.pid,port:c.mixedPort});
@@ -339,7 +344,13 @@ export function createRuntime(context){
   // 插件重载后留下的内核不由本实例 spawn，只能按 pid 结束；processAlive 供 attach 判活。
   kill:killProcess,processAlive,
   // 停止时若内核由 TUN 服务托管，一并让服务停下，避免遗留提升权限的内核。
-  tunStop:async()=>{if(viaService&&tun){await tun.disable().catch(()=>{});viaService=false}},
+  // 停止时一律把 TUN 收掉：服务可能还 enabled（上一次 TUN 会话留下的），内核一停
+ // 它就是个「有网卡没内核」的死劫持。viaService 只用来记状态。
+ tunStop:async()=>{
+  if(!tun)return;
+  try{const info=await tun.status();if(info?.enabled&&info.state!=='stopped')await tun.disable()}catch{/* 服务未装或已停 */}
+  viaService=false;
+ },
   ...createSubscriptionRuntime(context)};
 }
 // 使用固定脚本和 JSON stdin，配置值不会拼入 PowerShell 源码。
