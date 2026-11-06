@@ -242,3 +242,20 @@ test('#32 两个内置页面插件的包名与标题口径一致',async()=>{
   assert.doesNotMatch(json.magpie.page.title,/@magpie-community\//,`${dir} 标题不该还挂着第三方 scope`);
  }
 });
+// 侧边栏标题只留文字：包名保持 `@fish-under-sea/…`，标题去掉 `@用户名/` 前缀。
+test('标题归一化：@用户/签到 → 签到，包名不动，幂等',async()=>{
+ const {stripTitleScope,normalizePageManifest}=await import('./page-seed.mjs');
+ assert.equal(stripTitleScope('@Fish-under-sea/签到'),'签到');
+ assert.equal(stripTitleScope('@Fish-under-sea/中转站探针'),'中转站探针');
+ assert.equal(stripTitleScope('签到'),'签到','没有前缀的标题不许动');
+ assert.equal(stripTitleScope('@user/'),'@user/','去掉后为空就保留原样');
+ const raw=JSON.stringify({name:'@fish-under-sea/page-checkin',magpie:{page:{title:'@Fish-under-sea/签到',titles:{zh:'@Fish-under-sea/签到',en:'@Fish-under-sea/Check-in'}}}},null,2)+'\n';
+ const first=normalizePageManifest(raw);
+ assert.equal(first.changed,true);
+ const parsed=JSON.parse(first.text);
+ assert.equal(parsed.name,'@fish-under-sea/page-checkin','npm 包名不许改');
+ assert.equal(parsed.magpie.page.title,'签到');
+ assert.equal(parsed.magpie.page.titles.zh,'签到');
+ assert.equal(parsed.magpie.page.titles.en,'Check-in');
+ assert.equal(normalizePageManifest(first.text).changed,false,'幂等：第二遍不应再改');
+});

@@ -140,3 +140,52 @@ export async function registerSeedPage({data,directory,name=seedDirectoryName,on
  await writeManifest(file,next.text,signal);
  return {written:true,file,spec:directory};
 }
+// 侧边栏标题只放文字：`@Fish-under-sea/签到` → `签到`。
+// 包名仍然是 `@fish-under-sea/page-checkin`（npm 身份不能动），但标题里带 scope 前缀
+// 只是噪声——用户要的是「签到」「中转站探针」这几个字。这里做一次幂等归一化：
+// 只改以 `@用户/` 开头的标题，别的标题一个字都不碰；没变化就不写盘。
+const TITLE_SCOPE=/^@[^/\\]+\//;
+export function stripTitleScope(title){
+ if(typeof title!=='string')return title;
+ const trimmed=title.replace(/^@[^/\\]+\//,'');
+ // `@user/` 后面什么都没有时保留原样，别把标题清成空串。
+ return trimmed.trim()?trimmed.trim():title;
+}
+export function normalizePageManifest(text){
+ let manifest;
+ try{manifest=JSON.parse(String(text??'').replace(/^\uFEFF/,''))}catch{return null}
+ if(!manifest||typeof manifest!=='object'||Array.isArray(manifest))return null;
+ const page=manifest.magpie?.page;
+ if(!page||typeof page!=='object')return null;
+ let changed=false;
+ const fix=(holder,key)=>{
+  const value=holder?.[key];
+  if(typeof value==='string'){
+   const next=stripTitleScope(value);
+   if(next!==value){holder[key]=next;changed=true}
+  }
+ };
+ fix(page,'title');
+ if(page.titles&&typeof page.titles==='object')for(const key of Object.keys(page.titles))fix(page.titles,key);
+ if(!changed)return {changed:false,text:String(text??'')};
+ return {changed:true,text:JSON.stringify(manifest,null,2)+'\n'};
+}
+// 把 <data>/plugins/<name>/package.json 的标题归一化；返回改了哪些目录。
+export async function normalizePageTitles({data,signal}={}){
+ const root=path.join(data,'plugins');
+ let entries;
+ try{entries=await fs.readdir(root,{withFileTypes:true})}catch(error){if(error.code==='ENOENT')return [];throw error}
+ const fixed=[];
+ for(const entry of entries){
+  if(!entry.isDirectory())continue;
+  signal?.throwIfAborted();
+  const file=path.join(root,entry.name,'package.json');
+  let text;
+  try{text=await fs.readFile(file,'utf8')}catch(error){if(error.code==='ENOENT')continue;throw error}
+  const result=normalizePageManifest(text);
+  if(!result?.changed)continue;
+  await writeManifest(file,result.text,signal);
+  fixed.push(entry.name);
+ }
+ return fixed;
+}

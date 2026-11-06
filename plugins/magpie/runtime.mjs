@@ -130,6 +130,9 @@ export function createRuntime(context){
       const seeded=await syncPageDirectory({source:path.join(bundledPages,name),data:portable.data,name,onPhase:track,signal});
       if(seeded)await registerSeedPage({data:portable.data,name,directory:seeded.directory,onPhase:track,signal});
      }
+     // 侧边栏只显示文字（「签到」「中转站探针」），不带 `@用户名/` 前缀。包名仍是
+     // `@fish-under-sea/page-checkin`，只是标题里的 scope 是噪声。幂等，失败不拦启动。
+     await normalizePageTitles({data:portable.data,signal}).catch(()=>{});
     }catch(error){if(error.name==='AbortError')throw error;throw serviceError('DATA_MIGRATION_FAILED')}
     // 出厂预装的社区供应商插件按「当前基线 − 已登记」增量补登记（#71）：基线新增
     // 的（2.1.4 才进来的 Meoo）升级后自动补上；用户删过的、不在基线里的不会被加回
