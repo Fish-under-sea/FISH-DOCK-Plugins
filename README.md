@@ -223,8 +223,8 @@ node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.t
 | [插件开发者指南](docs/developers/README.md) | 仓库边界、`plugin.json` 的字段、后台 SDK 与页面、行为钩子、读与调用的声明 |
 | [插件维护者指南](docs/maintainers/README.md) | 身份表（作者与状态说明只在一处维护）、固定来源与资源、发行流程、开发暂存 |
 | [自编译 Magpie](plugins/magpie/tools/README.md) | 补丁清单与每一处为什么补、构建命令、版本标识、跟着上游升级时会踩的坑 |
-| [签到&探针说明](plugins/magpie/bundled-plugins/magpie-checkin-relay-probe/README.md) | 宿主提供哪些读与调用、「预装插件美化」开关怎么工作、素材为什么编进 exe |
-| [厂商素材来源](plugins/magpie/bundled-plugins/magpie-checkin-relay-probe/page/checkin/logos/README.md) | 每张厂商图的来源、裁切范围与授权状况 |
+| [签到&探针说明](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) | 宿主提供哪些读与调用、「预装插件美化」开关怎么工作、素材为什么编进 exe |
+| [厂商素材来源](https://github.com/Fish-under-sea/magpie-checkin-relay-probe/tree/main/page/checkin/logos) | 每张厂商图的来源、裁切范围与授权状况 |
 | [发行说明](docs/releases/) | 逐版本的改动与验证；最新是 [2.2.9](docs/releases/2.2.9.md) |
 | [第三方许可](THIRD_PARTY_NOTICES.md) | 随包运行时的许可与来源（mihomo 的 GPL-3.0、Magpie 的随包许可等） |
 | [README 头图维护](assets/readme/MAINTAINING.md) | 头图怎么渲染、字号与卡片尺寸的约束、哪些东西不能换 |

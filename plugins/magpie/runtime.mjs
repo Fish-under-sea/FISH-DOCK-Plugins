@@ -1,6 +1,5 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import {randomBytes} from 'node:crypto';
 import {embedProxy,freePort} from './embed-proxy.mjs';
@@ -8,7 +7,7 @@ import {available,startChild} from '../../shared/child.mjs';
 import {magpieEnvironment} from './environment.mjs';
 import {preparePortableRuntime} from './portable-runtime.mjs';
 import {gatewayAddr,gatewayHost,gatewayPortCandidates,readMagpiePrefs} from './network.mjs';
-import {bundledPlugins,registerBundledPlugins,syncPageDirectory,normalizePageTitles} from './page-seed.mjs';
+import {registerBuiltinPlugins,normalizePageTitles} from './page-seed.mjs';
 import {ensurePreinstallState,preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
 import {serviceError} from '../../shared/errors.mjs';
 
@@ -142,20 +141,13 @@ export function createRuntime(context){
     fellBack=listening.fellBack;
     if(!listeningPort)throw serviceError('PORT_IN_USE');
     const gateway=gatewayAddr(gatewayHost(prefs.lan),listeningPort);
-    // 内置插件随 Dock 放在 bundled-plugins/ 下（2.2.9 起两个：签到&探针、破甲）。
-    // 启动前逐个同步到 <data>/plugins/<name>，并让 plugins.json 只用这个稳定路径
-    // 引用：升级之后路径不变，页面才跟着换版本；旧包目录被清理也不会 404。
-    // 同时把 2.2.8 及更早的两个内置页（page-checkin / page-relay-probe）从清单里
-    // 删掉——它们已经并进签到&探针，留着就是侧边栏三条。
-    // 没有内置目录（普通 magpie）时不碰清单，仍由原生按包名装 npm 上的同名包。
-    const bundledRoot=path.join(path.dirname(fileURLToPath(import.meta.url)),'bundled-plugins');
+    // 内置插件按 npm 包登记（2.2.10 起不再随包分发目录）：签到&探针与破甲都写进
+    // plugins.json，首装与后续更新交给 magpie 自己的更新循环（与 @magpie-community
+    // 的预装供应商插件同一条路），Dock 这边不用再跟着发版。顺带把 2.2.8 及更早的
+    // 两个内置页（page-checkin / page-relay-probe）删掉，并把 2.2.9 留下的目录副本
+    // 迁成 npm spec。
     try{
-     const directories=new Map();
-     for(const name of bundledPlugins){
-      const seeded=await syncPageDirectory({source:path.join(bundledRoot,name),data:portable.data,name,onPhase:track,signal});
-      if(seeded)directories.set(name,seeded.directory);
-     }
-     await registerBundledPlugins({data:portable.data,directories,onPhase:track,signal});
+     await registerBuiltinPlugins({data:portable.data,onPhase:track,signal});
      // 侧边栏只显示文字（「签到&探针」「破甲 · Purge」），不带 `@用户名/` 前缀。
      // 包名不动，只是标题里的 scope 是噪声。幂等，失败不拦启动。
      await normalizePageTitles({data:portable.data,signal}).catch(()=>{});

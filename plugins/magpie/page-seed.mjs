@@ -1,101 +1,27 @@
 import fs from 'node:fs/promises';
-import {createReadStream} from 'node:fs';
 import path from 'node:path';
-import {createHash,randomUUID} from 'node:crypto';
+import {randomUUID} from 'node:crypto';
 
-// 同步目录的默认名字：2.2.9 起内置件里排第一个的就是它。调用方一般显式传 name。
-export const seedDirectoryName='magpie-checkin-relay-probe';
+// 预置的内置插件：Dock 只负责「把包名登记进 magpie 的插件清单」，**不随包分发目录**。
+//
+// 为什么不再带目录副本：2.2.9 的内置件是同步到 <data>/plugins/<name> 再以绝对路径
+// 登记的，那条 spec 不在 magpie 自己的更新循环里——目录副本永远是发版那天的版本，
+// 上游发了修复用户也拿不到。改成 npm spec 之后与 @magpie-community 那批预装供应
+// 商插件同口径：首装由 magpie 的更新循环按 spec 安装，之后也按同一条路更新，
+// Dock 这边不用再跟着发版。
+export const builtinPlugins=Object.freeze([
+ {name:'magpie-checkin-relay-probe',pkg:'@fish-under-sea/magpie-checkin-relay-probe',spec:'@fish-under-sea/magpie-checkin-relay-probe@latest'},
+ {name:'magpie-purge',pkg:'@fish-under-sea/magpie-purge',spec:'@fish-under-sea/magpie-purge@latest'},
+]);
 
-async function exists(target){try{await fs.stat(target);return true}catch(error){if(error.code==='ENOENT')return false;throw error}}
-
-// 目录内容指纹：子目录递归，文件路径与内容都参与 sha256。与时间戳、绝对路径无关，
-// 换机或搬目录不改变指纹；空目录与少一个文件不会撞同一个值。目录不存在返回 null。
-export async function directoryDigest(root,{signal}={}){
- const hash=createHash('sha256');
- // 递归只向同一个 hash 追加，digest 只在这里调用一次——子级不能各自收尾。
- async function walk(directory,relative){
-  let entries;
-  try{entries=await fs.readdir(directory,{withFileTypes:true})}catch(error){if(error.code==='ENOENT')return false;throw error}
-  for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))){
-   signal?.throwIfAborted();
-   const child=path.join(directory,entry.name),name=relative?`${relative}/${entry.name}`:entry.name;
-   // 链接不跟随：页面目录只发布普通文件，遇到链接即视为不可信内容。
-   if(entry.isSymbolicLink())throw Error('页面目录包含链接');
-   if(entry.isDirectory()){hash.update(`d:${name}\0`);await walk(child,name)}
-   else if(entry.isFile()){
-    hash.update(`f:${name}\0`);
-    // package.json 的标题会被「去 @用户名 前缀」规范化后落盘；比较两边指纹时
-    // 也按规范化后的文本算，否则每次启动都会判定「内容变了」→ 重写 → 再规范化，
-    // 变成每次都发布一遍目录（还可能撞上文件占用）。
-    if(name==='package.json'){
-     const text=await fs.readFile(child,'utf8');
-     const normalized=normalizePageManifest(text);
-     hash.update(normalized?.changed?normalized.text:text);
-    }else{
-     const stream=createReadStream(child);
-     try{for await(const chunk of stream)hash.update(chunk)}finally{stream.destroy()}
-    }
-    hash.update('\0');
-   }
-  }
-  return true;
- }
- if(!await walk(root,''))return null;
- return hash.digest('hex');
-}
-
-// 页面目录必须整体同步：只补有变化的文件会把上一版本删掉的文件留在磁盘上，
-// 页面还会加载到旧脚本。先完整写临时目录，再 rename 换名；失败把旧目录搬回来。
-// Windows 不允许 rename 覆盖非空目录，所以旧目录先挪到同级的 .previous 再回滚。
-async function publish({source,target,temporary,backup,signal}){
- await fs.cp(source,temporary,{recursive:true,force:false,errorOnExist:false});
- signal?.throwIfAborted();
- const retired=await exists(target);
- if(retired)await fs.rename(target,backup);
- try{await fs.rename(temporary,target)}
- catch(error){if(retired)await fs.rename(backup,target).catch(()=>{});throw error}
- if(retired)await fs.rm(backup,{recursive:true,force:true});
-}
-
-// 把随插件发布的页面目录同步到稳定位置 <data>/plugins/<name>，供 plugins.json
-// 以固定 spec 引用；版本升级只换内容，不换路径。
-// 返回 {directory,digest,written}，written 为 false 表示内容一致、磁盘未动。
-export async function syncPageDirectory({source,data,name=seedDirectoryName,onPhase=()=>{},signal}={}){
- if(!await exists(source))return null;
- signal?.throwIfAborted();
- const directory=path.join(data,'plugins',name);
- const wanted=await directoryDigest(source,{signal});
- let written=wanted!==await directoryDigest(directory,{signal})||!await exists(directory);
- if(written){
-  onPhase('prepare-data');
-  const tag=randomUUID();
-  const temporary=path.join(path.dirname(directory),`.${name}.tmp-${tag}`),backup=path.join(path.dirname(directory),`.${name}.old-${tag}`);
-  await fs.mkdir(path.dirname(directory),{recursive:true});
-  try{
-   try{await publish({source,target:directory,temporary,backup,signal})}
-   // 另一个实例抢先发布完同一份内容时，磁盘已是目标状态，按成功处理。
-   catch(error){if(await directoryDigest(directory,{signal})!==wanted)throw error;written=false}
-  }finally{await fs.rm(temporary,{recursive:true,force:true})}
- }
- return {directory,digest:written?await directoryDigest(directory,{signal}):wanted,written};
-}
-
-// 内置插件的名字与顺序：目录名、<data>/plugins/<name> 与清单里的条目都按它。
-// 2.2.9 起两个内置件分开维护（各自一个仓库 + 一个 npm 包），Dock 只负责把它们
-// 随 Magpie 包分发、首启同步与登记：
-//   · magpie-checkin-relay-probe：签到 + 中转站探针合成一个页面插件，页内两页切换
-//   · magpie-purge：破甲 · Purge（页面 + 网关钩子）
-export const bundledPlugins=Object.freeze(['magpie-checkin-relay-probe','magpie-purge']);
-
-// 2.2.8 及更早的两个内置页面插件。它们的内容已经并进 magpie-checkin-relay-probe，
-// 升级时清单里那两条要整条去掉：留着就是侧边栏同时出现旧的两个 + 新的一个。
+// 2.2.8 及更早的两个内置页面插件：内容已并进「签到&探针」那个包，升级时清单里那
+// 两条要整条去掉，否则侧边栏同时出现旧的两个 + 新的一个。
 export const legacySeedNames=Object.freeze(['page-checkin','page-relay-probe']);
 
-// 条目指向某个内置插件的判定：spec 是绝对路径（旧版把包目录写死），或以包名开头。
-// 包名认两套 scope：#32 之前的 `@magpie-community/<name>` 与之后的 `@fish-under-sea/<name>`
-// ——升级时用户清单里可能还是旧的，不认旧的就会重复登记成两条。
-// 不认其他插件，避免误改用户自己装的同名以外的东西。
 const SEED_SCOPES=['@magpie-community','@fish-under-sea'];
+
+// 条目是否指向某个旧内置页：spec 是绝对路径（旧版把包目录写死），或以旧包名开头。
+// 两套 scope 都认，升级时用户清单里可能还是旧的 `@magpie-community/...`。
 export function isSeedSpec(spec,name){
  if(typeof name!=='string'||!name)return false;
  if(typeof spec!=='string'||!spec)return false;
@@ -108,14 +34,38 @@ export function isSeedSpec(spec,name){
  });
 }
 
+// npm spec 的包名：`@scope/name@1.2.3` → `@scope/name`；`name@1.2.3` → `name`。
+// git spec、绝对路径、空值返回 ''（那不是 npm 包，按「不匹配」处理）。
+export function packageNameOf(spec){
+ if(typeof spec!=='string')return '';
+ let text=spec.trim();
+ if(!text||path.isAbsolute(text))return '';
+ const hash=text.indexOf('#');
+ if(hash>0)text=text.slice(0,hash);
+ const scoped=/^(@[^/@]+\/[^/@]+)(?:@[^/]*)?$/.exec(text);
+ if(scoped)return scoped[1];
+ const plain=/^([^/@]+)(?:@[^/]*)?$/.exec(text);
+ return plain?plain[1]:'';
+}
+
+// 条目是否已经是某个内置插件的 npm 条目，或指向它 2.2.9 的目录副本
+// （<data>/plugins/<name> 绝对路径）。目录那条要迁成 npm spec；用户自己写的 npm
+// spec（哪怕钉了版本）原样保留——钉版本是用户的选择，不该被我们改回 @latest。
+function builtinOf(spec,item){
+ if(typeof spec!=='string'||!spec)return false;
+ if(packageNameOf(spec)===item.pkg)return true;
+ return path.isAbsolute(spec)&&path.basename(spec.replace(/[\\/]+$/,''))===item.name;
+}
+
 // plugins.json 只由结构相同的 {spec,off,options} 条目组成。改写后逐字比较：没变化就
 // 不动磁盘，也不刷新时间戳。
 //
-// specs 是「内置插件名 → 稳定目录」的 Map，按 bundledPlugins 的顺序给。规则：
+// 规则：
 //   1. 旧内置页（legacy）整条删掉——它们的内容并进了新包；
-//   2. 同名条目只留第一条，spec 改成稳定目录，options 与 off 原样保留（用户折叠
-//      过、停用过都算数），其余重复条目删掉，否则 magpie 按包名去重成随机的一份。
-export function rewriteBundledSpecs({raw,specs,legacy=legacySeedNames}){
+//   2. 每个内置插件只留第一条：目录副本换成 npm spec，原有 npm spec 不动；
+//      options 与 off 原样保留，其余重复条目删掉，否则 magpie 会按包名去重成随机的一份；
+//   3. 缺席的内置插件补在末尾。
+export function rewriteBuiltinSpecs({raw,plugins=builtinPlugins,legacy=legacySeedNames}){
  const hasRaw=raw!==undefined&&raw!==null;
  const text=hasRaw?String(raw):'';
  const body=text.replace(/^\uFEFF/,'');
@@ -129,19 +79,17 @@ export function rewriteBundledSpecs({raw,specs,legacy=legacySeedNames}){
   if(legacy.some(name=>isSeedSpec(entry.spec,name)))continue;
   kept.push(entry);
  }
- for(const [name,directory] of specs){
-  // spec 只接受绝对路径：稳定目录在 <data> 下，相对路径会随 CWD 漂移。
-  if(!path.isAbsolute(directory))throw Error('稳定插件目录必须是绝对路径');
-  let done=false;
+ for(const item of plugins){
+  let seen=false;
   const next=[];
   for(const entry of kept){
-   if(isSeedSpec(entry.spec,name)){
-    if(done)continue;
-    done=true;entry.spec=directory;
-   }
+   if(!builtinOf(entry.spec,item)){next.push(entry);continue}
+   if(seen)continue;
+   seen=true;
+   if(path.isAbsolute(entry.spec))entry.spec=item.spec;
    next.push(entry);
   }
-  if(!done)next.push({spec:directory});
+  if(!seen)next.push({spec:item.spec});
   kept.length=0;kept.push(...next);
  }
  manifest.plugins=kept;
@@ -149,7 +97,7 @@ export function rewriteBundledSpecs({raw,specs,legacy=legacySeedNames}){
  return {changed:!hasRaw||next!==text,text:next};
 }
 
-// 先备份再写；备份用 wx，已有旧备份不会被本次覆盖。preinstall.mjs 登记供应商
+// 先备份再写；备份用 wx，已有旧备份不会被本次覆盖。preinstall.mjs 登记预装供应商
 // 插件时写的是同一个 plugins.json，所以这一份写盘逻辑共用。
 export async function writeManifest(file,text,signal){
  const backup=`${file}.bak`;
@@ -166,24 +114,23 @@ export async function writeManifest(file,text,signal){
  finally{await fs.unlink(temporary).catch(error=>{if(error.code!=='ENOENT')throw error})}
 }
 
-// 让 <data>/plugins.json 用稳定路径引用每个已同步的内置插件，其余条目原样保留；
-// 旧的两个内置页在这一步一并删掉。directories 是「内置插件名 → 稳定目录」的 Map。
-export async function registerBundledPlugins({data,directories,onPhase=()=>{},signal}={}){
+// 把内置插件按 npm spec 登记进 <data>/plugins.json，其余条目原样保留；旧的两个内置页
+// 在这一步一并删掉，2.2.9 留下的目录副本也在这里迁成 npm spec。
+export async function registerBuiltinPlugins({data,onPhase=()=>{},signal}={}){
  const file=path.join(data,'plugins.json');
  let raw;
  try{raw=await fs.readFile(file,'utf8')}catch(error){if(error.code!=='ENOENT')throw error}
- const specs=new Map(bundledPlugins.filter(name=>directories?.has(name)).map(name=>[name,directories.get(name)]));
- const next=rewriteBundledSpecs({raw,specs});
- if(!next.changed)return {written:false,file,specs};
+ const next=rewriteBuiltinSpecs({raw});
+ if(!next.changed)return {written:false,file};
  onPhase('prepare-data');
  signal?.throwIfAborted();
  await writeManifest(file,next.text,signal);
- return {written:true,file,specs};
+ return {written:true,file};
 }
+
 // 侧边栏标题只放文字：`@Fish-under-sea/签到` → `签到`。
-// 包名仍然是 `@fish-under-sea/page-checkin`（npm 身份不能动），但标题里带 scope 前缀
-// 只是噪声——用户要的是「签到」「中转站探针」这几个字。这里做一次幂等归一化：
-// 只改以 `@用户/` 开头的标题，别的标题一个字都不碰；没变化就不写盘。
+// 包名仍然是 npm 身份（不能动），但标题里带 scope 前缀只是噪声。这里做一次幂等
+// 归一化：只改以 `@用户/` 开头的标题，别的标题一个字都不碰；没变化就不写盘。
 const TITLE_SCOPE=/^@[^/\\]+\//;
 export function stripTitleScope(title){
  if(typeof title!=='string')return title;
