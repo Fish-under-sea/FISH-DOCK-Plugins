@@ -23,8 +23,17 @@ export async function directoryDigest(root,{signal}={}){
    if(entry.isDirectory()){hash.update(`d:${name}\0`);await walk(child,name)}
    else if(entry.isFile()){
     hash.update(`f:${name}\0`);
-    const stream=createReadStream(child);
-    try{for await(const chunk of stream)hash.update(chunk)}finally{stream.destroy()}
+    // package.json 的标题会被「去 @用户名 前缀」规范化后落盘；比较两边指纹时
+    // 也按规范化后的文本算，否则每次启动都会判定「内容变了」→ 重写 → 再规范化，
+    // 变成每次都发布一遍目录（还可能撞上文件占用）。
+    if(name==='package.json'){
+     const text=await fs.readFile(child,'utf8');
+     const normalized=normalizePageManifest(text);
+     hash.update(normalized?.changed?normalized.text:text);
+    }else{
+     const stream=createReadStream(child);
+     try{for await(const chunk of stream)hash.update(chunk)}finally{stream.destroy()}
+    }
     hash.update('\0');
    }
   }

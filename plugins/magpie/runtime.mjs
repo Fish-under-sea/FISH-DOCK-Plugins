@@ -8,7 +8,7 @@ import {available,startChild} from '../../shared/child.mjs';
 import {magpieEnvironment} from './environment.mjs';
 import {preparePortableRuntime} from './portable-runtime.mjs';
 import {gatewayAddr,gatewayHost,gatewayPortCandidates,readMagpiePrefs} from './network.mjs';
-import {registerSeedPage,syncPageDirectory} from './page-seed.mjs';
+import {registerSeedPage,syncPageDirectory,normalizePageTitles} from './page-seed.mjs';
 import {ensurePreinstallState,preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
 import {serviceError} from '../../shared/errors.mjs';
 
