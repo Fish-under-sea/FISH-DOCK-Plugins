@@ -1,74 +1,22 @@
 {
   "schema": 1,
   "upstream": "yetone/magpie",
-  "baseTag": "v0.1.3139",
-  "baseSha": "ff415f39cb4a6b3a1b6a7080558879b7c8fc12cd",
-  "fetchedAt": "2026-11-06T16:18:28.5121832+08:00",
-  "patch": "magpie-v0.1.2799+fish.16.patch",
-  "versionTag": "v0.1.3139+fish.17",
-  "fileVersion": "0.1.3139.17",
+  "baseTag": "v0.1.3140",
+  "baseSha": "45f1af077eb7e5d7a8b0fcbd382d0b048b98f3d6",
+  "fetchedAt": "2026-11-06T17:26:44.1012743+08:00",
+  "patch": "magpie-v0.1.3140+fish.17.patch",
+  "versionTag": "v0.1.3140+fish.17",
+  "fileVersion": "0.1.3140.17",
   "product": "magpie fish",
-  "result": "conflicts",
+  "result": "clean",
   "counts": {
-    "files": 111,
-    "hunks": 151,
-    "appliedFiles": 98,
-    "appliedHunks": 125,
-    "conflictFiles": 13,
-    "conflictHunks": 26
+    "files": 109,
+    "hunks": 149,
+    "appliedFiles": 109,
+    "appliedHunks": 149,
+    "conflictFiles": 0,
+    "conflictHunks": 0
   },
-  "conflicts": [
-    {
-      "file": "internal/catalog/catalog.go",
-      "hunks": 1
-    },
-    {
-      "file": "internal/catalog/live.go",
-      "hunks": 4
-    },
-    {
-      "file": "internal/gateway/gateway.go",
-      "hunks": 2
-    },
-    {
-      "file": "internal/gateway/video.go",
-      "hunks": 1
-    },
-    {
-      "file": "internal/gui/assets/app.js",
-      "hunks": 5
-    },
-    {
-      "file": "internal/gui/assets/i18n.js",
-      "hunks": 1
-    },
-    {
-      "file": "internal/gui/assets/plugins.js",
-      "hunks": 1
-    },
-    {
-      "file": "internal/gui/assets/plugins/routing/client.js",
-      "hunks": 2
-    },
-    {
-      "file": "internal/gui/core_budget_test.go",
-      "hunks": 1
-    },
-    {
-      "file": "internal/gui/providers.go",
-      "hunks": 4
-    },
-    {
-      "file": "internal/provider/group.go",
-      "hunks": 1
-    },
-    {
-      "file": "internal/provider/provider.go",
-      "hunks": 2
-    },
-    {
-      "file": "internal/settings/settings.go",
-      "hunks": 1
-    }
-  ]
+  "conflicts": [],
+  "note": "第一次真正追平：基线从 v0.1.2799 走到 v0.1.3140（落后 337+ tag），26 个冲突 hunk 全部消化。补丁里的模型分类改为上游的 Serves。"
 }

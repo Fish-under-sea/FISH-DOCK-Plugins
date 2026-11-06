@@ -188,3 +188,51 @@ LAN 关闭（默认）走随机；LAN 开启才走 `gatewayPortCandidates()`。�
 2. 已装 `meoo-agent` 的用户：旧条目保留、不被卸载；两个 provider 并存时页面能看出来是两个。
 3. 图标：装上新包后，`meoo` provider 的图标是我们 `brandicons/meoo.png` 那套（`file:` 值），四处（插件列表 / 供应商页 / 侧边栏 / 路由卡片）一致。
 4. `node --test` 与 `go test ./internal/provider/` 针对本次改动全绿。
+---
+
+## 七、追平上游（#31 的第二步）：v0.1.2799 → v0.1.3140，26 个冲突全部消化
+
+> 2026-11-06。基线跨 **337+ 个 tag**（上游 24h loop，实测 2 小时 12 分发过 8 个 release）。
+
+### 结论：分类统一到上游 `Serves`，不再自己造字段
+
+诊断出的 26 个冲突 hunk 里，**12 个是「我们另造了一套模型分类」**造成的。核查干净基线（未打补丁的 `v0.1.3140`）后确认上游早就有：
+
+| 上游原生 | 位置 | 我们的重复实现 | 处置 |
+| --- | --- | --- | --- |
+| `Model.Draws` / `Model.Films` | `catalog.go:124/128` | 一致（复用） | 保留上游 |
+| `Model.Serves` + `ServesEmbedding/ServesRerank/ServesSpeech/ServesTranscription` + `ServesOf(id)` | `catalog.go:134/1939-1967` | `Model.Audio` / `Model.Embedding` 两个布尔 | **删我们的，改用 Serves** |
+| `provider.HiddenVideomakers` + `OfferedVideomakers` | `provider.go:582`、`video.go:106` | `hiddenFilms` | **删我们的，改用上游** |
+| `/v1/models` 的 `kind: image/video` | `gateway.go:1441/1470` | — | 复用；我们补 speech/transcription/embedding/rerank |
+
+保留的（上游没有）：`HiddenAudios` / `HiddenEmbeddings` 两份取消勾选集合、设置页 `SpeechModel`/`EmbedModel`、`gateway.Speakers`/`Embedders`、`/v1/models` 的 `X-Magpie-Speakers` / `X-Magpie-Embedders` 两类。
+
+### 逐处改法
+
+| 文件 | 冲突 hunk | 处理 |
+| --- | --- | --- |
+| `catalog/catalog.go`、`catalog/live.go`、`gateway/video.go` | 1+4+1 | **整份回退到上游**（我们的分类代码作废） |
+| `provider/plugins.go` | —（干净应用但会编译不过） | 插件 `capabilities.output` 改成写 `Serves`；声明优先、`ServesOf` 兜底 |
+| `gui/providers.go` | 4 | `chatOnly` 改用 `!Draws && !Films && Serves == ""`（与 `catalog.Chat` 同一判据）；新增 `Audios/AudioIDs/HiddenAudios`、`Embeddings/EmbeddingIDs/HiddenEmbeddings`；保存路由与「未传即沿用」补齐 |
+| `provider/provider.go` | 2 | 只保留 `HiddenAudios`/`HiddenEmbeddings` + `accountSettings` 复制 |
+| `provider/group.go` | 1 | 保留 `Group.Images`（`*bool`）深拷贝——上游缺 |
+| `settings/settings.go` | 1 | 保留 `SpeechModel`/`EmbedModel` 形状校验 |
+| `gui/assets/app.js` | 5 | 上游已有 `renderDrawers`/`renderVideomakers`；补 `renderSpeakers`/`renderEmbedders`，两个保存体加 `hiddenAudios`/`hiddenEmbeddings` |
+| `gui/assets/i18n.js` | 1 | 补 14 条中文（语音/向量两栏、图片输入三态） |
+| `gui/assets/plugins/routing/client.js` | 2 | 上游有「图片输入」UI 但**保存体没发** `images`/`imagesSaid`——补上 |
+| `gui/assets/plugins.js` | 1 | 已装行先用自己的图（FISH 专有），并修掉原补丁里的缩进错位 |
+| `gui/core_budget_test.go` | 1 | 实测 1,539,633（上游 1,533,802 + 5,831），按上游规矩按实测数上调、不留余量 |
+
+### 验收（本机 Go 1.26.8）
+
+- `git apply --check` 在干净 `v0.1.3140` 上通过，应用后 59 项改动；
+- `go build ./...` exit 0；
+- `gofmt -l` 无输出；
+- `go test ./internal/catalog ./internal/settings` 通过；`./internal/gui` 只余环境性失败（`%AppData% is not defined`、symlink 需特权、网关容器用例），**在干净基线上同样失败**；
+- 分组预览（真实 `providerInfoWith` 跑出来的 HTML）：LLM 3 / 图像 2 / 视频 2 / 语音 3（speech+transcription 一栏）/ 向量 2（embedding+rerank 一栏）；取消勾选 `tts-1` 后**供应商仍在列表**、其它四类一个不少、可挑选列表 3→2。
+
+### 还没做的
+
+- **#33**（`neartoken:prefs` + usage 逐条 rows）：现在追平落地了，可以在 `v0.1.3140` 基线上动 Go 了；
+- 落后闸门（≤24h 或 ≤10 tag）还没接进发布脚本；
+- 没出包（用户明确「暂时不打包发版」）。
