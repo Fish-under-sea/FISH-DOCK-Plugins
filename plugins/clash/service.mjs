@@ -698,7 +698,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       // 系统代理恢复：只有带 code 的适配层错误才降级为警告；
       // 没有 code 的异常说明不是已知状况，保持原有「停止失败」语义，但带上结构化结果。
       let proxyError=null;
-      try{await runtime.proxy.restore();result.proxy='restored'}
+      try{await runtime.proxy.restore((await config()).mixedPort);result.proxy='restored'}
       catch(error){
         proxyError=error;result.proxy='failed';result.ok=false;
         if(error?.code){
@@ -735,7 +735,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     if(typeof enabled!=='boolean')throw serviceError('PROXY_STATE_INVALID');
     // 第二个参数是写租约的插件进程：看门狗据此判断租约有没有被新实例接管。
     if(enabled){if(!alive()||operation)throw serviceError('KERNEL_NOT_RUNNING');await runtime.proxy.enable((await config()).mixedPort,process.pid)}
-    else await runtime.proxy.restore();return view();
+    else await runtime.proxy.restore((await config()).mixedPort);return view();
   }
   async function details({section}) {
     if(section==='providers')return (await view({controller:false})).subscriptions;

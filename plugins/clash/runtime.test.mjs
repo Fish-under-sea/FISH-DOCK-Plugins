@@ -335,3 +335,25 @@ test('看门狗 recover：还原注册表、清租约、结束内核',async()=>{
  assert.deepEqual(live,{ProxyEnable:0,ProxyServer:'',ProxyOverride:''});
  assert.equal(await readFile(lease,'utf8').catch(()=>''),'','租约要清掉');
 });
+// 关掉内核后本机没网：没有租约，但注册表还指着我们的混合端口 → 停止时直接关代理。
+test('没有租约但注册表指着我们的端口：restore 直接关掉系统代理',async()=>{
+ let live={ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:'<local>'};
+ const storage={read:async()=>null,write:async()=>{}};
+ const adapter={read:async()=>({...live}),write:async values=>{live={...values}}};
+ const lease=createProxyLease({storage,adapter});
+ const result=await lease.restore(7890);
+ assert.equal(result.act,'disabled-stale');
+ assert.equal(Number(live.ProxyEnable),0,'指着死端口的系统代理要关掉');
+ assert.equal(live.ProxyServer,'127.0.0.1:7890','只关开关，不动别人的地址');
+});
+
+// 注册表指着别的端口（别人的代理）时不许动。
+test('registry 指着别人的代理时 restore 什么都不做',async()=>{
+ let live={ProxyEnable:1,ProxyServer:'127.0.0.1:7895',ProxyOverride:'<local>'};
+ const storage={read:async()=>null,write:async()=>{}};
+ const adapter={read:async()=>({...live}),write:async values=>{live={...values}}};
+ const lease=createProxyLease({storage,adapter});
+ const result=await lease.restore(7890);
+ assert.equal(result.act,'nothing');
+ assert.equal(Number(live.ProxyEnable),1,'别人的代理不许动');
+});

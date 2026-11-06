@@ -37,11 +37,25 @@ export function createProxyLease({storage,adapter}){
  async function discard(){try{await storage.write('config','system-proxy.json','')}catch{/* 丢不掉也不影响停止 */}active=false}
  // 「记录对不上」不是致命错误：别的程序（TUN、其他代理）可能改过注册表。
  // 这类情况丢租约 + 带 code 返回，由上层降级成警告，别再让每次 stop 都失败。
- async function restore() {
+ async function restore(port) {
   let raw;
   try{raw=await storage.read('config','system-proxy.json')}
   catch(error){throw coded('PROXY_REGISTRY_READ_FAILED','读取系统代理恢复记录失败',error)}
-  if(!raw){active=false;return {act:'nothing'}}
+  if(!raw){
+   active=false;
+   // 没有租约却还指着我们：Dock 被杀、租约被清、或上次恢复失败留下的死代理。
+   // 用户看到的就是「关掉内核，本机直接没网」——这里直接关掉系统代理。
+   if(Number.isInteger(port)&&port>=1024&&port<=65535){
+    try{
+     const current=await adapter.read();
+     if(current?.ProxyServer===`127.0.0.1:${port}`&&Number(current.ProxyEnable)===1){
+      await adapter.write({...current,ProxyEnable:0});
+      return {act:'disabled-stale'};
+     }
+    }catch{/* 读不到就保持原样，交给下次自愈 */}
+   }
+   return {act:'nothing'};
+  }
   let record=null;
   try{record=JSON.parse(raw)}catch{/* 坏 JSON 与坏结构同样处理 */}
   if(!record||record.schema!==1||!record.previous||!record.owned){
@@ -314,7 +328,7 @@ export function createRuntime(context){
   }
   try{
    if(!(await waitController(c)))throw failure||Error('未在时限内就绪，请检查订阅与端口');
-   child.once('exit',()=>{void proxy.restore().catch(()=>{})});
+   child.once('exit',()=>{void proxy.restore(c.mixedPort).catch(()=>{})});
    // Dock 被强杀时插件进程同时消失，上面那个 exit 回调没机会跑：另起一个看门狗
    // 盯住本进程，它一消失就还原系统代理并把内核结束掉（watchdog.mjs）。
    if(proxy.active())watchdogPid=spawnWatchdog({leasePath:join(context.dataDirectory,'config','system-proxy.json'),mihomoPid:child.pid,port:c.mixedPort});
