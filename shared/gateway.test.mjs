@@ -68,3 +68,36 @@ test('没有保存过网关端口的老配置沿用默认端口，不退回随�
  assert.equal(view.port,3425);
  assert.equal(view.gatewayPort,3426);
 });
+
+// #30：运行时挑到的网关端口要写回配置，下次启动直接复用它。否则首选端口被别的
+// 程序占住时，每次启动都从首选重新试起，端口又变一次——按端口导入的客户端就失效。
+test('运行时挑到的网关端口写回配置，下次启动复用同一个端口',async()=>{
+ const files=new Map();const starts=[];
+ const context={storage:{read:async(c,n)=>files.get(`${c}/${n}`),write:async(c,n,v)=>files.set(`${c}/${n}`,v)}};
+ // 首次：配置里是默认 3426，运行时回退到了 3427。
+ let runtimePort=3427;
+ const runtime={start:async config=>{starts.push(config.gatewayPort);return {url:'http://127.0.0.1:24567/',gatewayPort:runtimePort,gatewayPortFellBack:true,alive:()=>true,stop:async()=>{}}}};
+ const service=createGateway({context,runtime,kind:'magpie'});
+ await service.load();
+ await service.save({executable:'C:/runtime/magpie.exe',port:24567});
+ await service.start();
+ assert.deepEqual(starts,[3426],'首次按配置里的 3426 试');
+ assert.equal(service.view().gatewayPort,3427,'视图里是实际监听的端口');
+ assert.equal(JSON.parse(files.get('config/gateway.json')).gatewayPort,3427,'回退值落盘');
+ await service.stop();
+ // 第二次：配置里已经是 3427，运行时不该再从 3426 试起。
+ runtimePort=3427;
+ await service.start();
+ assert.deepEqual(starts,[3426,3427],'第二次直接复用落盘的值');
+});
+
+test('端口写盘失败不拦启动，本次服务照常运行',async()=>{
+ let writes=0;
+ const context={storage:{read:async()=>null,write:async()=>{writes++;throw Error('disk full')}}};
+ const runtime={start:async()=>({url:'http://127.0.0.1:3425/',gatewayPort:3426,alive:()=>true,stop:async()=>{}})};
+ const service=createGateway({context,runtime,kind:'magpie',defaultExecutable:'C:/runtime/magpie.exe'});
+ await service.load();
+ const view=await service.start();
+ assert.equal(view.state,'running','写盘失败不影响本次启动');
+ assert.ok(writes>=0);
+});

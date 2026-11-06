@@ -64,18 +64,22 @@ export async function startWithBackoff(service,{attempts=3,delays=[600,1500],sho
  return view;
 }
 
-// lanGatewayPort 挑一个共享时能长期不变的端口：按保存端口、Magpie 端口、默认
-// 端口依次试，每个再试紧跟的两个；设过的那一个被占也不至于整台机器没法共享。
-// 挑不到就是端口冲突，交给上层提示。
-async function lanGatewayPort({configured,prefs,port,upstreamPort}){
+// gatewayPortFor 挑一个**每次启动都一样**的网关端口（#30）：按适配层保存的端口、
+// Magpie 里设过的端口、默认端口的顺序试，每个再试紧跟的两个。首选被别的程序占住
+// 才回退，回退值由调用方写回配置，下次启动直接复用它、不会又跳回首选。
+// 以前只在局域网共享时才走这条，默认分支 `freePort()` 每次随机挑一个，端口每次
+// 启动都变，按端口导入的客户端一重启就失效。
+// 返回 {port, fellBack}：port 为 0 表示候选全被占，交给上层报端口冲突。
+async function gatewayPortFor({configured,prefs,port,upstreamPort}){
  const taken=[port,upstreamPort];
+ const [first]=gatewayPortCandidates({configured,prefs,taken});
  for(const base of gatewayPortCandidates({configured,prefs,taken})){
   for(let candidate=base;candidate<=Math.min(base+2,65535);candidate++){
    if(taken.includes(candidate))continue;
-   try{await available(candidate);return candidate}catch{}
+   try{await available(candidate);return {port:candidate,fellBack:candidate!==first}}catch{}
   }
  }
- return 0;
+ return {port:0,fellBack:false};
 }
 export function createRuntime(context){
  return {async start({executable,port,gatewayPort,signal,onPhase=()=>{}}){
@@ -107,9 +111,9 @@ export function createRuntime(context){
     // 共享时绑全网卡：MAGPIE_ADDR 一旦钉住回环，Magpie 自己不会放开绑定，局域网
     // 共享开关就不生效（internal/gateway/lan.go 的 pinnedHost / LANURLs）。
     const prefs=await readMagpiePrefs(portable.data);
-    let listeningPort;
-    if(prefs.lan)listeningPort=await lanGatewayPort({configured:gatewayPort,prefs,port,upstreamPort});
-    else do{listeningPort=await freePort()}while(listeningPort===port||listeningPort===upstreamPort);
+    // #30：不论是否共享都走同一套固定候选——共享只改绑定范围，不改端口值。
+    const listening=await gatewayPortFor({configured:gatewayPort,prefs,port,upstreamPort});
+    const listeningPort=listening.port;
     if(!listeningPort)throw serviceError('PORT_IN_USE');
     const gateway=gatewayAddr(gatewayHost(prefs.lan),listeningPort);
     // 出厂预置的页面插件随 Dock 内置在 page-plugins/ 下。启动前逐个同步到
@@ -150,7 +154,8 @@ export function createRuntime(context){
     if(child)try{await child.stop()}catch{}
     throw error;
    }
-   return {alive:child.alive,url,runtime:{executable:portable.executable,sha256:portable.sha256},async stop(){try{await proxy.stop()}finally{await child.stop()}}};
+   // #30：把实际监听的网关端口回给上层，它写回配置后下次启动就能复用同一个端口。
+   return {alive:child.alive,url,gatewayPort:listeningPort,gatewayPortFellBack:listening.fellBack,runtime:{executable:portable.executable,sha256:portable.sha256},async stop(){try{await proxy.stop()}finally{await child.stop()}}};
   }catch(error){
    if(error?.name!=='AbortError')await recordGatewayError(context.dataDirectory,{error,phase,port});
    throw error;

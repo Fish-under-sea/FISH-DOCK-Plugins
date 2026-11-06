@@ -43,6 +43,17 @@ export function createGateway({context,runtime,kind,defaultExecutable=''}) {
   await context.storage.write('config','gateway.json',JSON.stringify({...next,bundled:!!defaultExecutable&&next.executable===defaultExecutable}));
   config=next;state=config.executable?'stopped':'unconfigured';error=null;return view();
  }
+ // #30：启动成功后把运行时**实际监听**的网关端口写回配置，下次启动直接复用它；
+ // 首选端口被别的程序占住而回退时也记下回退值，否则每次启动都会重新从首选试起、
+ // 端口又变一次。这里刻意不走 save()：save() 在 running 时按设计拒绝修改（用户要
+ // 改启动参数仍须先停止服务），而这一条只是把运行时挑到的值落盘。
+ async function persistGatewayPort(port) {
+  if(!Number.isInteger(port)||port<1024||port>65535)return null;
+  if(config.gatewayPort===port)return null;
+  const next=validate({...config,gatewayPort:port});
+  await context.storage.write('config','gateway.json',JSON.stringify({...next,bundled:!!defaultExecutable&&next.executable===defaultExecutable}));
+  config=next;return port;
+ }
  function start() {
   if(starting)return starting;
   if(stopping||view().state==='running')return Promise.resolve(view());
@@ -58,6 +69,9 @@ export function createGateway({context,runtime,kind,defaultExecutable=''}) {
     }});
     const url=new URL(instance.url);
     if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||url.username||url.password||Number(url.port)!==config.port)throw serviceError('INVALID_READY_URL');
+    // #30：记下运行时挑到的网关端口（含回退值）。写不进去只影响下次是否复用，
+    // 不拦启动——本次服务已经起来了。
+    try{await persistGatewayPort(instance.gatewayPort)}catch{}
     if(!stopRequested)state='running';
    } catch(cause) {
     error=publicServiceError(cause);state='error';

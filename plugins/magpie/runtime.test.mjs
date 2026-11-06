@@ -153,3 +153,15 @@ async function runNative(t,fixture){
  const code=await new Promise((resolve,reject)=>{worker.on('error',reject);worker.on('exit',resolve)});
  assert.equal(code,0,output);t.diagnostic(output.trim());
 }
+
+// #30：网关端口不再按「是否共享」分叉——两条分支都走 gatewayPortFor（固定候选），
+// 只剩插件内部代理的上游端口还随机（它不对外，随机无妨）。这是接线守卫：候选
+// 顺序由 network.test 覆盖，这里只盯「有没有真的接上」和「随机那半有没有删净」。
+test('#30 网关端口不再在非共享时随机挑，也不许再按 lan 分叉',async()=>{
+ const source=await fs.readFile(new URL('./runtime.mjs',import.meta.url),'utf8');
+ assert.match(source,/gatewayPortFor\(\{configured:gatewayPort/,'监听端口要走固定候选');
+ assert.doesNotMatch(source,/prefs\.lan\s*\?\s*await\s*lanGatewayPort/,'不许再按 lan 分叉');
+ assert.doesNotMatch(source,/while\(listeningPort===port\|\|listeningPort===upstreamPort\)/,'监听端口不许再随机挑');
+ assert.match(source,/upstreamPort=await freePort\(\)/,'上游端口仍随机（内部用，不对外）');
+ assert.match(source,/gatewayPort:listeningPort/,'要把实际监听的端口回给上层，供写回配置');
+});
