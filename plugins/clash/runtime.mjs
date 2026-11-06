@@ -47,12 +47,19 @@ export function createProxyLease({storage,adapter}){
    // 用户看到的就是「关掉内核，本机直接没网」——这里直接关掉系统代理。
    if(Number.isInteger(port)&&port>=1024&&port<=65535){
     try{
-     const current=await adapter.read();
-     if(current?.ProxyServer===`127.0.0.1:${port}`&&Number(current.ProxyEnable)===1){
-      await adapter.write({...current,ProxyEnable:0});
-      return {act:'disabled-stale'};
-     }
-    }catch{/* 读不到就保持原样，交给下次自愈 */}
+      const current=await adapter.read();
+      if(current?.ProxyServer===`127.0.0.1:${port}`){
+       // 开关还开着：先关掉。
+       if(Number(current.ProxyEnable)===1){
+        await adapter.write({...current,ProxyEnable:0});
+        return {act:'disabled-stale'};
+       }
+       // 开关已经关了，地址还挂着我们的端口：一并清掉。只看 ProxyServer、不看
+       // ProxyEnable 的程序（不少 Electron / Node 工具如此）会因此一直走死端口。
+       await adapter.write({...current,ProxyServer:''});
+       return {act:'cleared-stale'};
+      }
+     }catch{/* 读不到就保持原样，交给下次自愈 */}
    }
    return {act:'nothing'};
   }
@@ -81,7 +88,11 @@ export function createProxyLease({storage,adapter}){
   let previous;
   try{previous=await adapter.read()}
   catch(error){throw coded('PROXY_REGISTRY_READ_FAILED','读取当前系统代理设置失败',error)}
-  const owned={ProxyEnable:1,ProxyServer:`127.0.0.1:${port}`,ProxyOverride:'<local>'};
+  // 只接管开关与地址，**不动** ProxyOverride：那是 Clash Verge / 用户自己的绕过表
+  // （`localhost;127.*;10.*;172.16.*…;<local>`）。写死成 `<local>` 会把别人的绕过表
+  // 冲掉——用户看到的「本机配置坏了」就是这么来的。这里原样沿用当前值。
+  const override=typeof previous?.ProxyOverride==='string'?previous.ProxyOverride:'';
+  const owned={ProxyEnable:1,ProxyServer:`127.0.0.1:${port}`,ProxyOverride:override};
   // owner 是写这份租约的插件进程：看门狗据此判断「这条记录还是不是自己那一次写的」，
   // 新实例覆盖租约之后，老看门狗不许再动注册表。
   const owner=Number.isInteger(ownerPid)&&ownerPid>0?{pid:ownerPid,at:Date.now()}:undefined;
