@@ -32,13 +32,17 @@ const BASELINE = [
  ['cline', 'Cline'],
  ['codearts', 'CodeArts / OfficeAce'],
  ['loomy', 'Loom'],
- ['meoo-agent', 'Meoo 秒悟（建站 Agent）', {
-  // npm 上查不到这个包：主仓 package.json 是 private，没有发布（registry 404）。
-  // 上游主仓是 RexVane/magpie-plugin-meoo-agent，所以按 git spec 装；
-  // 它哪天发了 npm 包，把 spec 换成 'magpie-plugin-meoo-agent@latest' 即可，
-  // package 不用动（那是同一个包的身份）。
-  package: 'magpie-plugin-meoo-agent',
-  spec: 'github:RexVane/magpie-plugin-meoo-agent',
+ ['meoo', 'Meoo 秒悟', {
+  // 自己的模型直连插件（provider id `meoo`）：npm 上有包，不是 git spec。
+  // 它不在 @magpie-community/opencode-<stem>-auth 的拼名规则里，所以显式给
+  // package 与 spec；用 @latest 交给上游更新循环，与其余 11 家同口径。
+  //
+  // 2.2.2 起**不再内置建站 Agent**（`magpie-plugin-meoo-agent`，provider id
+  // `meoo-agent`，npm 404、只能 git spec 装）：换成这条。已装用户不动——不卸载、
+  // 不禁用、不删账号与数据；两个 provider id 本来就互不覆盖（新包 README 明写
+  // 可以并存），所以这不是升级而是替换，旧条目原样留着更安全。
+  package: '@fish-under-sea/opencode-meoo-auth',
+  spec: '@fish-under-sea/opencode-meoo-auth@latest',
  }],
  ['minimax', 'MiniMax Code'],
  ['qoder', 'Qoder'],

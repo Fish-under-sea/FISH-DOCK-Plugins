@@ -86,7 +86,6 @@ LAN 关闭（默认）走随机；LAN 开启才走 `gatewayPortCandidates()`。�
 6. **误伤排查结论**：宿主补丁 `:1469`、`:6420` 里的 `"name":"page-checkin"` / `"page-relay-probe"` 是 **Go 测试夹具**（`pack()` 造的临时 package.json），不是生产代码 —— 不需要改。顶层 `plugins/relay-probe/`（无 `package.json`、`fish.relay-probe` 开发预览件）与内置 `page-relay-probe` 是**两套东西**，不要混改。
 
 ### #33 `neartoken:prefs` + `neartoken:usage` 逐条流水
-
 **现状（补丁内实测）**：
 - `dispatch()`（补丁 `:3844-3864`）只认 8 个调用：`state / connect / cancel / open / disconnect / refresh / usage / topup`，**没有 `neartoken:prefs`**。
 - `usage()`（`:3860` 起）调 `client.readUsage()`；`readUsage` 只解析站点 `/usage-logs/` 的 `models` 与 `buckets`（按模型汇总），**没有逐条 rows**。
@@ -142,3 +141,50 @@ LAN 关闭（默认）走随机；LAN 开启才走 `gatewayPortCandidates()`。�
 - 不删 Kiro / Meoo 的品牌素材（服务已装用户）。
 - 不为了「端口固定」把 `save()` 的 running 守卫去掉（用户仍要能改端口，只是改成走内部 persist）。
 - 不在批 A 里动任何 Go 补丁；批 B 的 #33 rows 若探测不到真实接口，只落 prefs 并如实标注。
+---
+
+## 六、追加需求（2026-11-06 后加）：Meoo 改由 `@fish-under-sea/opencode-meoo-auth` 承担
+
+> 归属 **#20 的 ②**（原「Meoo 换模型直连」）。范围收窄、结论更明确：
+> **彻底移除上游的建站 Agent（`magpie-plugin-meoo-agent` / provider id `meoo-agent`），
+> 换成我们自己的 `@fish-under-sea/opencode-meoo-auth`（provider id `meoo`），
+> 品牌图标美化也跟着挪到这个包上。不再支持建站 Agent 形态的 Meoo。**
+
+### 依据（实测）
+
+| 事实 | 值 |
+| --- | --- |
+| 新包 | `@fish-under-sea/opencode-meoo-auth`，npm `latest` = **1.2.0**（7 个版本：1.0.0 → 1.2.0） |
+| provider id | 包内 `index.mjs:26` `const PROVIDER_ID = "meoo"` |
+| 显示名 | `package.json` 的 `magpie.name` = **`Meoo`**，带 `magpie.summary`（中英）与 `data:` 图标 |
+| 登录 | 浏览器 PKCE 授权 → 项目服务 AK → OpenAI 兼容网关；可复用本机 `dsh-meoo-connect` 的 `state.json` |
+| 旧包 | `magpie-plugin-meoo-agent`（`github:RexVane/magpie-plugin-meoo-agent`），npm 上 404，只能 git spec 装；provider id `meoo-agent` |
+
+两者是**两个不同的 provider id**（新包 README 明写「`meoo` 与 `meoo-agent` 可以并存」），所以这是一次**替换**而不是升级。
+
+### 改动清单
+
+**A. Node 侧（本仓）**
+1. `plugins/magpie/preinstall.mjs` 的 `BASELINE`：把
+   `['meoo-agent', 'Meoo 秒悟（建站 Agent）', {package:'magpie-plugin-meoo-agent', spec:'github:RexVane/magpie-plugin-meoo-agent'}]`
+   换成 `['meoo', 'Meoo 秒悟', {package:'@fish-under-sea/opencode-meoo-auth', spec:'@fish-under-sea/opencode-meoo-auth@latest'}]`。
+   基线总数仍是 12 家（一进一出）。
+2. `preinstall.test.mjs`：名单里 `magpie-plugin-meoo-agent` → `@fish-under-sea/opencode-meoo-auth`；
+   「Meoo 走显式规格」的用例保留（新包同样不走 `@magpie-community/opencode-<stem>-auth` 拼名）；
+   新增「不再登记 meoo-agent」的负向断言。
+3. **已装用户**：从基线删项不会触发卸载（`seedPreinstalled` 只按 marker 差集补登记），
+   旧 `meoo-agent` 插件与它的数据/凭据原样保留——与 zen-free、Kiro 同一套处置。
+
+**B. Go 侧（补丁）**
+1. `internal/provider/brandicons/meoo-agent.png` → **`meoo.png`**（素材改名，内容不变）。
+2. `brandVendors` 允许表里 `"meoo-agent"` → **`"meoo"`**，否则新 provider 拿不到我们的美化。
+3. 断言 `github:RexVane/magpie-plugin-meoo-agent` 的图标那条测试（`fish.10/11`）改成新包 spec，
+   并保留「`meoo` 命中 `file:` 值」的校验。
+4. 补丁序号 **fish.16**，基线仍是 `v0.1.2799`（#31 追平后再一并重放）。
+
+### 验收
+
+1. 干净数据根：`plugins.json` 里有 `@fish-under-sea/opencode-meoo-auth@latest`，**没有** `magpie-plugin-meoo-agent`；`pendingStems` 仍按 12 家算。
+2. 已装 `meoo-agent` 的用户：旧条目保留、不被卸载；两个 provider 并存时页面能看出来是两个。
+3. 图标：装上新包后，`meoo` provider 的图标是我们 `brandicons/meoo.png` 那套（`file:` 值），四处（插件列表 / 供应商页 / 侧边栏 / 路由卡片）一致。
+4. `node --test` 与 `go test ./internal/provider/` 针对本次改动全绿。

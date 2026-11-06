@@ -21,7 +21,7 @@ test('预装基线是 12 家：11 个社区包 + Meoo（不在拼名规则里，
   '@magpie-community/opencode-cline-auth',
   '@magpie-community/opencode-codearts-auth',
   '@magpie-community/opencode-loomy-auth',
-  'magpie-plugin-meoo-agent',
+  '@fish-under-sea/opencode-meoo-auth',
   '@magpie-community/opencode-minimax-auth',
   '@magpie-community/opencode-qoder-auth',
   '@magpie-community/opencode-trae-auth',
@@ -30,7 +30,7 @@ test('预装基线是 12 家：11 个社区包 + Meoo（不在拼名规则里，
   '@magpie-community/opencode-zcode-auth',
  ]);
  for(const item of PREINSTALLED){
-  if(item.package==='magpie-plugin-meoo-agent')continue; // 显式规格那条不按 <package>@latest 拼
+  if(item.package==='@fish-under-sea/opencode-meoo-auth')continue; // 显式规格那条不按 <package>@latest 拼
   assert.equal(item.spec,`${item.package}@latest`,'按 latest 登记，交给上游的更新循环');
  }
  // 页面插件不在这里：它们由 page-seed 以稳定目录登记，走了会变成两条同包条目。
@@ -58,22 +58,38 @@ test('zen-free 已移出预装基线，但美化素材的名单不动',()=>{
  assert.equal(PREINSTALLED.some(item=>item.name==='OpenCode Zen Free'),false);
 });
 
-// Meoo 秒悟（建站 Agent）：provider id 是 meoo-agent，包名不在
-// @magpie-community/opencode-<stem>-auth 这条规则里，且 npm 上没有它
-// （主仓 package.json 是 private），所以登记一条显式 git 规格。
+// Meoo 秒悟：provider id 是 `meoo`，包名 `@fish-under-sea/opencode-meoo-auth`
+// 不在 @magpie-community/opencode-<stem>-auth 这条拼名规则里，所以登记一条显式
+// 规格（package 是身份键、spec 是真正装的那串）。
+// 2.2.2 起**不再内置建站 Agent**（`magpie-plugin-meoo-agent`，provider id
+// `meoo-agent`）：见下面那条负向断言。
 test('Meoo 以显式规格登记：package 是身份、spec 是真正装的那串',()=>{
- const meoo=PREINSTALLED.find(item=>item.stem==='meoo-agent');
- assert.ok(meoo,'基线里没有 meoo-agent');
- assert.equal(meoo.name,'Meoo 秒悟（建站 Agent）');
- assert.equal(meoo.package,'magpie-plugin-meoo-agent');
- assert.equal(meoo.spec,'github:RexVane/magpie-plugin-meoo-agent');
+ const meoo=PREINSTALLED.find(item=>item.stem==='meoo');
+ assert.ok(meoo,'基线里没有 meoo');
+ assert.equal(meoo.name,'Meoo 秒悟');
+ assert.equal(meoo.package,'@fish-under-sea/opencode-meoo-auth');
+ assert.equal(meoo.spec,'@fish-under-sea/opencode-meoo-auth@latest');
  const next=addPreinstalled({raw:undefined});
  const manifest=JSON.parse(next.text);
- assert.equal(manifest.plugins.some(entry=>entry.spec==='github:RexVane/magpie-plugin-meoo-agent'),true,'插件清单里要真的写上这条 git spec');
- // 已经写着这条 git spec 的清单不再补一遍：git spec 算不出包名，只能按整串比。
+ assert.equal(manifest.plugins.some(entry=>entry.spec==='@fish-under-sea/opencode-meoo-auth@latest'),true,'插件清单里要真的写上这条 spec');
+ // 已经写着这条的清单不再补一遍。
  const again=addPreinstalled({raw:next.text});
- assert.equal(again.changed,false,'已经登记过的 git spec 不该被重复补');
+ assert.equal(again.changed,false,'已经登记过的条目不该被重复补');
  assert.equal(again.added.length,0);
+});
+
+// 建站 Agent 形态的 Meoo 彻底不再预装：provider id 是 `meoo-agent`，包只能
+// git spec 装。已装用户不受影响——从基线删项不会触发卸载，差集补登记也不碰
+// 别人写进去的条目。
+test('建站 Agent（meoo-agent）不再内置，但已装用户不受影响',()=>{
+ assert.equal(PREINSTALLED.some(item=>item.stem==='meoo-agent'),false,'不该再登记 meoo-agent');
+ assert.equal(PREINSTALLED.some(item=>item.package==='magpie-plugin-meoo-agent'),false);
+ assert.equal(PREINSTALLED.some(item=>item.spec.includes('RexVane/magpie-plugin-meoo-agent')),false);
+ const raw=JSON.stringify({plugins:[{spec:'github:RexVane/magpie-plugin-meoo-agent',off:false,options:{collapsed:true}}]},null,2)+'\n';
+ const next=addPreinstalled({raw});
+ const kept=JSON.parse(next.text).plugins.filter(entry=>entry.spec==='github:RexVane/magpie-plugin-meoo-agent');
+ assert.equal(kept.length,1,'旧条目不许被删');
+ assert.deepEqual(kept[0].options,{collapsed:true});
 });
 
 test('packageOf 只认 npm 包名，git 与绝对路径都不匹配',()=>{
@@ -196,17 +212,17 @@ test('基线对齐后：marker 在、用户删过的项不加回来，registered
 test('老 marker（无 meoo）+ 新基线（含 meoo）→ 补登记 meoo 的 git spec',async()=>{
  const {data,list,marker}=await sandbox();
  // 2.1.3 的真实形态：schema 1，registered 里没有 meoo。
- const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>item.package);
+ const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo').map(item=>item.package);
  await fs.writeFile(marker,JSON.stringify({schema:1,registered:legacy})+'\n');
  // 那时的 plugins.json：基线减 meoo，外加用户自己的本地插件。
- const specs=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>({spec:item.spec}));
+ const specs=PREINSTALLED.filter(item=>item.stem!=='meoo').map(item=>({spec:item.spec}));
  specs.push({spec:'C:/data/plugins/page-checkin'});
  await fs.writeFile(list,JSON.stringify({plugins:specs},null,2)+'\n');
  const result=await seedPreinstalled({data});
  assert.equal(result.skipped,false);
- assert.deepEqual(result.added,['magpie-plugin-meoo-agent'],'只补 meoo 一家');
+ assert.deepEqual(result.added,['@fish-under-sea/opencode-meoo-auth'],'只补 meoo 一家');
  const manifest=JSON.parse(await utf8(list));
- const meoo=manifest.plugins.filter(entry=>entry.spec==='github:RexVane/magpie-plugin-meoo-agent');
+ const meoo=manifest.plugins.filter(entry=>entry.spec==='@fish-under-sea/opencode-meoo-auth@latest');
  assert.equal(meoo.length,1,'git spec 写进清单且只有一条');
  assert.equal(manifest.plugins.some(entry=>entry.spec==='C:/data/plugins/page-checkin'),true,'用户自己的条目不动');
  assert.equal(manifest.plugins.length,13);
@@ -225,7 +241,7 @@ test('老 marker（无 meoo）+ 新基线（含 meoo）→ 补登记 meoo 的 gi
  assert.equal((await fs.stat(list)).mtimeMs,before,'重复启动不写清单');
  assert.equal((await fs.stat(marker)).mtimeMs,markerBefore,'重复启动不写 marker');
  const final=JSON.parse(await utf8(list));
- assert.equal(final.plugins.filter(entry=>entry.spec==='github:RexVane/magpie-plugin-meoo-agent').length,1,'spec 不重复');
+ assert.equal(final.plugins.filter(entry=>entry.spec==='@fish-under-sea/opencode-meoo-auth@latest').length,1,'spec 不重复');
 });
 
 // 旧格式 marker 容忍：坏 JSON、非对象、baseline 缺失都按「基线为空」全量补登记，
@@ -251,13 +267,13 @@ test('旧格式与坏 marker 都不抛错，按缺字段处理',async()=>{
 test('状态文件的 registered/added 取实际登记结果，与 plugins.json 一致',async()=>{
  const {data,list,marker}=await sandbox();
  // 老根：12 家已在（无 meoo），走一次补登记。
- const specs=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>({spec:item.spec}));
+ const specs=PREINSTALLED.filter(item=>item.stem!=='meoo').map(item=>({spec:item.spec}));
  await fs.writeFile(list,JSON.stringify({plugins:specs},null,2)+'\n');
- const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>item.package);
+ const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo').map(item=>item.package);
  await fs.writeFile(marker,JSON.stringify({schema:1,registered:legacy})+'\n');
  await seedPreinstalled({data});
  const state=await readPreinstallState({data});
- assert.deepEqual(state.added,['magpie-plugin-meoo-agent'],'added 只记本次补的');
+ assert.deepEqual(state.added,['@fish-under-sea/opencode-meoo-auth'],'added 只记本次补的');
  assert.equal(state.registered.length,12);
  assert.deepEqual(state.registered,PREINSTALLED.map(item=>item.package));
  const manifest=JSON.parse(await utf8(list));
@@ -297,10 +313,10 @@ test('新装用户：首启登记 12 家，二启幂等',async()=>{
 // zen-free 等移出基线的项：增量补登记路径从头到尾不碰它们。
 test('zen-free 已装时不被增量补登记触碰（不卸载、不改写）',async()=>{
  const {data,list,marker}=await sandbox();
- const specs=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>({spec:item.spec}));
+ const specs=PREINSTALLED.filter(item=>item.stem!=='meoo').map(item=>({spec:item.spec}));
  specs.unshift({spec:'@magpie-community/opencode-zen-free-auth@latest',off:false,options:{collapsed:true}});
  await fs.writeFile(list,JSON.stringify({plugins:specs},null,2)+'\n');
- const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo-agent').map(item=>item.package);
+ const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo').map(item=>item.package);
  await fs.writeFile(marker,JSON.stringify({schema:1,registered:legacy})+'\n');
  await seedPreinstalled({data});
  const manifest=JSON.parse(await utf8(list));
