@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译，基线是上游 `v0.1.2799`，加上 `patches/magpie-v0.1.2799+fish.15.patch`（2.2.1；累计包含 `fish.14` 及本版新增）。旧补丁留在 `patches/` 备查：`fish.13` 用于 2.1.9–2.2.0，`fish.12` 用于 2.1.8，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1–fish.8`。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译：**基线 tag 由 `follow-upstream.ps1` 现场解析**（上游是 24h loop，写死必然过期），再加上 `patches/` 里序号最大的那份补丁。当前补丁链：`fish.16`（2.2.2，含 `fish.14`/`fish.15` 的全部内容）；旧补丁留在 `patches/` 备查：`fish.15` 用于 2.2.1，`fish.13` 用于 2.1.9–2.2.0，`fish.12` 用于 2.1.8，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1`–`fish.8`。
 
 ## 为什么要自己编
 
@@ -58,24 +58,27 @@
 
 ## 构建
 
+**基线不写死**：上游是 24h loop（忙时一小时好几个 tag），所以 tag 一律由
+`follow-upstream.ps1` 现场解析，仓库里不留「当前基线是 vX」这种常量。
+
 ```powershell
-# 1) Go 1.26.8（winget 在本机是坏的，走 zip；不要用 curl/IWR，Schannel 坏）
-python tools\download-go.py
+# 1) 跟随上游：解析最新 tag → 取源码 → 重放补丁 → 出冲突清单
+#    默认只诊断（有冲突就留 .rej、退出码 2），基线记录写 patches/upstream.json
+pwsh -File tools\follow-upstream.ps1
+#    指定 tag / 指定补丁（临时覆盖用）：
+pwsh -File tools\follow-upstream.ps1 -Tag v0.1.3136
+pwsh -File tools\follow-upstream.ps1 -Patch patches\magpie-v0.1.2799+fish.16.patch
 
-# 2) 取上游基线（用独立 worktree，别搅动已打补丁的那棵树）
-git clone --filter=blob:none --no-checkout https://github.com/yetone/magpie.git upstream
-git -C upstream fetch --depth=1 origin tag v0.1.2799
-git -C upstream worktree add ..\upstream-2799 v0.1.2799
-git -C ..\upstream-2799 apply --check patches\magpie-v0.1.2799+fish.15.patch
-git -C ..\upstream-2799 apply patches\magpie-v0.1.2799+fish.15.patch
-
-# 3) 编（本机没有 make，手跑 release-windows 的两段式）
+# 2) 编（本机没有 make，手跑 release-windows 的两段式）
+#    -VersionTag / -FileVersion 留空就从**最新补丁的文件名**推导
+#    （magpie-v0.1.2799+fish.16.patch → v0.1.2799+fish.16 / 0.1.2799.16），不用手抄；
+#    不读 patches/upstream.json——那份是「目标基线」的诊断记录，可能还没追平。
 #    -WinresJson 必须指向补丁带进 upstream 的那份：go-winres 按 json 所在目录
 #    解析图标路径，指向别处会报 "open ...\icon-256.png: cannot find the file"。
 pwsh -File tools\build-magpie.ps1 `
-  -UpstreamRoot ..\upstream-2799 `
-  -VersionTag 'v0.1.2799+fish.15' -FileVersion '0.1.2799.15' -ProductName 'magpie fish' `
-  -WinresJson ..\upstream-2799\build\windows\fish-winres.json `
+  -UpstreamRoot <构建根>\magpie-<tag> `
+  -ProductName 'magpie fish' `
+  -WinresJson <构建根>\magpie-<tag>\build\windows\fish-winres.json `
   -Out dist\magpie-windows-amd64.exe
 ```
 
@@ -91,8 +94,8 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 
 | 位置 | 值 |
 |---|---|
-| `magpie version` | `magpie v0.1.2799+fish.13` |
-| FileVersion | `0.1.2799.13`（四段数字，Windows 资源要求） |
+| `magpie version` | `magpie <基线 tag>+fish.<n>`（例：`v0.1.2799+fish.16`） |
+| FileVersion | `<基线去掉 v 的前三段>.<n>`（例：`0.1.2799.16`，四段数字，Windows 资源要求） |
 | ProductName | `magpie fish` |
 | FileDescription | `magpie fish (FISH Dock build)` |
 | manifest identity | `ai.usemagpie.magpie.fish` |
