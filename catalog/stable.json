@@ -47,12 +47,12 @@
         "FISH",
         "Jassdingk"
       ],
-      "version": "2.2.8",
+      "version": "2.2.9",
       "hostApi": 1,
       "platform": "windows-x86_64",
-      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.8/magpie.fish-plugin",
-      "sha256": "47427c60eb8a6f573f88ef034092dd3d28084fe5f76e9dd2b576135ab6a86115",
-      "bytes": 36378837,
+      "url": "https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.9/magpie.fish-plugin",
+      "sha256": "f8f45bfedc3dda73a6de2f1b88202542eaf40c022b62ac4de4937844a68a619a",
+      "bytes": 36817191,
       "dependencies": [
         "FISH Dock >=2.0.0",
         "Node.js 24（宿主提供）"
