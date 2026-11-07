@@ -46,7 +46,15 @@ export async function recordGatewayError(root,{error,phase,port}={}){
   port:Number.isInteger(port)?port:null,
   message:String(error?.message??'').slice(0,300)};
  const line=`${JSON.stringify(entry)}\n`;
- try{await fs.mkdir(root,{recursive:true});await fs.appendFile(path.join(root,'gateway-error.log'),line)}catch{}
+ try{
+  await fs.mkdir(root,{recursive:true});
+  const file=path.join(root,'gateway-error.log');
+  // 与 magpie.log 同口径：1 MB 滚动、保留上一份（#41 复审：原来只追加、
+  // 没有上界，插件反复启动失败时会一直长下去）
+  const st=await fs.stat(file).catch(()=>null);
+  if(st&&st.size>1024*1024)await fs.rename(file,file+'.1').catch(()=>{});
+  await fs.appendFile(file,line)
+ }catch{}
  return line;
 }
 
@@ -72,16 +80,32 @@ export function createTailLog({file,limit=1024*1024}={}){
  return {file,write(chunk){const text=String(chunk);queue=queue.then(()=>append(text)).catch(()=>{});return queue}};
 }
 
-// gateway 停在 error 时按递增间隔重试；用户停止或已恢复就停手，用尽后定住并保留原因。
+// gateway 停在 error 或启动抛错时按递增间隔重试；用户停止或已恢复就停手，
+// 用尽后定住并保留原因。
 export async function startWithBackoff(service,{attempts=3,delays=[600,1500],shouldRetry=()=>true}={}){
- let view=await service.start();
- for(let attempt=0;view?.state==='error'&&attempt<attempts-1;attempt++){
+ let view,last=null;
+ for(let attempt=0;attempt<attempts;attempt++){
+  if(attempt){
+   // 等过一下再问：用户在这段时间里点了停止，就不该把他拉起来
+   await delay(delays[Math.min(attempt-1,delays.length-1)]||0);
+   const current=service.view();
+   if(current?.state!=='error'){view=current;break}
+  }
+  try{
+   view=await service.start();
+   last=null;
+  }catch(error){
+   // 准备阶段与启动本身抛错，和 error 状态一样按退避再试一次（#45：只重试
+   // start 的返回值、把抛错留在重试之外，等于把冷启最常见的那次失败固定成
+   //「第一次开机起不来」）；白名单外的失败一次定住。
+   last=error;
+   if(!shouldRetry(service.view(),attempt))break;
+   continue;
+  }
+  if(view?.state!=='error')return view;
   if(!shouldRetry(view,attempt))break;
-  await delay(delays[Math.min(attempt,delays.length-1)]||0);
-  const current=service.view();
-  if(current?.state!=='error'){view=current;break}
-  view=await service.start();
  }
+ if(last)throw last;
  return view;
 }
 

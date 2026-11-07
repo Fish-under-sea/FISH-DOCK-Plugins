@@ -29,22 +29,23 @@ async function repairPackagedKernel(view,defaultKernel){
 // （pid + 密钥 + /version 三重确认）都放在里面排队，冷启时很容易把预算吃光——用户看到
 // 的就是「第一次开机没起来，第二次好了」。这里让 activate 立刻返回，慢活全在后台。
 async function autostartKernel(defaultKernel){
- try{
-  let view=await service.view({controller:false});
-  view=await repairPackagedKernel(view,defaultKernel);
-  // 未配置内核（还没选过）时不替用户拿主意，与 2.1.5 起的行为一致。
-  if(!view.configured||view.running)return;
-  for(const delay of [0,1500,4000]){
-   if(delay)await new Promise(resolve=>setTimeout(resolve,delay));
-   try{
-    await service.start();
-    return;
-   }catch(error){
-    // 冷启时端口/磁盘/杀软都可能还慢一拍：按 0 / 1.5 / 4 秒各试一次，最后把原因写进日志。
-    if(delay===4000)console.error('[clash] 自启动内核失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''));
-   }
+ // 准备（读配置、修包内内核路径）与启动一起进重试：冷启时磁盘/控制器慢一拍是常态，
+ // 把准备段留在重试之外，等于把最常见的那次失败固定成「第一次开机没起来」（#45）。
+ for(const delay of [0,1500,4000]){
+  if(delay)await new Promise(resolve=>setTimeout(resolve,delay));
+  try{
+   // 每轮只读一次：判断、修复、日志都用这一份快照。
+   let view=await service.view({controller:false});
+   view=await repairPackagedKernel(view,defaultKernel);
+   // 未配置内核（还没选过）时不替用户拿主意，与 2.1.5 起的行为一致。
+   if(!view.configured||view.running)return;
+   await service.start();
+   return;
+  }catch(error){
+   // 最后一把才把原因写进日志，前两把是冷启常见的慢一拍。
+   if(delay===4000)console.error('[clash] 自启动失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''));
   }
- }catch(error){console.error('[clash] 自启动准备失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
+ }
 }
 createPlugin({id:'fish.clash',activate:async context=>{
  // TUN 服务目录固定在 ProgramData，跨插件升级不随目录移动。

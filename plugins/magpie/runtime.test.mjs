@@ -119,6 +119,14 @@ test('恢复或用户停止时不再重试；不可恢复的失败一次定住',
  assert.equal(calls,1);assert.equal(fatalView.error,'服务文件不存在');
 });
 
+test('start 抛错也按退避重试（准备阶段失败不进重试让首次自启起不来）',async()=>{
+ let calls=0;
+ const throwsThenRuns={view:()=>({state:calls<2?'error':'running'}),
+  async start(){calls++;if(calls<2)throw new Error('ports');return this.view()}};
+ const view=await startWithBackoff(throwsThenRuns,{attempts:3,delays:[10,10]});
+ assert.equal(calls,2);
+ assert.equal(view.state,'running');
+});
 test('重试白名单只放过换时机可能成功的失败；旧包路径可被识别重写',()=>{
  for(const code of ['PORT_IN_USE','PORT_BIND_DENIED','FILE_BUSY','PERMISSION_DENIED','RUNTIME_COPY_FAILED','GATEWAY_ERROR','UNKNOWN_ERROR','SPAWN_FAILED','EARLY_EXIT','READY_TIMEOUT'])
   assert.equal(isRetryableFailure(code),true,code);

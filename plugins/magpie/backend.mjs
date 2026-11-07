@@ -16,11 +16,11 @@ async function repairPackagedExecutable(){
 }
 // 启动失败不再用 catch(()=>{}) 丢掉：原始 code 进了 gateway-error.log，error 状态按
 // 递增间隔复起（3 次），用尽后定住并保留 gateway 记下的原因。用户停止不受影响。
-function launchGateway(){
+function launchGateway(port){
  if(launching)return launching;
  lastFailure=null;
  launching=startWithBackoff(service,{attempts:3,delays:[600,1500],shouldRetry:()=>isRetryableFailure(lastFailure?.code)})
-  .catch(error=>recordGatewayError(pluginContext?.dataDirectory,{error,phase:'start-process',port:service?.view().port}))
+  .catch(error=>recordGatewayError(pluginContext?.dataDirectory,{error,phase:'start-process',port:port??service?.view().port}))
   .finally(()=>{launching=null;});
  return launching;
 }
@@ -33,7 +33,8 @@ const plugin=createPlugin({id:'fish.magpie',activate:async context=>{
  await repairPackagedExecutable();
  // 宿主只在「随 Dock 启动」这一次传 FISH_PLUGIN_AUTOSTART=1（#22）。那一次把
  // 本机服务拉起来；安装、点启用、回滚都不传 1，服务等用户自己点。
- if(process.env.FISH_PLUGIN_AUTOSTART==='1'&&service.view().state==='stopped')void launchGateway();
+ const autostartView=service.view();
+ if(process.env.FISH_PLUGIN_AUTOSTART==='1'&&autostartView.state==='stopped')void launchGateway(autostartView.port);
 },deactivate:async()=>{await service?.stop()},commands:{
  'gateway.view':()=>service.view(),'gateway.save':params=>service.save(params),
  'gateway.start':()=>{void launchGateway();return service.view()},'gateway.stop':()=>{void service.stop();return service.view()}
