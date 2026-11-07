@@ -1,6 +1,6 @@
 # NearToken 侧需要为 magpie 2.3.2 做的事
 
-> 结论：**要适配**，三件，都不大。magpie 2.3.2（补丁 `fish.27`）把设置页的模型区拆成
+> 结论：**要适配**，三件，都不大。magpie 2.3.2（补丁 `fish.28`）把设置页的模型区拆成
 > 识图 / 生图 / 视频 / 语音 / 向量 五类，并把 MCP 出口从「生图」扩成「素材」
 > （`/mcp/magpie/materials`，工具 `generate_image` / `generate_video` / `generate_audio` /
 > `generation_result`）。NearToken 的模型要出现在这些分区里，才有得选。
@@ -13,7 +13,7 @@ magpie 按模型自己声明的 kind 分区，不猜。NearToken 提供的非对
 | --- | --- | --- |
 | 生图（如 `gpt-image-2.5-flare`） | `image` | 设置 › 图像 › 生图模型 |
 | 视频（如 `sd2.5`） | `video` | 设置 › 图像 › **视频模型** |
-| 语音合成 / 转写 / **音乐** | `audio`（分区叫语音；字段值是 audio，见 §6.1） | 设置 › 图像 › 语音模型 |
+| 语音合成 / 转写 / **音乐** | `audio`（分区显示为语音） | 设置 › 图像 › 语音模型 |
 | 向量 / 重排 | `embedding` | 设置 › 图像 › 向量模型 |
 
 怎么标（按 NearToken 现在的清单写法选其一）：
@@ -30,7 +30,7 @@ magpie 按模型自己声明的 kind 分区，不猜。NearToken 提供的非对
 `generate_audio` 音一个工具，出的是**语音或音乐**，走 magpie 的 `/v1/audio/speech` 那条路
 （模型由设置 › 图像 › 语音模型决定）。
 
-- 如果 NearToken 的音乐模型就是 OpenAI 兼容的 `/audio/speech`：标 `speech` 即可，magpie 不用改；
+- 如果 NearToken 的音乐模型就是 OpenAI 兼容的 `/audio/speech`：标 `audio` 即可，magpie 不用改；
 - 如果音乐走**独立 API**（比如自己的 `/music/generations`）：先在 magpie 侧开个 issue 说明
   请求体与返回格式，magpie 需要在 `generate_audio` 里分流，NearToken 这边先别标成 `speech`。
 
@@ -50,7 +50,7 @@ magpie 2.3.2 加了一个专用恢复钩子 `neartoken:relist`：插件页在启
 
 ## 5. 版本
 
-- NearToken 需要的最低 magpie：**2.3.2**（`v0.1.3240+fish.27`）。
+- NearToken 需要的最低 magpie：**2.3.2**（`v0.1.3240+fish.28`）。
 - 抬 `magpie.min` 到 2.3.2 之后，再启用视频模型与 `generate_audio` 的说明。
 
 ---
@@ -124,4 +124,12 @@ NearToken 的 TTS / 转写 / 音乐模型现在会：
 | 第 5 节 `magpie.min` | **已抬到 2.3.2**（1.3.0） |
 
 `neartoken:relist` 的实际效果目前还没在真机上等到「掉出后再自愈」的场景验证——需要一次插件重载触发掉出，再开插件页看是否自动恢复。这条等有实例时补。
+### 6.7 宿主决策（2026-11-07，magpie 维护侧）
 
+两条路里**暂取 B 的变体**，A 另排期：
+
+- **`pluginKind` 保持认 `audio`**（分类语义对，不改）；不额外加"只挂 chat 端点就不算语音"的判据——magpie 拿不到插件声明的端点能力，硬加判据会把语义判断塞进宿主，且 NearToken 的声明本身没错。
+- **`generate_audio` 失败时给明确文案**：走 `/v1/audio/speech` 返回 500/503 时，工具结果写「该模型所属供应商没有可用的音频渠道（站点未开 audio 终点）」，别让用户以为是 magpie 的问题。这一条属于宿主侧收尾，随 2.3.2 一起。
+- **A（Gemini 原生 TTS）单独排期**：要走 `generateContent` + `responseModalities: ["AUDIO"]`，请求体、返回（base64 PCM）、时长与额度都不是 OpenAI 协议；等 NearToken 站点开出 audio 渠道、或用户明确要 Gemini TTS 再立项，不阻塞 2.3.2。
+
+NearToken 侧在 A 落地前保持 `kind: audio` 与现状即可；用户选中 NearToken 的 TTS 后会看到上面那条明确文案，而不是空白失败。

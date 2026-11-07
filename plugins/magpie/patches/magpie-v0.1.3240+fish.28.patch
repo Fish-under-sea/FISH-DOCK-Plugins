@@ -364,7 +364,7 @@ index 1c7eb03..7079848 100644
  		// the decision models its own pickers offer: of a provider with
  		// picks (OpenRouter's twenty-odd), the picked ones, so another
 diff --git a/internal/gateway/image_mcp.go b/internal/gateway/image_mcp.go
-index 2faedef..deb2048 100644
+index 2faedef..77db5cf 100644
 --- a/internal/gateway/image_mcp.go
 +++ b/internal/gateway/image_mcp.go
 @@ -42,6 +42,11 @@ import (
@@ -379,7 +379,7 @@ index 2faedef..deb2048 100644
  // ImageMCPFiles is where the images it made are served from.
  const ImageMCPFiles = ImageMCPPath + "/files/"
  
-@@ -70,9 +75,61 @@ func withMeta(res map[string]any, k string, v any) map[string]any {
+@@ -70,9 +75,68 @@ func withMeta(res map[string]any, k string, v any) map[string]any {
  const (
  	GenerateImageTool    = "generate_image"
  	GenerateVideoTool    = "generate_video"
@@ -410,7 +410,14 @@ index 2faedef..deb2048 100644
 +		code = http.StatusOK
 +	}
 +	if code != http.StatusOK {
-+		return toolResult(GenerateAudioTool+" failed: "+strings.TrimSpace(rec.body.String()), true)
++		body := strings.TrimSpace(rec.body.String())
++		// 上游的 /audio/speech 路由存在、但没有渠道能接：常见于只挂了 chat/gemini
++		// 端点的供应商（NearToken 的 suno / TTS 就这样）。说清楚是供应商没开音频
++		// 通道，别让人以为是 magpie 坏了（#purge 无关，见 neartoken 适配文档）。
++		if code == http.StatusInternalServerError || code == http.StatusServiceUnavailable || code == http.StatusBadGateway {
++			return toolResult(GenerateAudioTool+": this model's provider has no working audio endpoint (it serves the audio path but no channel takes it). Ask the provider to enable an audio endpoint, or pick a model whose provider has one. Upstream said: "+body, true)
++		}
++		return toolResult(GenerateAudioTool+" failed: "+body, true)
 +	}
 +	mime := rec.header.Get("Content-Type")
 +	if mime == "" {
@@ -441,7 +448,7 @@ index 2faedef..deb2048 100644
  // ImageToolProps is generate_image's arguments but where to save: images
  // says how an image to draw from may be given.
  func ImageToolProps(images string) map[string]any {
-@@ -156,6 +213,19 @@ func imageMCPTools(r *http.Request) []any {
+@@ -156,6 +220,19 @@ func imageMCPTools(r *http.Request) []any {
  			"inputSchema": ro(VideoToolProps(imageMCPFrom, imageMCPFrom+"s"), true),
  			"annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
  		},
@@ -461,7 +468,7 @@ index 2faedef..deb2048 100644
  		map[string]any{
  			"name":  GenerationResultTool,
  			"title": "Generation result",
-@@ -247,6 +317,8 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
+@@ -247,6 +324,8 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
  			return s.imageMCPDraw(r, p.Arguments), nil
  		case GenerateVideoTool:
  			return s.imageMCPFilm(r, p.Arguments), nil
@@ -470,7 +477,7 @@ index 2faedef..deb2048 100644
  		case GenerationResultTool:
  			var a struct {
  				ID string `json:"id"`
-@@ -254,7 +326,7 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
+@@ -254,7 +333,7 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
  			json.Unmarshal(p.Arguments, &a)
  			return s.imageMCPResult(r, strings.TrimSpace(a.ID)), nil
  		}
