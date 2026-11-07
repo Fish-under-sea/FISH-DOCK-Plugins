@@ -133,3 +133,84 @@ NearToken 的 TTS / 转写 / 音乐模型现在会：
 - **A（Gemini 原生 TTS）单独排期**：要走 `generateContent` + `responseModalities: ["AUDIO"]`，请求体、返回（base64 PCM）、时长与额度都不是 OpenAI 协议；等 NearToken 站点开出 audio 渠道、或用户明确要 Gemini TTS 再立项，不阻塞 2.3.2。
 
 NearToken 侧在 A 落地前保持 `kind: audio` 与现状即可；用户选中 NearToken 的 TTS 后会看到上面那条明确文案，而不是空白失败。
+
+---
+
+### 6.8 请求体与返回样例（2026-11-07 实测，站点侧当前全部不可用）
+
+宿主要「这两个模型真实调用的请求体 + 返回样例」。**请求体拿到了，成功样例没有**——站点侧这些模型此刻没有任何可用上游。下面是完整过程，可复核。
+
+#### 尝试范围
+
+`/api/pricing` 里所有语音/音乐类模型共 **11 个**，逐个用宿主凭据 + 正确分组头发了一次请求；TTS 另外试了 **3 种 gemini 原生端点路径**。
+
+#### 请求体 A：OpenAI 兼容 chat（插件与 magpie 都在用）
+
+```http
+POST https://neartoken.cc/v1/chat/completions
+authorization: Bearer <token>
+content-type: application/json
+x-neartoken-group: #35          # 取自 pricing 的 group_refs
+```
+
+```json
+{"model":"gemini-3.8-flash-tts","messages":[{"role":"user","content":"say hello"}],"max_tokens":32}
+```
+
+suno 同形，`x-neartoken-group: #67`（`[满血] Suno`），`model` 换成 `suno_music` 等。
+
+#### 请求体 B：Gemini 原生 generateContent
+
+```http
+POST https://neartoken.cc/v1beta/models/gemini-3.8-flash-tts:generateContent
+authorization: Bearer <token>
+content-type: application/json
+x-neartoken-group: #35
+```
+
+```json
+{
+  "contents": [{ "parts": [{ "text": "Say: hello from NearToken" }] }],
+  "generationConfig": { "responseModalities": ["AUDIO"] }
+}
+```
+
+`/v1/models/...:generateContent` 与 `?alt=json` 两种变体也试了，结果相同。
+
+#### 真实返回（三类，均非成功）
+
+**TTS 5 个模型（chat 与 gemini 原生都是）→ 503**
+
+```json
+{"error":{"message":"No eligible account is currently available for this model.","type":"upstream_error","param":"","code":503}}
+```
+
+**suno 5 个模型 → 404**
+
+```json
+{"error":{"message":"No available channel for this model on the current token (request id: …)","type":"new_api_error","param":"","code":"model_not_found"}}
+```
+
+**`gemini-3.5-transcribe` → 400，但这条信息很有用**
+
+```json
+{"error":{"message":"use the native generateContent endpoint with inline audio for this transcription model (request id: …)",…}}
+```
+
+也就是说 ASR 的形态是明确的：**`generateContent` + `inline_data`（音频内联在请求里）**，不是 `/audio/transcriptions` 的 multipart。
+
+#### 结论
+
+- 请求能到站点、能路由到分组（`group=#35` / `#67`），失败在**上游没有可用账号/渠道**这一层，与端点形态无关；
+- 所以「从回复里取音频」需要的成功样例，**这次取不到**。suno 是否返回 `{"data":[{"url":…}]}` 这种自有格式，暂时无从判断；
+- 站点恢复后我会立刻补一次真实响应。到时候按 6.7 的 B 方案，宿主只需要在 `generate_audio` 失败文案上兜住；若 suno 果然是自有格式，再按样例加分支。
+
+#### 附：可复现的最小命令
+
+```bash
+curl -sS https://neartoken.cc/v1/chat/completions \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -H 'x-neartoken-group: #35' \
+  -d '{"model":"gemini-3.8-flash-tts","messages":[{"role":"user","content":"hi"}],"max_tokens":16}'
+```
