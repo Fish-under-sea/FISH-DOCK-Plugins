@@ -8,7 +8,7 @@
 //
 // 它不碰 stdio 管道（宿主死了管道会断），也不需要宿主提供的 storage：租约就用
 // <dataDirectory>/config/system-proxy.json 这个真实文件。
-import {existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync} from 'node:fs';
+import {existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync, appendFileSync, statSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -40,9 +40,22 @@ export function processAlive(pid) {
   }
 }
 
-// 与 runtime.mjs 里同一套脚本：固定 PowerShell 源码 + JSON stdin，配置值不拼进代码。
+// 与 runtime.mjs 同一套脚本：固定 PowerShell 源码 + JSON stdin，配置值不拼进代码。
+// #44：应答带 ok/键名/Win32 码——看门狗没有 stdout 可看，失败必须有可查的记录。
 function powershell(action, values) {
-  const source = `$ErrorActionPreference='Stop';$r=ConvertFrom-Json ([Console]::In.ReadToEnd());$p='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';if($r.action -eq 'read'){$k=Get-ItemProperty -Path $p;[pscustomobject]@{ProxyEnable=[int]$k.ProxyEnable;ProxyServer=[string]$k.ProxyServer;ProxyOverride=[string]$k.ProxyOverride}|ConvertTo-Json -Compress}else{Set-ItemProperty -Path $p -Name ProxyEnable -Value ([int]$r.ProxyEnable);Set-ItemProperty -Path $p -Name ProxyServer -Value ([string]$r.ProxyServer);Set-ItemProperty -Path $p -Name ProxyOverride -Value ([string]$r.ProxyOverride);'{}'}`;
+  const source = `$ErrorActionPreference='Stop';$r=ConvertFrom-Json ([Console]::In.ReadToEnd());$p='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+function Reply($o){$o|ConvertTo-Json -Compress}
+function Code($e){try{if($e.PSObject.Properties['NativeErrorCode']){return [int]$e.NativeErrorCode}}catch{};try{return [int]($e.HResult -band 65535)}catch{return 0}}
+if($r.action -eq 'read'){
+ try{$k=Get-ItemProperty -Path $p;Reply @{ok=$true;ProxyEnable=[int]$k.ProxyEnable;ProxyServer=[string]$k.ProxyServer;ProxyOverride=[string]$k.ProxyOverride}}
+ catch{Reply @{ok=$false;key='';win32=(Code $_.Exception);message=[string]$_.Exception.Message}}
+}else{
+ foreach($k in @('ProxyEnable','ProxyServer','ProxyOverride')){
+  try{Set-ItemProperty -Path $p -Name $k -Value $(if($k -eq 'ProxyEnable'){[int]$r.ProxyEnable}else{[string]$r.$k})}
+  catch{Reply @{ok=$false;key=$k;win32=(Code $_.Exception);message=[string]$_.Exception.Message};exit 0}
+ }
+ Reply @{ok=$true}
+}`;
   return new Promise((resolve, reject) => {
     const child = spawn('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')], {windowsHide: true});
     let output = '';
@@ -52,11 +65,33 @@ function powershell(action, values) {
     child.on('error', () => { clearTimeout(timer); reject(Error('请先安装 PowerShell 7')); });
     child.on('close', (code) => {
       clearTimeout(timer);
+      let answer = null;
+      try { answer = JSON.parse(output); } catch {}
+      if (answer && answer.ok === false) {
+        const key = typeof answer.key === 'string' ? answer.key : '';
+        const win32 = Number.isInteger(answer.win32) && answer.win32 > 0 ? answer.win32 : 0;
+        const error = Error(`${key ? `写入 ${key} 失败` : '系统代理操作失败'}${win32 ? `（Win32 ${win32}）` : ''}${answer.message ? `：${answer.message}` : ''}`);
+        error.key = key || null; error.win32 = win32;
+        return reject(error);
+      }
       if (code !== 0) return reject(Error('系统代理读写失败'));
       try { resolve(JSON.parse(output)); } catch { reject(Error('系统代理应答解析失败')); }
     });
     child.stdin.end(JSON.stringify({action, ...(values ?? {})}));
   });
+}
+
+// 看门狗没有 stdout：失败写进 <租约>.log，64 KB 封顶（#44）。
+function logFailure(leasePath, error) {
+  try {
+    const file = `${leasePath}.log`;
+    if (existsSync(file) && statSync(file).size > 64 * 1024) writeFileSync(file, '');
+    const parts = [`${new Date().toISOString()} ${error?.code ?? 'PROXY_RESTORE_FAILED'}`];
+    if (error?.key) parts.push(`写入 ${error.key} 失败`);
+    if (Number.isInteger(error?.win32) && error.win32 > 0) parts.push(`Win32 ${error.win32}`);
+    if (error?.message) parts.push(error.message);
+    appendFileSync(file, `${parts.join(' ')}\n`);
+  } catch {}
 }
 
 function readLease(path) {
@@ -82,10 +117,19 @@ export async function recover({leasePath, parentPid, mihomoPid, read = () => pow
   let current = null;
   try { current = await read(); } catch { return {act: 'unreadable'}; }
   const decision = plan(record, current, parentPid);
+  let act = decision.act, failure = null;
   if (decision.act === 'restore') {
-    try { await write(decision.previous); } catch { return {act: 'write-failed', previous: decision.previous}; }
+    try { await write(decision.previous); }
+    catch (error) {
+      // #44：带上被拒的键名与 Win32 码；没有 stdout 可看，只能落文件。租约留着，
+      // 下次插件启动还能再试一次——删掉就再也认不出注册表里那份是谁写的。
+      logFailure(leasePath, error);
+      act = 'write-failed';
+      failure = {key: typeof error?.key === 'string' ? error.key : null,
+        win32: Number.isInteger(error?.win32) ? error.win32 : 0};
+    }
   }
-  clearLease(leasePath);
+  if (act !== 'write-failed') clearLease(leasePath);
   if (Number.isInteger(mihomoPid) && mihomoPid > 0 && processAlive(mihomoPid)) {
     try { process.kill(mihomoPid, 'SIGTERM'); } catch {}
     const until = Date.now() + 1500;
@@ -94,7 +138,7 @@ export async function recover({leasePath, parentPid, mihomoPid, read = () => pow
     }
     if (processAlive(mihomoPid)) try { process.kill(mihomoPid, 'SIGKILL'); } catch {}
   }
-  return {act: decision.act};
+  return failure ? {act, ...failure} : {act};
 }
 
 async function main() {

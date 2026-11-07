@@ -6,7 +6,7 @@ import {connect as tlsConnect} from 'node:tls';
 import http from 'node:http';
 import {mkdir} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
-import {writeFile,rename,readFile,unlink} from 'node:fs/promises';
+import {writeFile,rename,readFile,unlink,readdir,stat,rm} from 'node:fs/promises';
 import {createSubscriptionRuntime,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
 // 校验错误统一挂码：文案在 shared/errors.mjs 按 code 查表，页面不再做中文正则匹配。
 import {serviceError} from '../../shared/errors.mjs';
@@ -34,6 +34,15 @@ export {processAlive};
 export function createProxyLease({storage,adapter}){
  let active=false;
  const same=(a,b)=>['ProxyEnable','ProxyServer','ProxyOverride'].every(k=>a[k]===b[k]);
+ // #44：失败不能只说「请检查权限」。适配层已把被拒的键名与 Win32 码挂在错误上，
+ // 这里原样带进文案与 cause：ProxyServer 被安全软件拦，和 InternetSetOption 的
+ // 刷新失败，处置完全不同，日志里必须能分开。键名是固定三项，不含代理地址。
+ function why(error){
+  const parts=[];
+  if(typeof error?.key==='string'&&error.key)parts.push(`写入 ${error.key} 失败`);
+  if(Number.isInteger(error?.win32)&&error.win32>0)parts.push(`Win32 ${error.win32}`);
+  return parts.length?`：${parts.join('，')}`:'';
+ }
  async function discard(){try{await storage.write('config','system-proxy.json','')}catch{/* 丢不掉也不影响停止 */}active=false}
  // 「记录对不上」不是致命错误：别的程序（TUN、其他代理）可能改过注册表。
  // 这类情况丢租约 + 带 code 返回，由上层降级成警告，别再让每次 stop 都失败。
@@ -78,7 +87,12 @@ export function createProxyLease({storage,adapter}){
    await storage.write('config','system-proxy.json','');
    active=false;
    return {act:restored?'restore':'discard'};
-  }catch(error){throw coded('PROXY_REGISTRY_WRITE_FAILED','恢复系统代理失败，请检查注册表写入权限',error)}
+  }catch(error){
+   const failure=coded('PROXY_REGISTRY_WRITE_FAILED',`恢复系统代理失败${why(error)}，请检查注册表写入权限`,error);
+   failure.key=typeof error?.key==='string'?error.key:null;
+   failure.win32=Number.isInteger(error?.win32)?error.win32:0;
+   throw failure;
+  }
  }
  async function enable(port, ownerPid){
   if(!Number.isInteger(port)||port<1024||port>65535)throw serviceError('PROXY_PORT_INVALID');
@@ -98,7 +112,13 @@ export function createProxyLease({storage,adapter}){
   const owner=Number.isInteger(ownerPid)&&ownerPid>0?{pid:ownerPid,at:Date.now()}:undefined;
   await storage.write('config','system-proxy.json',JSON.stringify({schema:1,previous,owned,...(owner?{owner}:{})}));
   try{await adapter.write(owned);active=true}
-  catch(error){await restore().catch(()=>{});throw coded('PROXY_REGISTRY_WRITE_FAILED','开启系统代理失败，请检查注册表写入权限',error)}
+  catch(error){
+   await restore().catch(()=>{});
+   const failure=coded('PROXY_REGISTRY_WRITE_FAILED',`开启系统代理失败${why(error)}，请检查注册表写入权限`,error);
+   failure.key=typeof error?.key==='string'?error.key:null;
+   failure.win32=Number.isInteger(error?.win32)?error.win32:0;
+   throw failure;
+  }
  }
  // recoverStale 是启动自愈：上一次 Dock 被强杀时留下的租约，只要注册表里还是我们写
  // 的那一份就立刻还原——否则用户下次开机没有代理进程，网却全指向 127.0.0.1。
@@ -112,7 +132,8 @@ export function createProxyLease({storage,adapter}){
    throw error;
   }
  }
- return {enable,restore,recoverStale,active:()=>active};
+ // why 只把键名与 Win32 码写成短句，供上层日志复用（#44）。
+ return {enable,restore,recoverStale,active:()=>active,why};
 }
 // 普通模式启动前是否需要让 TUN 服务交出内核：服务已装（job.ini enabled=1）且服务正在
 // 跑，说明内核此刻挂在 SYSTEM 服务名下，占着同一个控制器端口。
@@ -233,6 +254,23 @@ async function free(port){const server=createServer();await new Promise((resolve
 export const RUNTIME_CONFIG=Object.freeze('mihomo-runtime.json');
 // 热切换先写到候选文件，内核确认换上了才 rename 成正式配置：失败时正式配置一个字节都没动。
 const CANDIDATE_CONFIG=Object.freeze('mihomo-runtime.next.json');
+// #46：tmp/ 里有两类强杀后的残片——订阅导入的 import-* 工作目录（subscriptions.mjs
+// 的 mkdtemp）与写到一半的候选配置。启动时清掉超过宽限期的；正在用的 mtime 很新，
+// 不动。清理失败不拦启动。
+const TMP_GRACE=10*60*1000;
+export async function pruneTmp(dataDirectory){
+ const dir=join(dataDirectory,'tmp');
+ let names;try{names=await readdir(dir)}catch{return}
+ let removed=0;
+ for(const name of names){
+  if(!/^import-/.test(name)&&name!==CANDIDATE_CONFIG)continue;
+  const entry=join(dir,name);
+  let info;try{info=await stat(entry)}catch{continue}
+  if(Date.now()-info.mtimeMs<=TMP_GRACE)continue;
+  try{await rm(entry,{recursive:true,force:true});removed++}catch{}
+ }
+ if(removed)console.error(`[clash] TEMP 清理：删除 ${removed} 个过期条目`)
+}
 export function createRuntime(context){
  const adapter={async read(){return powershell('read')},async write(values){await powershell('write',values)}};
  const proxy=createProxyLease({storage:context.storage,adapter});
@@ -245,7 +283,8 @@ export function createRuntime(context){
    if(result?.act==='restore')console.error('[clash] 已还原上次意外退出遗留的系统代理');
    return result;
   }).catch(error=>{
-   console.error('[clash] 系统代理自愈失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''));
+   // #44：带上被拒的键名与 Win32 码，下一次出现时不用再猜是注册表哪一步。
+   console.error('[clash] 系统代理自愈失败：'+(error?.code??'UNKNOWN')+proxy.why(error)+' '+(error?.message??''));
    return {act:'failed'};
   });
  }
@@ -292,6 +331,8 @@ export function createRuntime(context){
   await recoverStaleOnce();
   await checkExecutable(c.kernel);await free(c.mixedPort);await free(c.controllerPort);
   for(const category of ['tmp','config','credentials'])await mkdir(join(context.dataDirectory,category),{recursive:true});
+ // #46：先回收上一轮强杀留下的 tmp 残片，再写这一轮的配置。
+ await pruneTmp(context.dataDirectory)
   // 内核 -d 目录：TUN 服务用数据根，普通模式用 config 子目录。
   const kernelHome=c.tun?.enable?context.dataDirectory:join(context.dataDirectory,'config');
   // geo 数据优先取包内随附文件（插件 service 目录，后端注入 geoDir），离线可用；
@@ -365,14 +406,47 @@ export function createRuntime(context){
   ...createSubscriptionRuntime(context)};
 }
 // 使用固定脚本和 JSON stdin，配置值不会拼入 PowerShell 源码。
+// #44：失败不再只说「读取或写入失败」。脚本把被拒的键名与 Win32 码写进 JSON 应答，
+// 刷新调用（InternetSetOption）的失败也单独报，和某一个键被安全软件拦住能分开。
 function powershell(action,values){
  if(process.platform!=='win32')return Promise.reject(Error('系统代理接管仅支持 Windows'));
- const source=`$ErrorActionPreference='Stop';$r=ConvertFrom-Json ([Console]::In.ReadToEnd());$p='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';if($r.action -eq 'read'){$v=Get-ItemProperty -LiteralPath $p;@{ProxyEnable=$v.ProxyEnable;ProxyServer=$v.ProxyServer;ProxyOverride=$v.ProxyOverride}|ConvertTo-Json -Compress}else{foreach($k in @('ProxyEnable','ProxyServer','ProxyOverride')){$v=$r.values.$k;if($null -eq $v){Remove-ItemProperty -LiteralPath $p -Name $k -ErrorAction SilentlyContinue}else{New-ItemProperty -LiteralPath $p -Name $k -Value $v -PropertyType $(if($k -eq 'ProxyEnable'){'DWord'}else{'String'}) -Force|Out-Null}};Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FishInternet{[DllImport("wininet.dll")]public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);}';[void][FishInternet]::InternetSetOption([IntPtr]::Zero,39,[IntPtr]::Zero,0);[void][FishInternet]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0);'{}'}`;
+ const source=`$ErrorActionPreference='Stop';$r=ConvertFrom-Json ([Console]::In.ReadToEnd());$p='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+function Reply($o){$o|ConvertTo-Json -Compress}
+function Code($e){try{if($e.PSObject.Properties['NativeErrorCode']){return [int]$e.NativeErrorCode}}catch{};try{return [int]($e.HResult -band 65535)}catch{return 0}}
+if($r.action -eq 'read'){
+ try{$v=Get-ItemProperty -LiteralPath $p;Reply @{ok=$true;ProxyEnable=$v.ProxyEnable;ProxyServer=$v.ProxyServer;ProxyOverride=$v.ProxyOverride}}
+ catch{Reply @{ok=$false;key='';win32=(Code $_.Exception);message=[string]$_.Exception.Message}}
+}else{
+ foreach($k in @('ProxyEnable','ProxyServer','ProxyOverride')){
+  try{$v=$r.values.$k;if($null -eq $v){Remove-ItemProperty -LiteralPath $p -Name $k -ErrorAction SilentlyContinue}else{New-ItemProperty -LiteralPath $p -Name $k -Value $v -PropertyType $(if($k -eq 'ProxyEnable'){'DWord'}else{'String'}) -Force|Out-Null}}
+  catch{Reply @{ok=$false;key=$k;win32=(Code $_.Exception);message=[string]$_.Exception.Message};exit 0}
+ }
+ Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FishInternet{[DllImport("wininet.dll")]public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);}';
+ $a=[FishInternet]::InternetSetOption([IntPtr]::Zero,39,[IntPtr]::Zero,0);$err=[System.Runtime.InteropServices.Marshal]::GetLastWin32Error();
+ if(-not $a){Reply @{ok=$false;key='InternetSetOption';win32=[int]$err;message='刷新系统代理设置失败'};exit 0}
+ [void][FishInternet]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0);Reply @{ok=$true}
+}`;
  return new Promise((resolve,reject)=>{
-  const child=spawn('pwsh',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(source,'utf16le').toString('base64')],{windowsHide:true,stdio:['pipe','pipe','ignore']});let output='';
+  const child=spawn('pwsh',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(source,'utf16le').toString('base64')],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let output='',errors='';
   const timer=setTimeout(()=>{child.kill();reject(Error('系统代理操作超时'))},5000);
-  child.on('error',()=>{clearTimeout(timer);reject(Error('请先安装 PowerShell 7 后使用系统代理控制'))});child.stdout.on('data',b=>{output+=b;if(output.length>16384)child.kill()});
-  child.on('close',code=>{clearTimeout(timer);try{if(code!==0)throw Error();resolve(JSON.parse(output))}catch{reject(Error('Windows 系统代理读取或写入失败'))}});child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({action,values}));
+  child.on('error',()=>{clearTimeout(timer);reject(Error('请先安装 PowerShell 7 后使用系统代理控制'))});
+  child.stdout.on('data',b=>{output+=b;if(output.length>16384)child.kill()});
+  child.stderr.on('data',b=>{errors=(errors+b).slice(-4096)});
+  child.on('close',code=>{
+   clearTimeout(timer);
+   let answer=null;try{answer=JSON.parse(output)}catch{}
+   if(answer&&answer.ok===false){
+    const key=typeof answer.key==='string'?answer.key:'';
+    const win32=Number.isInteger(answer.win32)&&answer.win32>0?answer.win32:0;
+    const failure=Error(`${key?`写入 ${key} 失败`:'系统代理操作失败'}${win32?`（Win32 ${win32}）`:''}${answer.message?`：${answer.message}`:''}`);
+    failure.key=key||null;failure.win32=win32;failure.action=action;
+    reject(failure);return;
+   }
+   if(code!==0){const failure=Error(`Windows 系统代理读取或写入失败${errors.trim()?`：${errors.trim().slice(0,300)}`:''}`);failure.action=action;reject(failure);return}
+   try{resolve(JSON.parse(output))}catch{reject(Error('系统代理应答解析失败'))}
+  });
+  child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({action,values}));
  });
 }
 

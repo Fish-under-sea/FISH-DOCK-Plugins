@@ -62,7 +62,10 @@ function fixture(disk=new Map(),options={}) {
    install:async({kernel})=>{tunInstalled=true;tunKernel=kernel},
    uninstall:async()=>{tunInstalled=false;return {installed:false}},
    enable:async()=>true,disable:async()=>true},
-  tunStop:async()=>{}};
+  tunStop:async()=>{},
+  // #46：宿主的 storage 没有 delete，订阅地址/缓存由 runtime 自己删；夹具照做。
+  removeSubscription:async id=>{disk.delete(`secret/credentials/${id}.yaml`);disk.delete(`secret/credentials/${id}.json`)},
+  removeCredential:async name=>{disk.delete(`secret/credentials/${name}`)}};
  let tunInstalled=false,tunKernel='';
  const service=createClash({context,runtime,request,...options,pidAlive:pid=>{
   // 残留内核优先按 external 判活：它的 pid 可能与本实例的假 pid 同号。
@@ -143,7 +146,7 @@ test('multiple subscriptions keep independent IDs but only one runs at a time',a
  await f.service.start();assert.deepEqual(f.stats().owned.subscriptions.map(s=>s.id),[a.id]);
  await f.service.stop();await f.service.subscriptionRemove({id:a.id});
  assert.deepEqual((await f.service.view()).subscriptions.map(s=>s.id),[b.id]);
- assert.equal(f.disk.get(`secret/credentials/${a.id}.json`),'');
+ assert.equal(f.disk.has(`secret/credentials/${a.id}.json`),false);
 });
 // ───────── 2.1.4 运行中热切换（§3.3）：不重启内核，失败全回滚 ─────────
 async function twoCached(f){
@@ -295,7 +298,7 @@ test('single subscription migration is idempotent and preserves legacy cache ava
  const f=fixture(disk);f.runtime.migrateSubscription=async()=>true;
  const first=await f.service.view();
  assert.equal(first.subscriptions.length,1);assert.equal(first.subscriptions[0].hasCache,true);
- assert.equal(disk.get('secret/credentials/subscription.json'),'');
+ assert.equal(disk.has('secret/credentials/subscription.json'),false);
  const again=await fixture(disk).service.view();
  assert.equal(again.subscriptions[0].id,first.subscriptions[0].id);
  assert.equal(again.subscriptions[0].enabled,true);
@@ -310,6 +313,15 @@ test('metadata write failure restores secret and does not lose existing subscrip
  assert.equal((await f.service.view()).subscriptions[0].name,'A');
  await assert.rejects(f.service.subscriptionRemove({id:a.id}));
  assert.equal(f.disk.get(`secret/credentials/${a.id}.json`),old);
+});
+// #46：删订阅要连订阅地址一起删；以前写空串，每删一条留一个 0 字节残片。
+test('删除订阅连订阅地址一起删，不留残片',async()=>{
+ const f=fixture();const a=await add(f);
+ assert.ok(f.disk.has(`secret/credentials/${a.id}.json`));
+ await f.service.subscriptionRemove({id:a.id});
+ assert.equal(f.disk.has(`secret/credentials/${a.id}.json`),false);
+ assert.equal(f.disk.has(`secret/credentials/${a.id}.yaml`),false);
+ assert.equal((await f.service.view()).subscriptions.length,0);
 });
 test('invalid URLs/ports are rejected; unsynced subscriptions block startup; interrupted jobs recover',async()=>{
  const f=fixture();await f.service.view();
@@ -588,12 +600,15 @@ test('系统代理恢复记录无效只降级为警告，内核照样停干净',
 });
 test('注册表读写失败带代码同样只降级：内核已停止 + 系统代理恢复失败（原因码）',async()=>{
  const f=fixture();await f.service.save(kernel);await f.service.start();
- f.runtime.proxy.restore=async()=>{const error=Error('恢复系统代理失败');error.code='PROXY_REGISTRY_WRITE_FAILED';throw error};
+ // #44：适配层把被拒的键名与 Win32 码挂在错误上，停止结果里要能看到。
+ f.runtime.proxy.restore=async()=>{const error=Error('恢复系统代理失败');error.code='PROXY_REGISTRY_WRITE_FAILED';error.key='ProxyServer';error.win32=5;throw error};
  const state=await f.service.stop();
  assert.equal(f.stats().up,false);
  assert.equal(state.stop.proxy,'failed');
  assert.equal(state.stop.code,'PROXY_REGISTRY_WRITE_FAILED');
  assert.match(state.error,/PROXY_REGISTRY_WRITE_FAILED/);
+ assert.match(state.error,/写入 ProxyServer 失败/);
+ assert.match(state.error,/Win32 5/);
 });
 // 现象 D：换节点后 IP 信息仍是旧节点的出口。
 test('换节点后服务端清空出口 IP 缓存，不再返回旧节点出口',async()=>{

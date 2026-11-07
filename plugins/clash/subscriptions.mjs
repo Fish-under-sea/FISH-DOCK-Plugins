@@ -29,6 +29,16 @@ export function subscriptionPath(root,id) {
   if(!/^sub-[a-f0-9-]{36}$/.test(id))throw Error('订阅 ID 无效');
   return join(root,'credentials',`${id}.yaml`);
 }
+// 宿主的 storage 没有删除接口，删除订阅时只能由插件自己删文件（#46）：以前把
+// credentials/<id>.json 写成空串，每删一条就留一个 0 字节残片。文件名白名单与
+// subscriptionPath 同一口径，路径固定在 credentials 下。
+export function credentialPath(root,name) {
+  if(!/^(?:sub-[a-f0-9-]{36}|subscription)\.(?:json|yaml)$/.test(name))throw Error('凭据文件名无效');
+  return join(root,'credentials',name);
+}
+export async function removeCredential(root,name) {
+  await unlink(credentialPath(root,name)).catch(error=>{if(error.code!=='ENOENT')throw error});
+}
 export function fileProvider(id,path) {
   return {type:'file',path,override:{'additional-prefix':subscriptionPrefix(id)},
     'health-check':{enable:false}};
@@ -206,6 +216,9 @@ export function createSubscriptionRuntime(context,{fetch:fetcher=globalThis.fetc
   }
   async function removeSubscription(id) {
     await unlink(subscriptionPath(root,id)).catch(error=>{if(error.code!=='ENOENT')throw error});
+    // 订阅地址（同一条记录的另一半）一起删：留着就是一个谁也读不到的残片。
+    await removeCredential(root,`${id}.json`);
   }
-  return {updateSubscription,migrateSubscription,removeSubscription};
+  return {updateSubscription,migrateSubscription,removeSubscription,
+    removeCredential:name=>removeCredential(root,name)};
 }

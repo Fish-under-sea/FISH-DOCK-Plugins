@@ -337,7 +337,9 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
             const hasCache=await runtime.migrateSubscription?.(id)??false;
             // Commit the stable identity before clearing legacy credentials; retries cannot duplicate it.
             await persist([{id,name:'原有订阅',enabled:true,status:hasCache?'ready':'pending',lastAttempt:null,lastSuccess:null,nodeCount:0,hasCache,error:''}]);
-            await context.secrets.write('credentials','subscription.json','');
+            // 迁移完成后旧单订阅凭据直接删掉，不写空串留残片（#46）。删不掉
+            // 只是留一份没人读的旧文件，不影响迁移结果。
+            try{await runtime.removeCredential?.('subscription.json')}catch{}
             legacyPending=false;
           } else {
             legacyPending=true;
@@ -538,11 +540,15 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function subscriptionRemove({id}) {
     return exclusive(async()=>{
       await config();editable();rowFor(id);
-      const previous=await context.secrets.read('credentials',`${id}.json`);
-      await context.secrets.write('credentials',`${id}.json`,'');
-      try{await persist(subscriptions.filter(s=>s.id!==id))}
-      catch(error){await context.secrets.write('credentials',`${id}.json`,previous||'');throw error}
-      await runtime.removeSubscription?.(id);return view({controller:false});
+      // 宿主的 storage 没有删除接口：订阅地址由 runtime 连缓存一起删掉（#46），
+      // 不再写空串——那会在 credentials/ 里每删一条留一个残片。持久化失败时
+      // 什么都没删，原样保留。
+      await persist(subscriptions.filter(s=>s.id!==id));
+      // 列表已经从盘上删掉了：文件清理失败只记日志，不让用户看到「删除失败」
+      // 之后重试又找不到这条记录。
+      try{await runtime.removeSubscription?.(id)}
+      catch(error){console.error('[clash] 订阅文件清理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
+      return view({controller:false});
     });
   }
   async function updateOne(id,signal) {
@@ -703,7 +709,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         proxyError=error;result.proxy='failed';result.ok=false;
         if(error?.code){
           result.code=error.code;
-          result.message=`内核已停止，系统代理恢复失败（${error.code}）`;
+          // #44：把被拒的键名与 Win32 码带进结果，页面与日志不用再猜是哪一步。
+          const why=[typeof error?.key==='string'&&error.key?`写入 ${error.key} 失败`:'',
+            Number.isInteger(error?.win32)&&error.win32>0?`Win32 ${error.win32}`:''].filter(Boolean).join('，');
+          result.message=`内核已停止，系统代理恢复失败（${error.code}${why?`：${why}`:''}）`;
         }
       }
       if(kernelError)throw coded(result.code,result.message,{result});

@@ -56,8 +56,7 @@ test('subscription-userinfo 头被解析为聚合数字，异常值与缺失头�
  const expireLess=parseUserInfo('upload=1; download=2; total=10');
  assert.deepEqual(expireLess,{upload:1,download:2,total:10,used:3,expire:null});
 });
-test('cache transaction retains bytes on validation, apply, and metadata failures and cleans candidate files',async t=>{
- const root=await temporary(t);let bad=false;
+test('cache transaction retains bytes on validation, apply, and metadata failures and cleans candidate files',async t=>{ const root=await temporary(t);let bad=false;
  const runtime=createSubscriptionRuntime({dataDirectory:root},{fetch:async()=>new Response(yaml),
   validate:async()=>{if(bad)throw Error('bad YAML');return {nodeCount:1}}});
  await runtime.updateSubscription({id,url:'https://example.test/sub',kernel:'unused'});
@@ -98,4 +97,16 @@ test('native mihomo validates real YAML and prefixed nodes, rejects HTML and ret
  payload=yaml;
  await assert.rejects(runtime.updateSubscription({...c,kernel:join(root,'missing.exe')}),{code:'KERNEL'});
  assert.deepEqual(await readdir(join(root,'tmp')),[]);
+});
+
+// #46：删订阅要删两份文件（缓存 YAML 与订阅地址 JSON），不再写空串留残片。
+test('删除订阅删掉缓存与地址两份文件',async t=>{
+ const root=await temporary(t);
+ await mkdir(join(root,'credentials'),{recursive:true});
+ await writeFile(subscriptionPath(root,id),'yaml');
+ await writeFile(join(root,'credentials',`${id}.json`),'https://example.test/sub?token=PRIVATE');
+ const runtime=createSubscriptionRuntime({dataDirectory:root});
+ await runtime.removeSubscription(id);
+ await assert.rejects(readFile(subscriptionPath(root,id)),{code:'ENOENT'});
+ await assert.rejects(readFile(join(root,'credentials',`${id}.json`)),{code:'ENOENT'});
 });

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createProxyLease, createRuntime, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet, killProcess} from './runtime.mjs';
+import {createProxyLease, createRuntime, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet, killProcess, pruneTmp} from './runtime.mjs';
 import {createServer} from 'node:http';
-import {mkdtemp,writeFile,readFile,readdir,rm,mkdir} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,readdir,rm,mkdir,utimes} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -356,4 +356,70 @@ test('registry 指着别人的代理时 restore 什么都不做',async()=>{
  const result=await lease.restore(7890);
  assert.equal(result.act,'nothing');
  assert.equal(Number(live.ProxyEnable),1,'别人的代理不许动');
+});
+
+// #44：恢复失败不能只说「请检查权限」。被拒的键名与 Win32 码要跟着错误走，
+// 而且不能把代理地址带进日志。
+test('#44 恢复系统代理失败带被拒键名与 Win32 码',async()=>{
+ const saved=JSON.stringify({schema:1,previous:{ProxyEnable:0,ProxyServer:'',ProxyOverride:''},owned:{ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:''}});
+ const adapter={read:async()=>({ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:''}),
+  write:async()=>{const error=Error('拒绝访问');error.key='ProxyServer';error.win32=5;throw error}};
+ const lease=createProxyLease({storage:{read:async()=>saved,write:async()=>{}},adapter});
+ const error=await lease.recoverStale().catch(error=>error);
+ assert.equal(error.code,'PROXY_REGISTRY_WRITE_FAILED');
+ assert.equal(error.key,'ProxyServer');
+ assert.equal(error.win32,5);
+ assert.match(error.message,/写入 ProxyServer 失败/);
+ assert.match(error.message,/Win32 5/);
+ assert.equal(error.message.includes('127.0.0.1'),false,'错误文案不带代理地址');
+});
+
+// #44：启动自愈失败只降级 + 记日志，不抛给启动路径（内核照常起）。
+test('#44 自愈失败只记日志并降级，不拦住启动',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'fish-clash-selfheal-'));
+ const runtime=createRuntime({dataDirectory:root,storage:{read:async()=>null,write:async()=>{}},secrets:{read:async()=>'',write:async()=>{}}});
+ runtime.proxy.recoverStale=async()=>{const error=Error('恢复系统代理失败');error.code='PROXY_REGISTRY_WRITE_FAILED';error.key='ProxyServer';error.win32=5;throw error};
+ const logged=[];const original=console.error;console.error=(...args)=>logged.push(args.join(' '));
+ let result;
+ try{result=await runtime.recoverStaleOnce()}finally{console.error=original}
+ assert.equal(result.act,'failed');
+ const text=logged.join('\n');
+ assert.match(text,/PROXY_REGISTRY_WRITE_FAILED/);
+ assert.match(text,/ProxyServer/);
+ assert.match(text,/Win32 5/);
+});
+
+// #46：tmp 里的 import-* 工作目录与写了一半的候选配置，启动时清掉超过宽限期的。
+test('pruneTmp 清掉陈旧的导入目录与候选配置，留下正在用的',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'fish-clash-tmp-'));
+ const tmp=join(root,'tmp');await mkdir(tmp,{recursive:true});
+ const staleImport=join(tmp,'import-old'),candidate=join(tmp,'mihomo-runtime.next.json'),live=join(tmp,'mihomo-runtime.json');
+ await mkdir(staleImport);await writeFile(join(staleImport,'provider.yaml'),'x');
+ await writeFile(candidate,'{}');await writeFile(live,'{}');
+ const old=new Date(Date.now()-60*60*1000);
+ for(const entry of [staleImport,candidate])await utimes(entry,old,old);
+ await pruneTmp(root);
+ await assert.rejects(readFile(join(staleImport,'provider.yaml')),{code:'ENOENT'});
+ await assert.rejects(readFile(candidate),{code:'ENOENT'});
+ await readFile(live);
+});
+
+// #44：看门狗还原失败时把键名与 Win32 码写进租约旁的日志，并保留租约给下次重试。
+test('看门狗还原失败留下键名/错误码日志，租约保留',async()=>{
+ const {recover}=await import('./watchdog.mjs');
+ const dir=await mkdtemp(join(process.env.FISH_TEST_TMP||tmpdir(),'clash-watchdog-log-'));
+ const lease=join(dir,'system-proxy.json');
+ await writeFile(lease,JSON.stringify({schema:1,
+  previous:{ProxyEnable:0,ProxyServer:'',ProxyOverride:''},
+  owned:{ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:''},owner:{pid:4242,at:1}}));
+ const result=await recover({leasePath:lease,parentPid:4242,mihomoPid:0,
+  read:async()=>({ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:''}),
+  write:async()=>{const error=Error('拒绝访问');error.key='ProxyServer';error.win32=5;throw error}});
+ assert.equal(result.act,'write-failed');
+ assert.equal(result.key,'ProxyServer');
+ assert.equal(result.win32,5);
+ const log=await readFile(`${lease}.log`,'utf8');
+ assert.match(log,/ProxyServer/);
+ assert.match(log,/Win32 5/);
+ assert.ok((await readFile(lease,'utf8')).length>0,'租约要留着下次再试');
 });
