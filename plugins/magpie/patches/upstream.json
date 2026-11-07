@@ -10,10 +10,10 @@
   "product": "magpie fish",
   "result": "clean",
   "counts": {
-    "files": 143,
-    "hunks": 237,
-    "appliedFiles": 143,
-    "appliedHunks": 237,
+    "files": 149,
+    "hunks": 248,
+    "appliedFiles": 149,
+    "appliedHunks": 248,
     "conflictFiles": 0,
     "conflictHunks": 0
   },
@@ -24,5 +24,6 @@
   "note4": "fish.25（#42，基线 v0.1.3140）：模型分类改成「官方判定 + 用户自定义标注」——ModelKinds 从 image/video 扩到 speech/transcription/embedding/rerank，插件 provider 也可标（MarksServesKinds）；plugin.Model 增 kind 字段，pluginCatalog 优先按它落 Draws/Films/Serves；servingOf 收进插件声明的另一类模型（PluginServing），设置页语音/向量行与编辑器分区统一走 ServedAs；编辑器补「其他模型」栏（PluginUnkinded）与六类 Makes… 菜单；prefsKeep 补 speechModel / embedModel。",
   "note5": "fish.26：把 fish.25 重放到上游 v0.1.3207（落后 67 个 tag）。两处冲突手工消化——providers.go 的 providerJSON 初始化行上游改了相邻字段，补上 MarksServesKinds；core_budget_test.go 上游预算未动而补丁的数值 hunk 对不上，按新基线实测重设 app.js 1,317,737 / 核心脚本 1,542,234。上游自己已把「按 list 顺序列 unticked」内联进各处，fish.24 引入的 unticked 函数随之不再需要，本次不再带。",
   "note6": "fish.27（#41 / #45，基线 v0.1.3240）：追平 33 个 tag，两处冲突消化（providers.go 的 MarksServesKinds 初始化字段、gateway-routing.md 的 #42 段落按上游新文重写）。provider sticky：#41 的 A 由上游 keepUnloaded 提供（本次只验证），B 加清单字段 magpie.keepListedUntilRemoved（默认保留、声明 false 可关，KeepListedUntilRemoved），C 加专用恢复钩子 neartoken:relist（provider.RestorePluginProviders：把 setAside 的记录放回并触发重列，takeBackLeft 改为返回放回数）。自启动适配 #45：startWithBackoff 对 start 抛错同样退避重试（magpie），clash 的 autostartKernel 把准备段纳入同一轮重试并每轮只读一次 view，magpie 自启判断复用同一份 view 快照。另含 #41 的 P/Q（安装失败可见与重试 magpie:plugin-retry、首装逐包进度 preinstallProgress 与 /api/preinstall、页面首装弹窗 + 总进度 + 本页锁定 + 三出口）与设置页改造（视频模型行、四类媒体各自响应超时、素材 MCP generate_image/generate_video/generate_audio）。",
-  "note7": "fish.28：插件页 CSP 放开 connect-src 到自有目录（pagePolicy 里 connect-src none 改为 connect-src own）。起因是 @fish-under-sea/magpie-purge 的页面快照把 23 份技能正文内联进 page/catalog.js，被 Defender 判为 Trojan:Script/Wacatac.C!ml；purge 侧已把快照改成 catalog.json 并用 fetch 读取。安全性：页面本可 script-src 加载并执行自有目录的任意文件，放开 fetch 同目录不增加暴露面；外网仍不可达，form-action 与 default-src 仍为 none。"
+  "note7": "fish.28：插件页 CSP 放开 connect-src 到自有目录（pagePolicy 里 connect-src none 改为 connect-src own）。起因是 @fish-under-sea/magpie-purge 的页面快照把 23 份技能正文内联进 page/catalog.js，被 Defender 判为 Trojan:Script/Wacatac.C!ml；purge 侧已把快照改成 catalog.json 并用 fetch 读取。安全性：页面本可 script-src 加载并执行自有目录的任意文件，放开 fetch 同目录不增加暴露面；外网仍不可达，form-action 与 default-src 仍为 none。",
+  "note8": "fish.28 续（#46 / #44，未出包）：usage.jsonl 到 128 MB 滚到 usage.jsonl.1（先删旧 .1，Windows 才能 rename），花销上限跨轮转仍读得回来（readSpent 在窗口早于实时日志第一条时补读 .1），索引按文件身份自动重建；masking 保留期不再删当天文件、当天也不占总量，routing/masking 在 magpie web 启动时各扫一遍（gateway.PruneHistory 在 goroutine 里，gzips a day）；插件侧回收旧名 exe（magpie.exe / .exe.new / .before-*.exe，一天宽限）、TEMP 残片（tmp/magpie 等，一天宽限）与 gateway-error.log 轮转先删 .1；clash 回收 tmp/import-* 与写了一半的候选配置，删订阅连 credentials 两份文件一起删（不再写空串）。#44：clash 代理恢复的 PowerShell 失败应答带被拒键名与 Win32 码（InternetSetOption 刷新失败单独报），自愈/停止/看门狗三处日志都带出来，看门狗失败写 <租约>.log（64 KB 封顶）并保留租约给下次重试。"
 }

@@ -1,4 +1,4 @@
-diff --git magpie-0.1.3240/build/windows/fish-winres.json magpie-0.1.3240/build/windows/fish-winres.json
+diff --git a/build/windows/fish-winres.json b/build/windows/fish-winres.json
 new file mode 100644
 index 0000000..2696948
 --- /dev/null
@@ -83,31 +83,6 @@ index d88e0ba..0c0b70f 100644
  `videoBase` (its Chat base, else its Responses base) `+ /videos`, with
  the agent's User-Agent (magpie's when set `magpieUserAgent` or the agent sent none) and no caller headers. Its ids end with the key's
  fingerprint (`customVideoID`, `markedKey`), so a poll and its download go
-diff --git magpie-0.1.3240/docs/subsystems/gateway-routing.md.rej magpie-0.1.3240/docs/subsystems/gateway-routing.md.rej
-new file mode 100644
-index 0000000..b514994
---- /dev/null
-+++ b/docs/subsystems/gateway-routing.md.rej
-@@ -0,0 +1,19 @@
-+diff a/docs/subsystems/gateway-routing.md b/docs/subsystems/gateway-routing.md	(rejected hunks)
-+@@ -811,7 +811,16 @@ models it says give video, through its fetch on the account that started
-+ each (`keyMark`, `markedKey`; see [provider plugins](provider-plugins.md)). A model marked an image model is drawn
-+ with (`Drawers`) and leaves the video makers, and one marked a video model
-+ leaves the drawers; only a provider set up with a base URL can be marked
-+-(`MarksKinds`). Start, poll and content go to
-++(`MarksKinds`). #42 takes the same menu to the four APIs a model is served
-++on: `speech` (TTS), `transcription`, `embedding` and `rerank` are
-++`ModelKinds` values too, a plugin's provider can be marked as well
-++(`MarksServesKinds`), and the word the user gave is what `ServedAs` reads
-++first — before the model's own list — in the speech and embedding rows
-++(`Speakers`, `Embedders`) and in the editor's sections. A plugin's models
-++are in no fetched list, so `servingOf` takes them from `PluginServing`,
-++and one a plugin says gives something other than chat without saying which
-++API (`PluginUnkinded`) is listed in the editor as *Other models* for the
-++user to place. Start, poll and content go to
-+ `videoBase` (its Chat base, else its Responses base) `+ /videos`, with
-+ magpie's User-Agent (or the agent's, `passUserAgent`) and no caller headers. Its ids end with the key's
-+ fingerprint (`customVideoID`, `markedKey`), so a poll and its download go
 diff --git a/docs/subsystems/gui-shell.md b/docs/subsystems/gui-shell.md
 index 1e0fec0..df5b10f 100644
 --- a/docs/subsystems/gui-shell.md
@@ -129,7 +104,7 @@ index 1e0fec0..df5b10f 100644
  ### Shared UI rules
  
  - Windows desktop windows and tray panels keep the modal's dimming veil without backdrop blur or saturation: full-window filtering can stall WebView2 while a provider test or sign-in dialog is open. The existing `win` marker from [`layout.js`](../../internal/gui/assets/layout.js) scopes the rule in [`app.css`](../../internal/gui/assets/app.css) to the desktop app; browser pages and other platforms keep their existing effect. `modal-backdrop.test.cjs` checks the computed filter and veil in both engines and modes.
-diff --git magpie-0.1.3240/docs/subsystems/neartoken.md magpie-0.1.3240/docs/subsystems/neartoken.md
+diff --git a/docs/subsystems/neartoken.md b/docs/subsystems/neartoken.md
 new file mode 100644
 index 0000000..49c04cf
 --- /dev/null
@@ -200,7 +175,7 @@ index 0000000..49c04cf
 +```
 +
 +该包通过 `testenv` 隔离账户目录并使用本地 HTTP 替身；这些结果不代替真实账户、兑换额度或 Dock 内嵌浏览器验收。
-diff --git magpie-0.1.3240/internal/catalog/chat_test.go magpie-0.1.3240/internal/catalog/chat_test.go
+diff --git a/internal/catalog/chat_test.go b/internal/catalog/chat_test.go
 new file mode 100644
 index 0000000..92542b2
 --- /dev/null
@@ -228,6 +203,42 @@ index 0000000..92542b2
 +		t.Fatalf("Chat = %+v, want only gpt-6", got)
 +	}
 +}
+diff --git a/internal/cli/housekeeping.go b/internal/cli/housekeeping.go
+new file mode 100644
+index 0000000..09cda6e
+--- /dev/null
++++ b/internal/cli/housekeeping.go
+@@ -0,0 +1,16 @@
++package cli
++
++import (
++	"github.com/yetone/magpie/internal/gateway"
++	"github.com/yetone/magpie/internal/maskrec"
++)
++
++// housekeeping drops what the days on disk keep past their limits, once at
++// start (#46). Each package prunes behind a write, which is enough for a
++// magpie in use; a history left by a long run of an older magpie is only
++// ever cleaned here. Neither may hold up the start: the masking record's
++// days are a few files, the routing history's gzips a busy day whole.
++func housekeeping() {
++	maskrec.Prune()
++	go gateway.PruneHistory()
++}
+diff --git a/internal/cli/web_cli.go b/internal/cli/web_cli.go
+index 3bfe356..bc59aba 100644
+--- a/internal/cli/web_cli.go
++++ b/internal/cli/web_cli.go
+@@ -51,6 +51,9 @@ func webCmd(args []string) error {
+ 		_, port, _ := net.SplitHostPort(webAddr)
+ 		addr = "0.0.0.0:" + port
+ 	}
++	// the plugin and every unattended computer run this command: the one
++	// place a start sweeps what the logs keep past their limits (#46)
++	housekeeping()
+ 	// the service serves the page already: its own, beside the gateway
+ 	// it serves, is the one to open
+ 	if a, k := daemon.Web(); a != "" && gateway.ServedBy().Running {
 diff --git a/internal/gateway/embeddings.go b/internal/gateway/embeddings.go
 index 0d51708..36bceec 100644
 --- a/internal/gateway/embeddings.go
@@ -363,6 +374,75 @@ index 1c7eb03..7079848 100644
  	if r.Header.Get(provider.DecidersHeader) != "" {
  		// the decision models its own pickers offer: of a provider with
  		// picks (OpenRouter's twenty-odd), the picked ones, so another
+diff --git a/internal/gateway/history.go b/internal/gateway/history.go
+index 0facfec..6593832 100644
+--- a/internal/gateway/history.go
++++ b/internal/gateway/history.go
+@@ -13,6 +13,7 @@ import (
+ 	"compress/gzip"
+ 	"encoding/json"
+ 	"io"
++	"log"
+ 	"maps"
+ 	"os"
+ 	"path/filepath"
+@@ -38,6 +39,22 @@ const (
+ // HistoryDir is where the days are kept: ~/.config/magpie/routing.
+ func HistoryDir() string { return filepath.Join(filepath.Dir(provider.Path()), "routing") }
+ 
++// PruneHistory keeps what the days on disk take within their limits, at
++// start (#46): the prune behind a route only runs once a route is done, so
++// a history left by a long run of an older magpie would stay for good.
++// gzipFile reads a day whole, so this does not run on the path of a start:
++// call it from a goroutine. What it dropped is logged, to trace a file gone.
++func PruneHistory() {
++	history.mu.Lock()
++	defer history.mu.Unlock()
++	dir := HistoryDir()
++	before := len(historyFiles(dir))
++	pruneHistory(dir, historyClock())
++	if after := len(historyFiles(dir)); after < before {
++		log.Printf("routing: dropped %d day(s) past the limits, %d kept", before-after, after)
++	}
++}
++
+ // keepRoutes is whether done routes are written to disk. Off in the
+ // package's tests: a write still going when a test ends would put the
+ // routing directory back into its temporary HOME as that is removed.
+diff --git a/internal/gateway/history_test.go b/internal/gateway/history_test.go
+index 18d4adb..8bfed35 100644
+--- a/internal/gateway/history_test.go
++++ b/internal/gateway/history_test.go
+@@ -87,6 +87,29 @@ func TestHistoryKeepsDaysAndDropsOld(t *testing.T) {
+ 	}
+ }
+ 
++// PruneHistory is the start's sweep (#46): a day left far past the days
++// kept by an older magpie goes, and yesterday is gzipped, without a route
++// being written first.
++func TestPruneHistoryAtStart(t *testing.T) {
++	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
++	now := historyNoon(t)
++	dir := HistoryDir()
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	old := filepath.Join(dir, now.AddDate(0, 0, -historyDays-40).Format(dayForm)+".jsonl.gz")
++	os.WriteFile(old, []byte("x"), 0o600)
++	yday := filepath.Join(dir, now.AddDate(0, 0, -1).Format(dayForm)+".jsonl")
++	os.WriteFile(yday, []byte(`{"id":1,"model":"a"}`+"\n"), 0o600)
++	PruneHistory()
++	if _, err := os.Stat(old); !os.IsNotExist(err) {
++		t.Fatal("a day older than the days kept is still there")
++	}
++	if _, err := os.Stat(yday + ".gz"); err != nil {
++		t.Fatal("yesterday isn't gzipped at start:", err)
++	}
++}
++
+ // Today's plain file, however big, takes no room from the days before it:
+ // it is kept whatever its size, and is a fraction of it once gzipped. A busy
+ // day counted plain dropped every day before it, and the Context tab
 diff --git a/internal/gateway/image_mcp.go b/internal/gateway/image_mcp.go
 index 2faedef..b0957fa 100644
 --- a/internal/gateway/image_mcp.go
@@ -643,7 +723,7 @@ index 18fe9e2..fe8b909 100644
  		t.Fatalf("tools: %s", w.Body.String())
  	}
  	m := readImageReply(t, imagePost(h, "127.0.0.1:5000", imageToolCall(GenerateImageTool, map[string]any{"prompt": "a magpie", "size": "1024x1024", "complexity": "low"})))
-diff --git magpie-0.1.3240/internal/gateway/materials_mcp_test.go magpie-0.1.3240/internal/gateway/materials_mcp_test.go
+diff --git a/internal/gateway/materials_mcp_test.go b/internal/gateway/materials_mcp_test.go
 new file mode 100644
 index 0000000..6958d6c
 --- /dev/null
@@ -748,7 +828,7 @@ index bdaa428..60bf70e 100644
  		case "magpie-tools":
  			ts, _ := servedTools(ctx)
  			for _, t := range ts {
-diff --git magpie-0.1.3240/internal/gateway/speakers_kinds_test.go magpie-0.1.3240/internal/gateway/speakers_kinds_test.go
+diff --git a/internal/gateway/speakers_kinds_test.go b/internal/gateway/speakers_kinds_test.go
 new file mode 100644
 index 0000000..23df9d6
 --- /dev/null
@@ -1908,7 +1988,7 @@ index ab64404..cc7a8ea 100644
      const val = el("div", "val");
      const b = busy.get(pkg) || busy.get(e.spec);
      // npm's newer version, or a git one's repository at a newer commit
-diff --git magpie-0.1.3240/internal/gui/brand_call_test.go magpie-0.1.3240/internal/gui/brand_call_test.go
+diff --git a/internal/gui/brand_call_test.go b/internal/gui/brand_call_test.go
 new file mode 100644
 index 0000000..b33b922
 --- /dev/null
@@ -2003,7 +2083,7 @@ index 0000000..b33b922
 +		t.Fatal("不认识的名字被放过了")
 +	}
 +}
-diff --git magpie-0.1.3240/internal/gui/brand_installed_test.go magpie-0.1.3240/internal/gui/brand_installed_test.go
+diff --git a/internal/gui/brand_installed_test.go b/internal/gui/brand_installed_test.go
 new file mode 100644
 index 0000000..ae1e8e1
 --- /dev/null
@@ -2063,7 +2143,7 @@ index 0000000..ae1e8e1
 +		t.Error("不在素材里的包也被挂上了图标")
 +	}
 +}
-diff --git magpie-0.1.3240/internal/gui/checkin_call_targets_test.go magpie-0.1.3240/internal/gui/checkin_call_targets_test.go
+diff --git a/internal/gui/checkin_call_targets_test.go b/internal/gui/checkin_call_targets_test.go
 new file mode 100644
 index 0000000..7b5a089
 --- /dev/null
@@ -2134,7 +2214,7 @@ index 0000000..7b5a089
 +		t.Errorf("checkin:state = %T, want provider.CheckinViewState", got)
 +	}
 +}
-diff --git magpie-0.1.3240/internal/gui/checkin_state_read_test.go magpie-0.1.3240/internal/gui/checkin_state_read_test.go
+diff --git a/internal/gui/checkin_state_read_test.go b/internal/gui/checkin_state_read_test.go
 new file mode 100644
 index 0000000..2624f1a
 --- /dev/null
@@ -2200,7 +2280,7 @@ index b29ce28..6cd5ccf 100644
  )
  
  func TestCoreScriptBudget(t *testing.T) {
-diff --git magpie-0.1.3240/internal/gui/embedded_open_test.go magpie-0.1.3240/internal/gui/embedded_open_test.go
+diff --git a/internal/gui/embedded_open_test.go b/internal/gui/embedded_open_test.go
 new file mode 100644
 index 0000000..b839f29
 --- /dev/null
@@ -2285,7 +2365,7 @@ index 0000000..b839f29
 +		t.Fatalf("ordinary web mode changed: status=%d calls=%d", res.Code, calls)
 +	}
 +}
-diff --git magpie-0.1.3240/internal/gui/openext.go magpie-0.1.3240/internal/gui/openext.go
+diff --git a/internal/gui/openext.go b/internal/gui/openext.go
 new file mode 100644
 index 0000000..1faf11e
 --- /dev/null
@@ -2391,7 +2471,7 @@ index 93c7ffa..2a5c761 100644
 +  document.addEventListener("click", followLink, true);
 +  document.addEventListener("auxclick", followLink, true);
  })();
-diff --git magpie-0.1.3240/internal/gui/plugin_icon_local.go magpie-0.1.3240/internal/gui/plugin_icon_local.go
+diff --git a/internal/gui/plugin_icon_local.go b/internal/gui/plugin_icon_local.go
 new file mode 100644
 index 0000000..54bcc15
 --- /dev/null
@@ -2490,7 +2570,7 @@ index 0000000..54bcc15
 +	}
 +	return said
 +}
-diff --git magpie-0.1.3240/internal/gui/plugin_icon_local_test.go magpie-0.1.3240/internal/gui/plugin_icon_local_test.go
+diff --git a/internal/gui/plugin_icon_local_test.go b/internal/gui/plugin_icon_local_test.go
 new file mode 100644
 index 0000000..1e005f5
 --- /dev/null
@@ -2591,7 +2671,7 @@ index 0000000..1e005f5
 +		t.Errorf("文件不存在却拿到了 %q", ic)
 +	}
 +}
-diff --git magpie-0.1.3240/internal/gui/plugincall_test.go magpie-0.1.3240/internal/gui/plugincall_test.go
+diff --git a/internal/gui/plugincall_test.go b/internal/gui/plugincall_test.go
 new file mode 100644
 index 0000000..222fa27
 --- /dev/null
@@ -2735,7 +2815,7 @@ index 0000000..222fa27
 +		t.Fatalf("error = %v, want NO_ACCOUNT", err)
 +	}
 +}
-diff --git magpie-0.1.3240/internal/gui/plugincallswindow.go magpie-0.1.3240/internal/gui/plugincallswindow.go
+diff --git a/internal/gui/plugincallswindow.go b/internal/gui/plugincallswindow.go
 new file mode 100644
 index 0000000..696aab3
 --- /dev/null
@@ -2957,7 +3037,7 @@ index d258769..ce57d53 100644
  					if !strings.Contains(policy, directive) {
  						t.Errorf("%s: missing %s", file, directive)
  					}
-diff --git magpie-0.1.3240/internal/gui/pluginpagecall.go magpie-0.1.3240/internal/gui/pluginpagecall.go
+diff --git a/internal/gui/pluginpagecall.go b/internal/gui/pluginpagecall.go
 new file mode 100644
 index 0000000..752cf65
 --- /dev/null
@@ -3587,7 +3667,7 @@ index d44fedb..71272be 100644
  // servesBeside is what a plugin's "Serves" chip names besides the
  // built-ins moved onto it: the providers it registers, each once, but for
  // the moved ones (a moved built-in's id is the plugin's provider id, and
-diff --git magpie-0.1.3240/internal/gui/preinstall_pending_test.go magpie-0.1.3240/internal/gui/preinstall_pending_test.go
+diff --git a/internal/gui/preinstall_pending_test.go b/internal/gui/preinstall_pending_test.go
 new file mode 100644
 index 0000000..e1edf33
 --- /dev/null
@@ -3895,23 +3975,7 @@ index 8a041f6..cdd2816 100644
  		// and System Settings' Login Items, where Open at login is allowed
  		// again: that one pane, not System Settings' scheme at large
  		if strings.HasPrefix(in.URL, "https://") || strings.HasPrefix(in.URL, "http://") || strings.HasPrefix(in.URL, agent.CindyScheme) || strings.HasPrefix(in.URL, agent.LodyScheme) || strings.HasPrefix(in.URL, agent.AionUiScheme) || in.URL == autostart.LoginItemsURL {
-diff --git magpie-0.1.3240/internal/gui/providers.go.rej magpie-0.1.3240/internal/gui/providers.go.rej
-new file mode 100644
-index 0000000..1ce0b97
---- /dev/null
-+++ b/internal/gui/providers.go.rej
-@@ -0,0 +1,10 @@
-+diff a/internal/gui/providers.go b/internal/gui/providers.go	(rejected hunks)
-+@@ -734,7 +755,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
-+ 	avail := ls.Available
-+ 	out := providerJSON{
-+ 		ID: p.ID, Name: p.Name, Icon: p.Icon, IconFrom: p.IconFrom, Preset: p.Preset, Host: p.Host(),
-+-		Chat: p.Chat, Responses: p.Responses, Anthropic: p.Anthropic, Gemini: p.Gemini, Decide: p.Decide, BaseAPI: p.BaseAPI, ModelTest: p.ModelTest(), TestsAs: p.TestClients(), DecideTest: p.AsksDecideModels(), MarksKinds: p.MarksKinds(),
-++		Chat: p.Chat, Responses: p.Responses, Anthropic: p.Anthropic, Gemini: p.Gemini, Decide: p.Decide, BaseAPI: p.BaseAPI, ModelTest: p.ModelTest(), TestsAs: p.TestClients(), DecideTest: p.AsksDecideModels(), MarksKinds: p.MarksKinds(), MarksServesKinds: p.MarksServesKinds(),
-+ 		Catalog: p.Catalog, Website: p.Website, KeysURL: p.KeysURL,
-+ 		Proxy: p.Proxy, AccountProxies: p.AccountProxies, AccountModels: p.AccountModels, AccountCaps: p.AccountCaps, AccountWindowCaps: p.AccountWindowCaps, AccountNames: p.AccountNames, Headers: p.Headers, ExtraBody: p.ExtraBody, ReplyHeaders: p.ReplyHeaders, PassHeaders: p.PassHeaders, Searches: p.Searches, Cline: p.ClinePinnable(), PinUpstream: p.PinUpstream, Unredacted: p.Unredacted, CountFree: p.CountFree, InsecureTLS: p.InsecureTLS, TakesInsecureTLS: p.TakesInsecureTLS(), HTTP1: p.HTTP1, LimitRestOff: p.LimitRestOff, ImageFilesOff: p.ImageFilesOff, TakesImageFiles: p.TakesImageFiles(), NativeCompaction: p.NativeCompaction, CarriesCompaction: p.CarriesCompaction(), PassUserAgent: p.PassUserAgent, OwnClient: p.OwnClient(), PassErrors: p.PassErrors, TakesPassErrors: p.TakesPassErrors(), AuthHeader: p.AuthHeader, BothAuth: p.BothAuth(), BalanceURL: p.BalanceURL, BalancePath: p.BalancePath, BalanceMethod: p.BalanceMethod, ModelsURL: p.ModelsURL,
-+ 		Ready: p.Ready(), Chosen: p.PicksOf(avail), Agents: make([]providerAgent, 0, len(agents)),
-diff --git magpie-0.1.3240/internal/gui/tests/embedded-open-api.test.cjs magpie-0.1.3240/internal/gui/tests/embedded-open-api.test.cjs
+diff --git a/internal/gui/tests/embedded-open-api.test.cjs b/internal/gui/tests/embedded-open-api.test.cjs
 new file mode 100644
 index 0000000..d062f50
 --- /dev/null
@@ -4030,7 +4094,7 @@ index 0000000..d062f50
 +  assert.equal(r.requests.length, 1);
 +  assert.equal(r.popups.length, 0, 'no second attempt after an ambiguous failure');
 +});
-diff --git magpie-0.1.3240/internal/gui/tests/plugin-external-links.test.cjs magpie-0.1.3240/internal/gui/tests/plugin-external-links.test.cjs
+diff --git a/internal/gui/tests/plugin-external-links.test.cjs b/internal/gui/tests/plugin-external-links.test.cjs
 new file mode 100644
 index 0000000..17c8c1f
 --- /dev/null
@@ -4217,7 +4281,134 @@ index 9300e5d..aa9ecf2 100644
    ].join("; ");
  };
  
-diff --git magpie-0.1.3240/internal/neartoken/catalog.go magpie-0.1.3240/internal/neartoken/catalog.go
+diff --git a/internal/maskrec/maskrec.go b/internal/maskrec/maskrec.go
+index d06ae08..20f7d8c 100644
+--- a/internal/maskrec/maskrec.go
++++ b/internal/maskrec/maskrec.go
+@@ -19,6 +19,7 @@ import (
+ 	"cmp"
+ 	"encoding/json"
+ 	"errors"
++	"log"
+ 	"os"
+ 	"path/filepath"
+ 	"slices"
+@@ -54,6 +55,10 @@ const (
+ // kept as nothing, so a caller need not copy it.
+ const SentMax = sentMax
+ 
++// keepMax is how much the days kept may take in all: keepBytes, a variable
++// for the tests, which write no hundred megabytes.
++var keepMax int64 = keepBytes
++
+ // Value is one value a request had masked, as often as it had it.
+ type Value struct {
+ 	Placeholder string `json:"p"`
+@@ -309,20 +314,29 @@ func files(dir string) []dayFile {
+ }
+ 
+ // prune drops the days older than keepDays, then the oldest until what is
+-// left fits keepBytes.
++// left fits keepBytes. The day being written is kept whatever its size: it
++// is the only one the records just made are in, and dropping it for room
++// would lose them (#46). Its bytes take no room from the days before it, as
++// today's routes take none from the routing history's.
+ func prune(dir string, now time.Time) {
+ 	oldest := now.Local().AddDate(0, 0, -keepDays).Format(dayForm)
++	today := now.Local().Format(dayForm)
+ 	fs := files(dir)
+-	var total int64
+ 	sizes := make([]int64, len(fs))
++	var total int64
+ 	for i, d := range fs {
+ 		if fi, err := os.Stat(d.path); err == nil {
+ 			sizes[i] = fi.Size()
+-			total += sizes[i]
++			if d.day != today {
++				total += sizes[i]
++			}
+ 		}
+ 	}
+ 	for i, d := range fs {
+-		if d.day >= oldest && total <= keepBytes {
++		if d.day == today {
++			continue
++		}
++		if d.day >= oldest && total <= keepMax {
+ 			break
+ 		}
+ 		if os.Remove(d.path) == nil {
+@@ -332,6 +346,21 @@ func prune(dir string, now time.Time) {
+ 	}
+ }
+ 
++// Prune drops what the days on disk keep past their limits, at start
++// (#46): the prune behind a write only runs once something is written, so
++// a history left by a long run of an older magpie would stay for good.
++// What it dropped is logged, so a file that went can be traced.
++func Prune() {
++	now := clock()
++	store.mu.Lock()
++	defer store.mu.Unlock()
++	before := len(files(Dir()))
++	prune(Dir(), now)
++	if after := len(files(Dir())); after < before {
++		log.Printf("maskrec: dropped %d day(s) past the limits, %d kept", before-after, after)
++	}
++}
++
+ // read calls each with the records of path, in the order written; a line
+ // that doesn't parse, one half-written by another magpie, is skipped.
+ func read(path string, each func(Record)) int64 {
+diff --git a/internal/maskrec/maskrec_test.go b/internal/maskrec/maskrec_test.go
+index d36bcb4..2de6d24 100644
+--- a/internal/maskrec/maskrec_test.go
++++ b/internal/maskrec/maskrec_test.go
+@@ -126,6 +126,43 @@ func TestPrune(t *testing.T) {
+ 	}
+ }
+ 
++// Today's file is kept whatever its size, and takes no room from the days
++// before it (#46): it holds the records just made, and dropping it for the
++// bytes kept would lose them, as it would a busy day's routes.
++func TestPruneKeepsToday(t *testing.T) {
++	now := time.Date(2026, 10, 20, 15, 0, 0, 0, time.Local)
++	dir := sandbox(t, now)
++	oldMax := keepMax
++	keepMax = 1
++	t.Cleanup(func() { keepMax = oldMax })
++	os.MkdirAll(dir, 0o700)
++	today := filepath.Join(dir, now.Format(dayForm)+".jsonl")
++	yday := filepath.Join(dir, now.AddDate(0, 0, -1).Format(dayForm)+".jsonl")
++	os.WriteFile(today, []byte("{}\n{}\n"), 0o600)
++	os.WriteFile(yday, []byte("{}\n"), 0o600)
++	prune(dir, now)
++	if _, err := os.Stat(today); err != nil {
++		t.Fatalf("today's records dropped for room: %v", err)
++	}
++	if _, err := os.Stat(yday); !os.IsNotExist(err) {
++		t.Fatalf("past day kept over the bytes kept: %v", err)
++	}
++}
++
++// Prune is the start's sweep (#46): a day left far past the days kept by an
++// older magpie goes before anything is written to it.
++func TestPruneAtStart(t *testing.T) {
++	now := time.Date(2026, 10, 20, 15, 0, 0, 0, time.Local)
++	dir := sandbox(t, now)
++	os.MkdirAll(dir, 0o700)
++	old := filepath.Join(dir, now.AddDate(0, 0, -keepDays-30).Format(dayForm)+".jsonl")
++	os.WriteFile(old, []byte("{}\n"), 0o600)
++	Prune()
++	if _, err := os.Stat(old); !os.IsNotExist(err) {
++		t.Fatalf("old day kept at start: %v", err)
++	}
++}
++
+ // A value sent as written is counted as warned, not as one masked, and a
+ // request held back is counted, read from disk and kept up alike (#1977).
+ func TestSumWarnedAndBlocked(t *testing.T) {
+diff --git a/internal/neartoken/catalog.go b/internal/neartoken/catalog.go
 new file mode 100644
 index 0000000..e5df8c3
 --- /dev/null
@@ -4368,7 +4559,7 @@ index 0000000..e5df8c3
 +	}
 +	return out
 +}
-diff --git magpie-0.1.3240/internal/neartoken/device.go magpie-0.1.3240/internal/neartoken/device.go
+diff --git a/internal/neartoken/device.go b/internal/neartoken/device.go
 new file mode 100644
 index 0000000..8d9c927
 --- /dev/null
@@ -4536,7 +4727,7 @@ index 0000000..8d9c927
 +	}
 +	return nil
 +}
-diff --git magpie-0.1.3240/internal/neartoken/handoff.go magpie-0.1.3240/internal/neartoken/handoff.go
+diff --git a/internal/neartoken/handoff.go b/internal/neartoken/handoff.go
 new file mode 100644
 index 0000000..4a96710
 --- /dev/null
@@ -4747,7 +4938,7 @@ index 0000000..4a96710
 +		m.handOver()
 +	}()
 +}
-diff --git magpie-0.1.3240/internal/neartoken/handoff_test.go magpie-0.1.3240/internal/neartoken/handoff_test.go
+diff --git a/internal/neartoken/handoff_test.go b/internal/neartoken/handoff_test.go
 new file mode 100644
 index 0000000..d15ab78
 --- /dev/null
@@ -4955,7 +5146,7 @@ index 0000000..d15ab78
 +		t.Errorf("revoked = %v, want the old key", site.revoked)
 +	}
 +}
-diff --git magpie-0.1.3240/internal/neartoken/lifecycle_guard_test.go magpie-0.1.3240/internal/neartoken/lifecycle_guard_test.go
+diff --git a/internal/neartoken/lifecycle_guard_test.go b/internal/neartoken/lifecycle_guard_test.go
 new file mode 100644
 index 0000000..d37bbb0
 --- /dev/null
@@ -5123,7 +5314,7 @@ index 0000000..d37bbb0
 +		}
 +	}
 +}
-diff --git magpie-0.1.3240/internal/neartoken/manager.go magpie-0.1.3240/internal/neartoken/manager.go
+diff --git a/internal/neartoken/manager.go b/internal/neartoken/manager.go
 new file mode 100644
 index 0000000..b73db3a
 --- /dev/null
@@ -5699,7 +5890,7 @@ index 0000000..b73db3a
 +func (m *Manager) logf(format string, args ...any) {
 +	log.Printf("neartoken: "+format, args...)
 +}
-diff --git magpie-0.1.3240/internal/neartoken/neartoken_test.go magpie-0.1.3240/internal/neartoken/neartoken_test.go
+diff --git a/internal/neartoken/neartoken_test.go b/internal/neartoken/neartoken_test.go
 new file mode 100644
 index 0000000..270ce9a
 --- /dev/null
@@ -6132,7 +6323,7 @@ index 0000000..270ce9a
 +
 +// 保持 io 被用到（编不过就说明测试夹具改坏了）
 +var _ = io.Discard
-diff --git magpie-0.1.3240/internal/neartoken/prefs.go magpie-0.1.3240/internal/neartoken/prefs.go
+diff --git a/internal/neartoken/prefs.go b/internal/neartoken/prefs.go
 new file mode 100644
 index 0000000..308f8cb
 --- /dev/null
@@ -6440,7 +6631,7 @@ index 0000000..308f8cb
 +	}
 +	_ = os.WriteFile(filepath.Join(dir, pagePrefsName), append(b, '\n'), 0o644)
 +}
-diff --git magpie-0.1.3240/internal/neartoken/prefs_test.go magpie-0.1.3240/internal/neartoken/prefs_test.go
+diff --git a/internal/neartoken/prefs_test.go b/internal/neartoken/prefs_test.go
 new file mode 100644
 index 0000000..f20df1f
 --- /dev/null
@@ -6769,7 +6960,7 @@ index 0000000..f20df1f
 +		t.Fatalf("镜像失败不该让 set 失败：%v", err)
 +	}
 +}
-diff --git magpie-0.1.3240/internal/neartoken/provider.go magpie-0.1.3240/internal/neartoken/provider.go
+diff --git a/internal/neartoken/provider.go b/internal/neartoken/provider.go
 new file mode 100644
 index 0000000..37daaa6
 --- /dev/null
@@ -6881,7 +7072,7 @@ index 0000000..37daaa6
 +	}
 +	return base + "/logo.png"
 +}
-diff --git magpie-0.1.3240/internal/neartoken/referral.go magpie-0.1.3240/internal/neartoken/referral.go
+diff --git a/internal/neartoken/referral.go b/internal/neartoken/referral.go
 new file mode 100644
 index 0000000..c774587
 --- /dev/null
@@ -6942,7 +7133,7 @@ index 0000000..c774587
 +	i := int64(*n)
 +	return &i
 +}
-diff --git magpie-0.1.3240/internal/neartoken/referral_authorization_test.go magpie-0.1.3240/internal/neartoken/referral_authorization_test.go
+diff --git a/internal/neartoken/referral_authorization_test.go b/internal/neartoken/referral_authorization_test.go
 new file mode 100644
 index 0000000..40a2987
 --- /dev/null
@@ -7004,7 +7195,7 @@ index 0000000..40a2987
 +		t.Errorf("old username retained after new authorization: %q", m.snap.Account.Username)
 +	}
 +}
-diff --git magpie-0.1.3240/internal/neartoken/referral_grant_test.go magpie-0.1.3240/internal/neartoken/referral_grant_test.go
+diff --git a/internal/neartoken/referral_grant_test.go b/internal/neartoken/referral_grant_test.go
 new file mode 100644
 index 0000000..79a43a6
 --- /dev/null
@@ -7118,7 +7309,7 @@ index 0000000..79a43a6
 +		}
 +	}
 +}
-diff --git magpie-0.1.3240/internal/neartoken/site.go magpie-0.1.3240/internal/neartoken/site.go
+diff --git a/internal/neartoken/site.go b/internal/neartoken/site.go
 new file mode 100644
 index 0000000..e9e3381
 --- /dev/null
@@ -7319,7 +7510,7 @@ index 0000000..e9e3381
 +	}
 +	return fail(CodeRefused, "%v", err)
 +}
-diff --git magpie-0.1.3240/internal/neartoken/state.go magpie-0.1.3240/internal/neartoken/state.go
+diff --git a/internal/neartoken/state.go b/internal/neartoken/state.go
 new file mode 100644
 index 0000000..09277be
 --- /dev/null
@@ -7432,7 +7623,7 @@ index 0000000..09277be
 +	}
 +	return time.Now()
 +}
-diff --git magpie-0.1.3240/internal/neartoken/status.go magpie-0.1.3240/internal/neartoken/status.go
+diff --git a/internal/neartoken/status.go b/internal/neartoken/status.go
 new file mode 100644
 index 0000000..df4cda2
 --- /dev/null
@@ -7541,7 +7732,7 @@ index 0000000..df4cda2
 +func (c currencyClock) fresh(now time.Time) bool {
 +	return !c.at.IsZero() && now.Sub(c.at) < 10*time.Minute
 +}
-diff --git magpie-0.1.3240/internal/neartoken/topup.go magpie-0.1.3240/internal/neartoken/topup.go
+diff --git a/internal/neartoken/topup.go b/internal/neartoken/topup.go
 new file mode 100644
 index 0000000..63d3d75
 --- /dev/null
@@ -7670,7 +7861,7 @@ index 0000000..63d3d75
 +	}
 +	return &TopupOrder{TradeNo: data.TradeNo, URL: pay}, nil
 +}
-diff --git magpie-0.1.3240/internal/neartoken/usage.go magpie-0.1.3240/internal/neartoken/usage.go
+diff --git a/internal/neartoken/usage.go b/internal/neartoken/usage.go
 new file mode 100644
 index 0000000..3756cc5
 --- /dev/null
@@ -7876,7 +8067,7 @@ index 0000000..3756cc5
 +	}
 +	return fmt.Sprint(span)
 +}
-diff --git magpie-0.1.3240/internal/neartoken/wallet.go magpie-0.1.3240/internal/neartoken/wallet.go
+diff --git a/internal/neartoken/wallet.go b/internal/neartoken/wallet.go
 new file mode 100644
 index 0000000..b26348a
 --- /dev/null
@@ -7973,7 +8164,7 @@ index 0000000..b26348a
 +		Vouchers:    []Voucher{},
 +	}
 +}
-diff --git magpie-0.1.3240/internal/neartoken/wallet_session_test.go magpie-0.1.3240/internal/neartoken/wallet_session_test.go
+diff --git a/internal/neartoken/wallet_session_test.go b/internal/neartoken/wallet_session_test.go
 new file mode 100644
 index 0000000..4d2f860
 --- /dev/null
@@ -8101,7 +8292,7 @@ index 0000000..4d2f860
 +		})
 +	}
 +}
-diff --git magpie-0.1.3240/internal/neartoken/website_fallback.go magpie-0.1.3240/internal/neartoken/website_fallback.go
+diff --git a/internal/neartoken/website_fallback.go b/internal/neartoken/website_fallback.go
 new file mode 100644
 index 0000000..07ae591
 --- /dev/null
@@ -8211,7 +8402,7 @@ index 0000000..07ae591
 +	u.ForceQuery = false
 +	return u.String()
 +}
-diff --git magpie-0.1.3240/internal/neartoken/website_fallback_test.go magpie-0.1.3240/internal/neartoken/website_fallback_test.go
+diff --git a/internal/neartoken/website_fallback_test.go b/internal/neartoken/website_fallback_test.go
 new file mode 100644
 index 0000000..cfe8724
 --- /dev/null
@@ -8432,7 +8623,7 @@ index a7b7b34..c7c440d 100644
 +	}
  	return cmd
  }
-diff --git magpie-0.1.3240/internal/plugin/calls_test.go magpie-0.1.3240/internal/plugin/calls_test.go
+diff --git a/internal/plugin/calls_test.go b/internal/plugin/calls_test.go
 new file mode 100644
 index 0000000..18e5f63
 --- /dev/null
@@ -8553,7 +8744,7 @@ index 0000000..18e5f63
 +	}
 +	return out
 +}
-diff --git magpie-0.1.3240/internal/plugin/install_errors.go magpie-0.1.3240/internal/plugin/install_errors.go
+diff --git a/internal/plugin/install_errors.go b/internal/plugin/install_errors.go
 new file mode 100644
 index 0000000..fd2256c
 --- /dev/null
@@ -8652,7 +8843,7 @@ index 0000000..fd2256c
 +	writeInstallErrors(all)
 +}
 \ No newline at end of file
-diff --git magpie-0.1.3240/internal/plugin/install_errors_test.go magpie-0.1.3240/internal/plugin/install_errors_test.go
+diff --git a/internal/plugin/install_errors_test.go b/internal/plugin/install_errors_test.go
 new file mode 100644
 index 0000000..84cd7b4
 --- /dev/null
@@ -8688,7 +8879,7 @@ index 0000000..84cd7b4
 +		t.Fatalf("after clearing both = %v", InstallErrors())
 +	}
 +}
-diff --git magpie-0.1.3240/internal/plugin/keep_listed_test.go magpie-0.1.3240/internal/plugin/keep_listed_test.go
+diff --git a/internal/plugin/keep_listed_test.go b/internal/plugin/keep_listed_test.go
 new file mode 100644
 index 0000000..8e88ab1
 --- /dev/null
@@ -8769,7 +8960,7 @@ index 0000000..8e88ab1
 +		t.Error("an unreadable package is not kept")
 +	}
 +}
-diff --git magpie-0.1.3240/internal/plugin/neartoken_calls_test.go magpie-0.1.3240/internal/plugin/neartoken_calls_test.go
+diff --git a/internal/plugin/neartoken_calls_test.go b/internal/plugin/neartoken_calls_test.go
 new file mode 100644
 index 0000000..93b6f35
 --- /dev/null
@@ -9139,7 +9330,7 @@ index 1458600..b448290 100644
  	bun, err := Bun(ctx)
  	if err != nil {
  		return err
-diff --git magpie-0.1.3240/internal/plugin/store_legacy_options_test.go magpie-0.1.3240/internal/plugin/store_legacy_options_test.go
+diff --git a/internal/plugin/store_legacy_options_test.go b/internal/plugin/store_legacy_options_test.go
 new file mode 100644
 index 0000000..99bd883
 --- /dev/null
@@ -9193,7 +9384,7 @@ index 0000000..99bd883
 +		t.Fatalf("a second run dropped %v, want nothing", again)
 +	}
 +}
-diff --git magpie-0.1.3240/internal/plugin/t9_model_lifecycle_test.go magpie-0.1.3240/internal/plugin/t9_model_lifecycle_test.go
+diff --git a/internal/plugin/t9_model_lifecycle_test.go b/internal/plugin/t9_model_lifecycle_test.go
 new file mode 100644
 index 0000000..43c7de1
 --- /dev/null
@@ -9536,7 +9727,7 @@ index 3e20ed2..d6dae57 100644
  		if err := ensurePi(ctx, Target(e.Spec)); err != nil {
  			errs = append(errs, fmt.Errorf("%s: %w", e.Spec, err))
  		}
-diff --git magpie-0.1.3240/internal/provider/brand_icon.go magpie-0.1.3240/internal/provider/brand_icon.go
+diff --git a/internal/provider/brand_icon.go b/internal/provider/brand_icon.go
 new file mode 100644
 index 0000000..0e876df
 --- /dev/null
@@ -9737,7 +9928,7 @@ index 0000000..0e876df
 +	defer brandCache.Unlock()
 +	f()
 +}
-diff --git magpie-0.1.3240/internal/provider/brand_icon_prune_test.go magpie-0.1.3240/internal/provider/brand_icon_prune_test.go
+diff --git a/internal/provider/brand_icon_prune_test.go b/internal/provider/brand_icon_prune_test.go
 new file mode 100644
 index 0000000..74e2fb5
 --- /dev/null
@@ -9865,7 +10056,7 @@ index 0000000..74e2fb5
 +		}
 +	}
 +}
-diff --git magpie-0.1.3240/internal/provider/brand_icon_test.go magpie-0.1.3240/internal/provider/brand_icon_test.go
+diff --git a/internal/provider/brand_icon_test.go b/internal/provider/brand_icon_test.go
 new file mode 100644
 index 0000000..1cebbdd
 --- /dev/null
@@ -10030,7 +10221,7 @@ index 0000000..1cebbdd
 +		}
 +	}
 +}
-diff --git magpie-0.1.3240/internal/provider/brandicons/autoclaw-cn.svg magpie-0.1.3240/internal/provider/brandicons/autoclaw-cn.svg
+diff --git a/internal/provider/brandicons/autoclaw-cn.svg b/internal/provider/brandicons/autoclaw-cn.svg
 new file mode 100644
 index 0000000..2d85361
 --- /dev/null
@@ -10250,7 +10441,7 @@ index 0000000..2d85361
 +		</g>
 +	</g>
 +</g></svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/autoclaw.svg magpie-0.1.3240/internal/provider/brandicons/autoclaw.svg
+diff --git a/internal/provider/brandicons/autoclaw.svg b/internal/provider/brandicons/autoclaw.svg
 new file mode 100644
 index 0000000..2d85361
 --- /dev/null
@@ -10470,7 +10661,7 @@ index 0000000..2d85361
 +		</g>
 +	</g>
 +</g></svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/cline.svg magpie-0.1.3240/internal/provider/brandicons/cline.svg
+diff --git a/internal/provider/brandicons/cline.svg b/internal/provider/brandicons/cline.svg
 new file mode 100644
 index 0000000..1f10eb1
 --- /dev/null
@@ -10487,21 +10678,21 @@ index 0000000..1f10eb1
 +<g class="l" fill="#111111" fill-rule="evenodd"><title>Cline</title><path d="M17.035 3.991c2.75 0 4.98 2.24 4.98 5.003v1.667l1.45 2.896a1.01 1.01 0 01-.002.909l-1.448 2.864v1.668c0 2.762-2.23 5.002-4.98 5.002H7.074c-2.751 0-4.98-2.24-4.98-5.002V17.33l-1.48-2.855a1.01 1.01 0 01-.003-.927l1.482-2.887V8.994c0-2.763 2.23-5.003 4.98-5.003h9.962zM8.265 9.6a2.274 2.274 0 00-2.274 2.274v4.042a2.274 2.274 0 004.547 0v-4.042A2.274 2.274 0 008.265 9.6zm7.326 0a2.274 2.274 0 00-2.274 2.274v4.042a2.274 2.274 0 104.548 0v-4.042A2.274 2.274 0 0015.59 9.6z"></path><path d="M12.054 5.558a2.779 2.779 0 100-5.558 2.779 2.779 0 000 5.558z"></path></g>
 +<g class="d" fill="#F2F2F7" fill-rule="evenodd"><title>Cline</title><path d="M17.035 3.991c2.75 0 4.98 2.24 4.98 5.003v1.667l1.45 2.896a1.01 1.01 0 01-.002.909l-1.448 2.864v1.668c0 2.762-2.23 5.002-4.98 5.002H7.074c-2.751 0-4.98-2.24-4.98-5.002V17.33l-1.48-2.855a1.01 1.01 0 01-.003-.927l1.482-2.887V8.994c0-2.763 2.23-5.003 4.98-5.003h9.962zM8.265 9.6a2.274 2.274 0 00-2.274 2.274v4.042a2.274 2.274 0 004.547 0v-4.042A2.274 2.274 0 008.265 9.6zm7.326 0a2.274 2.274 0 00-2.274 2.274v4.042a2.274 2.274 0 104.548 0v-4.042A2.274 2.274 0 0015.59 9.6z"></path><path d="M12.054 5.558a2.779 2.779 0 100-5.558 2.779 2.779 0 000 5.558z"></path></g>
 +</svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/codearts.svg magpie-0.1.3240/internal/provider/brandicons/codearts.svg
+diff --git a/internal/provider/brandicons/codearts.svg b/internal/provider/brandicons/codearts.svg
 new file mode 100644
 index 0000000..d21c4a4
 --- /dev/null
 +++ b/internal/provider/brandicons/codearts.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#CF0A2C"><title>Huawei</title><path d="M3.67 6.14S1.82 7.91 1.72 9.78v.35c.08 1.51 1.22 2.4 1.22 2.4 1.83 1.79 6.26 4.04 7.3 4.55 0 0 .06.03.1-.01l.02-.04v-.04C7.52 10.8 3.67 6.14 3.67 6.14zM9.65 18.6c-.02-.08-.1-.08-.1-.08l-7.38.26c.8 1.43 2.15 2.53 3.56 2.2.96-.25 3.16-1.78 3.88-2.3.06-.05.04-.09.04-.09zm.08-.78C6.49 15.63.21 12.28.21 12.28c-.15.46-.2.9-.21 1.3v.07c0 1.07.4 1.82.4 1.82.8 1.69 2.34 2.2 2.34 2.2.7.3 1.4.31 1.4.31.12.02 4.4 0 5.54 0 .05 0 .08-.05.08-.05v-.06c0-.03-.03-.05-.03-.05zM9.06 3.19a3.42 3.42 0 00-2.57 3.15v.41c.03.6.16 1.05.16 1.05.66 2.9 3.86 7.65 4.55 8.65.05.05.1.03.1.03a.1.1 0 00.06-.1c1.06-10.6-1.11-13.42-1.11-13.42-.32.02-1.19.23-1.19.23zm8.299 2.27s-.49-1.8-2.44-2.28c0 0-.57-.14-1.17-.22 0 0-2.18 2.81-1.12 13.43.01.07.06.08.06.08.07.03.1-.03.1-.03.72-1.03 3.9-5.76 4.55-8.64 0 0 .36-1.4.02-2.34zm-2.92 13.07s-.07 0-.09.05c0 0-.01.07.03.1.7.51 2.85 2 3.88 2.3 0 0 .16.05.43.06h.14c.69-.02 1.9-.37 3-2.26l-7.4-.25zm7.83-8.41c.14-2.06-1.94-3.97-1.94-3.98 0 0-3.85 4.66-6.67 10.8 0 0-.03.08.02.13l.04.01h.06c1.06-.53 5.46-2.77 7.28-4.54 0 0 1.15-.93 1.21-2.42zm1.52 2.14s-6.28 3.37-9.52 5.55c0 0-.05.04-.03.11 0 0 .03.06.07.06 1.16 0 5.56 0 5.67-.02 0 0 .57-.02 1.27-.29 0 0 1.56-.5 2.37-2.27 0 0 .73-1.45.17-3.14z"/></svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/kiro.svg magpie-0.1.3240/internal/provider/brandicons/kiro.svg
+diff --git a/internal/provider/brandicons/kiro.svg b/internal/provider/brandicons/kiro.svg
 new file mode 100644
 index 0000000..57404dd
 --- /dev/null
 +++ b/internal/provider/brandicons/kiro.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ><title>Kiro</title><path d="M18.8 0H5.2A5.2 5.2 0 000 5.2v13.6A5.2 5.2 0 005.2 24h13.6a5.2 5.2 0 005.2-5.2V5.2A5.2 5.2 0 0018.8 0z" fill="#9046FF"></path><path d="M7.97 16.376c-1.644 3.642 1.86 4.556 4.443 2.424.76 2.39 3.608.607 4.631-1.247 2.251-4.084 1.342-8.249 1.108-9.108-1.6-5.859-9.6-5.869-10.976.03-.323 1.033-.328 2.206-.507 3.423-.09.617-.16 1.009-.393 1.655-.139.373-.323.7-.62 1.257-.458.865-.264 2.53 2.101 1.665l.224-.1h-.01l-.001.001z" fill="#fff"></path><path d="M12.722 10.985c-.656 0-.755-.785-.755-1.252 0-.423.074-.756.218-.97a.61.61 0 01.537-.283c.229 0 .428.095.567.289.159.218.243.55.243.964 0 .785-.303 1.252-.805 1.252h-.005zm2.703 0c-.656 0-.755-.785-.755-1.252 0-.423.074-.756.219-.97a.61.61 0 01.536-.283c.229 0 .428.095.567.289.159.218.243.55.243.964 0 .785-.303 1.252-.805 1.252h-.005z" fill="#000"></path></svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/loomy-plugin.svg magpie-0.1.3240/internal/provider/brandicons/loomy-plugin.svg
+diff --git a/internal/provider/brandicons/loomy-plugin.svg b/internal/provider/brandicons/loomy-plugin.svg
 new file mode 100644
 index 0000000..b5abfc1
 --- /dev/null
@@ -10518,7 +10709,7 @@ index 0000000..b5abfc1
 +<g class="l" ><image class="l" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,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"/></g>
 +<g class="d" ><image class="d" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,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"/></g>
 +</svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/loomy.svg magpie-0.1.3240/internal/provider/brandicons/loomy.svg
+diff --git a/internal/provider/brandicons/loomy.svg b/internal/provider/brandicons/loomy.svg
 new file mode 100644
 index 0000000..b5abfc1
 --- /dev/null
@@ -10535,7 +10726,7 @@ index 0000000..b5abfc1
 +<g class="l" ><image class="l" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,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"/></g>
 +<g class="d" ><image class="d" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,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"/></g>
 +</svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/meoo.png magpie-0.1.3240/internal/provider/brandicons/meoo.png
+diff --git a/internal/provider/brandicons/meoo.png b/internal/provider/brandicons/meoo.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..8fb277d2310defdefce515774310e02ef88fc963
 GIT binary patch
@@ -10591,7 +10782,7 @@ N002ovPDHLkV1mOlh}{4H
 literal 0
 HcmV?d00001
 
-diff --git magpie-0.1.3240/internal/provider/brandicons/mimo-app.svg magpie-0.1.3240/internal/provider/brandicons/mimo-app.svg
+diff --git a/internal/provider/brandicons/mimo-app.svg b/internal/provider/brandicons/mimo-app.svg
 new file mode 100644
 index 0000000..ec2b2d2
 --- /dev/null
@@ -10608,21 +10799,21 @@ index 0000000..ec2b2d2
 +<g class="l" fill="#111111"><title>mimocode</title><g><path d="M26.74,43.69l8.75-10.85h-4.72l-6.45,7.96-6.45-7.96h-4.72l8.75,10.85.03.04-9.11,11.24h5.03l6.46-8.26,6.46,8.26h5.03l-9.11-11.24.03-.04ZM39.75,30.35c-1.52,0-2.51,1.12-2.51,2.48s.99,2.48,2.51,2.48,2.51-1.12,2.51-2.48-.99-2.48-2.51-2.48ZM37.75,54.97h3.99v-17.57h-3.99v17.57ZM60.02,44.36v10.61h-3.99v-1.76c-1.16,1.36-2.93,2.19-5.67,2.19-1.26,0-5.49-.72-5.96-4.97-.45-4.06,2.9-6.78,9.17-6.78h2.45c0-2.16-.99-3.48-3.68-3.53-2.19-.04-4.02.82-5.37,2l-1.57-3.01c2.04-1.77,5.29-2.81,8.68-2.39,5.56.68,5.94,5.28,5.94,7.63ZM56.02,46.94h-1.95c-4.21,0-5.8,1.35-5.65,2.89.14,1.5,1.51,2.16,3.18,2.16,2.85,0,4.42-2.79,4.42-4.55v-.49ZM80.1,46.12c0,5.15-3.52,9.38-8.92,9.38s-8.92-4.24-8.92-9.38,3.52-9.38,8.92-9.38,8.92,4.24,8.92,9.38ZM76.11,46.12c0-3.66-2.17-5.81-4.93-5.81s-4.93,2.15-4.93,5.81,2.17,5.81,4.93,5.81,4.93-2.15,4.93-5.81ZM110.58,54.97h3.99v-17.57h-3.99v17.57ZM112.57,30.35c-1.52,0-2.51,1.12-2.51,2.48s.99,2.48,2.51,2.48,2.51-1.12,2.51-2.48-.99-2.48-2.51-2.48ZM101.27,36.63c-2.49,0-4.31,1.03-5.3,3.2-.94-2.32-2.89-3.2-4.78-3.2-1.71,0-3.97.77-4.73,2.82v-2.05h-3.91v17.57h3.99v-10.47c0-1.29.42-4.19,3.17-4.19s3.21,2.89,3.21,4.19v10.47h3.99v-10.47c0-1.29.42-4.19,3.21-4.19s3.17,2.89,3.17,4.19v10.47h3.99v-11.42c0-4.58-2.74-6.92-6.03-6.92Z"/><g><path d="M44.57,75.97v19.37c0,1.07-.87,1.93-1.93,1.93s-1.93-.87-1.93-1.93v-19.37c0-1.07.87-1.93,1.93-1.93s1.93.87,1.93,1.93Z"/><path d="M14.77,82.82h0c-1.07,0-1.93.87-1.93,1.93v10.6c0,1.07.87,1.93,1.93,1.93h0c1.07,0,1.93-.87,1.93-1.93v-10.6c0-1.07-.87-1.93-1.93-1.93Z"/><path d="M36.6,75.77s0-.05-.01-.08c0-.04,0-.07-.02-.11,0-.03-.01-.06-.02-.09,0-.03-.01-.06-.02-.09,0-.03-.02-.06-.03-.09-.01-.03-.02-.06-.03-.09-.01-.03-.03-.05-.04-.08-.01-.03-.03-.06-.04-.09-.01-.03-.03-.05-.04-.08-.02-.03-.03-.06-.05-.09-.02-.03-.04-.05-.06-.08-.02-.02-.03-.05-.05-.07-.04-.05-.08-.1-.13-.14h0s-.09-.09-.14-.13c-.02-.02-.05-.03-.07-.05-.03-.02-.05-.04-.08-.06-.03-.02-.05-.03-.08-.05-.03-.02-.05-.03-.08-.05-.03-.01-.06-.03-.09-.04-.03-.01-.06-.03-.09-.04-.03-.01-.06-.02-.08-.03-.03-.01-.06-.02-.1-.03-.03,0-.06-.01-.08-.02-.03,0-.07-.02-.1-.02-.03,0-.06,0-.09-.01-.03,0-.06-.01-.1-.01-.05,0-.11,0-.16,0,0,0-.02,0-.03,0-.01,0-.02,0-.03,0-.05,0-.11,0-.16,0-.03,0-.07,0-.1.01-.03,0-.06,0-.09.01-.04,0-.07.02-.11.03-.03,0-.05.01-.08.02-.03.01-.07.02-.1.04-.03,0-.05.02-.08.03-.03.01-.06.03-.09.04-.03.01-.05.02-.08.04-.03.02-.06.03-.09.05-.02.01-.05.03-.07.04-.03.02-.06.05-.1.07-.02.01-.04.03-.06.04-.05.04-.1.08-.14.13l-8.59,8.59-8.59-8.59c-.75-.75-1.98-.75-2.73,0h0c-.75.75-.75,1.98,0,2.73l9.96,9.96c.76.76,1.98.76,2.73,0l6.66-6.66v14.73c0,1.07.87,1.93,1.93,1.93s1.93-.87,1.93-1.93v-19.39c0-.06,0-.13,0-.19Z"/><path d="M50.6,82.82c-1.07,0-1.93.87-1.93,1.93v10.6c0,1.07.87,1.93,1.93,1.93s1.93-.87,1.93-1.93v-10.6c0-1.07-.87-1.93-1.93-1.93Z"/><path d="M72.44,75.77s0-.05-.01-.08c0-.04,0-.07-.02-.11,0-.03-.01-.06-.02-.09,0-.03-.01-.06-.02-.09,0-.03-.02-.06-.03-.09-.01-.03-.02-.06-.03-.09-.01-.03-.03-.05-.04-.08-.01-.03-.03-.06-.04-.09-.01-.03-.03-.05-.04-.08-.02-.03-.03-.06-.05-.09-.02-.03-.04-.05-.06-.08-.02-.02-.03-.05-.05-.07-.04-.05-.08-.1-.13-.14h0s-.09-.09-.14-.13c-.02-.02-.05-.03-.07-.05-.03-.02-.05-.04-.08-.06-.03-.02-.05-.03-.08-.05-.03-.02-.05-.03-.08-.05-.03-.01-.06-.03-.09-.04-.03-.01-.06-.03-.09-.04-.03-.01-.06-.02-.08-.03-.03-.01-.06-.02-.1-.03-.03,0-.05-.01-.08-.02-.03,0-.07-.02-.1-.02-.03,0-.06,0-.09-.01-.03,0-.06-.01-.1-.01-.05,0-.11,0-.16,0,0,0-.02,0-.03,0h0s-.02,0-.03,0c-.05,0-.11,0-.16,0-.03,0-.07,0-.1.01-.03,0-.06,0-.09.01-.04,0-.07.02-.11.03-.03,0-.05.01-.08.02-.03.01-.07.02-.1.04-.03,0-.05.02-.08.03-.03.01-.06.03-.09.04-.03.01-.05.02-.08.04-.03.02-.06.03-.09.05-.02.01-.05.03-.07.04-.03.02-.06.05-.1.07-.02.01-.04.03-.06.04-.05.04-.1.08-.14.13l-8.59,8.59-8.59-8.59c-.75-.75-1.98-.75-2.73,0h0c-.75.75-.75,1.98,0,2.73l9.96,9.96c.76.76,1.98.76,2.73,0l6.66-6.66v14.73c0,1.07.87,1.93,1.93,1.93h0c1.07,0,1.93-.87,1.93-1.93v-19.39c0-.06,0-.13,0-.19Z"/><path d="M90.74,92.98c-3.04,1.46-6.8.89-9.27-1.57-2.46-2.46-3.03-6.22-1.57-9.27.4-.83.14-1.82-.6-2.37h0c-.98-.74-2.39-.38-2.92.73-2.13,4.49-1.28,10.02,2.34,13.65s9.16,4.48,13.65,2.34c1.11-.53,1.46-1.94.73-2.92-.55-.73-1.54-.99-2.37-.6Z"/><path d="M95.7,77.18c-3.63-3.63-9.16-4.48-13.65-2.34-1.11.53-1.46,1.94-.73,2.92.55.73,1.54.99,2.37.6,3.04-1.46,6.8-.89,9.27,1.57,2.46,2.46,3.03,6.22,1.57,9.27-.4.83-.14,1.82.6,2.37.98.74,2.39.38,2.92-.73,2.13-4.49,1.28-10.02-2.34-13.65Z"/></g></g></g>
 +<g class="d" fill="#F2F2F7"><title>mimocode</title><g><path d="M26.74,43.69l8.75-10.85h-4.72l-6.45,7.96-6.45-7.96h-4.72l8.75,10.85.03.04-9.11,11.24h5.03l6.46-8.26,6.46,8.26h5.03l-9.11-11.24.03-.04ZM39.75,30.35c-1.52,0-2.51,1.12-2.51,2.48s.99,2.48,2.51,2.48,2.51-1.12,2.51-2.48-.99-2.48-2.51-2.48ZM37.75,54.97h3.99v-17.57h-3.99v17.57ZM60.02,44.36v10.61h-3.99v-1.76c-1.16,1.36-2.93,2.19-5.67,2.19-1.26,0-5.49-.72-5.96-4.97-.45-4.06,2.9-6.78,9.17-6.78h2.45c0-2.16-.99-3.48-3.68-3.53-2.19-.04-4.02.82-5.37,2l-1.57-3.01c2.04-1.77,5.29-2.81,8.68-2.39,5.56.68,5.94,5.28,5.94,7.63ZM56.02,46.94h-1.95c-4.21,0-5.8,1.35-5.65,2.89.14,1.5,1.51,2.16,3.18,2.16,2.85,0,4.42-2.79,4.42-4.55v-.49ZM80.1,46.12c0,5.15-3.52,9.38-8.92,9.38s-8.92-4.24-8.92-9.38,3.52-9.38,8.92-9.38,8.92,4.24,8.92,9.38ZM76.11,46.12c0-3.66-2.17-5.81-4.93-5.81s-4.93,2.15-4.93,5.81,2.17,5.81,4.93,5.81,4.93-2.15,4.93-5.81ZM110.58,54.97h3.99v-17.57h-3.99v17.57ZM112.57,30.35c-1.52,0-2.51,1.12-2.51,2.48s.99,2.48,2.51,2.48,2.51-1.12,2.51-2.48-.99-2.48-2.51-2.48ZM101.27,36.63c-2.49,0-4.31,1.03-5.3,3.2-.94-2.32-2.89-3.2-4.78-3.2-1.71,0-3.97.77-4.73,2.82v-2.05h-3.91v17.57h3.99v-10.47c0-1.29.42-4.19,3.17-4.19s3.21,2.89,3.21,4.19v10.47h3.99v-10.47c0-1.29.42-4.19,3.21-4.19s3.17,2.89,3.17,4.19v10.47h3.99v-11.42c0-4.58-2.74-6.92-6.03-6.92Z"/><g><path d="M44.57,75.97v19.37c0,1.07-.87,1.93-1.93,1.93s-1.93-.87-1.93-1.93v-19.37c0-1.07.87-1.93,1.93-1.93s1.93.87,1.93,1.93Z"/><path d="M14.77,82.82h0c-1.07,0-1.93.87-1.93,1.93v10.6c0,1.07.87,1.93,1.93,1.93h0c1.07,0,1.93-.87,1.93-1.93v-10.6c0-1.07-.87-1.93-1.93-1.93Z"/><path d="M36.6,75.77s0-.05-.01-.08c0-.04,0-.07-.02-.11,0-.03-.01-.06-.02-.09,0-.03-.01-.06-.02-.09,0-.03-.02-.06-.03-.09-.01-.03-.02-.06-.03-.09-.01-.03-.03-.05-.04-.08-.01-.03-.03-.06-.04-.09-.01-.03-.03-.05-.04-.08-.02-.03-.03-.06-.05-.09-.02-.03-.04-.05-.06-.08-.02-.02-.03-.05-.05-.07-.04-.05-.08-.1-.13-.14h0s-.09-.09-.14-.13c-.02-.02-.05-.03-.07-.05-.03-.02-.05-.04-.08-.06-.03-.02-.05-.03-.08-.05-.03-.02-.05-.03-.08-.05-.03-.01-.06-.03-.09-.04-.03-.01-.06-.03-.09-.04-.03-.01-.06-.02-.08-.03-.03-.01-.06-.02-.1-.03-.03,0-.06-.01-.08-.02-.03,0-.07-.02-.1-.02-.03,0-.06,0-.09-.01-.03,0-.06-.01-.1-.01-.05,0-.11,0-.16,0,0,0-.02,0-.03,0-.01,0-.02,0-.03,0-.05,0-.11,0-.16,0-.03,0-.07,0-.1.01-.03,0-.06,0-.09.01-.04,0-.07.02-.11.03-.03,0-.05.01-.08.02-.03.01-.07.02-.1.04-.03,0-.05.02-.08.03-.03.01-.06.03-.09.04-.03.01-.05.02-.08.04-.03.02-.06.03-.09.05-.02.01-.05.03-.07.04-.03.02-.06.05-.1.07-.02.01-.04.03-.06.04-.05.04-.1.08-.14.13l-8.59,8.59-8.59-8.59c-.75-.75-1.98-.75-2.73,0h0c-.75.75-.75,1.98,0,2.73l9.96,9.96c.76.76,1.98.76,2.73,0l6.66-6.66v14.73c0,1.07.87,1.93,1.93,1.93s1.93-.87,1.93-1.93v-19.39c0-.06,0-.13,0-.19Z"/><path d="M50.6,82.82c-1.07,0-1.93.87-1.93,1.93v10.6c0,1.07.87,1.93,1.93,1.93s1.93-.87,1.93-1.93v-10.6c0-1.07-.87-1.93-1.93-1.93Z"/><path d="M72.44,75.77s0-.05-.01-.08c0-.04,0-.07-.02-.11,0-.03-.01-.06-.02-.09,0-.03-.01-.06-.02-.09,0-.03-.02-.06-.03-.09-.01-.03-.02-.06-.03-.09-.01-.03-.03-.05-.04-.08-.01-.03-.03-.06-.04-.09-.01-.03-.03-.05-.04-.08-.02-.03-.03-.06-.05-.09-.02-.03-.04-.05-.06-.08-.02-.02-.03-.05-.05-.07-.04-.05-.08-.1-.13-.14h0s-.09-.09-.14-.13c-.02-.02-.05-.03-.07-.05-.03-.02-.05-.04-.08-.06-.03-.02-.05-.03-.08-.05-.03-.02-.05-.03-.08-.05-.03-.01-.06-.03-.09-.04-.03-.01-.06-.03-.09-.04-.03-.01-.06-.02-.08-.03-.03-.01-.06-.02-.1-.03-.03,0-.05-.01-.08-.02-.03,0-.07-.02-.1-.02-.03,0-.06,0-.09-.01-.03,0-.06-.01-.1-.01-.05,0-.11,0-.16,0,0,0-.02,0-.03,0h0s-.02,0-.03,0c-.05,0-.11,0-.16,0-.03,0-.07,0-.1.01-.03,0-.06,0-.09.01-.04,0-.07.02-.11.03-.03,0-.05.01-.08.02-.03.01-.07.02-.1.04-.03,0-.05.02-.08.03-.03.01-.06.03-.09.04-.03.01-.05.02-.08.04-.03.02-.06.03-.09.05-.02.01-.05.03-.07.04-.03.02-.06.05-.1.07-.02.01-.04.03-.06.04-.05.04-.1.08-.14.13l-8.59,8.59-8.59-8.59c-.75-.75-1.98-.75-2.73,0h0c-.75.75-.75,1.98,0,2.73l9.96,9.96c.76.76,1.98.76,2.73,0l6.66-6.66v14.73c0,1.07.87,1.93,1.93,1.93h0c1.07,0,1.93-.87,1.93-1.93v-19.39c0-.06,0-.13,0-.19Z"/><path d="M90.74,92.98c-3.04,1.46-6.8.89-9.27-1.57-2.46-2.46-3.03-6.22-1.57-9.27.4-.83.14-1.82-.6-2.37h0c-.98-.74-2.39-.38-2.92.73-2.13,4.49-1.28,10.02,2.34,13.65s9.16,4.48,13.65,2.34c1.11-.53,1.46-1.94.73-2.92-.55-.73-1.54-.99-2.37-.6Z"/><path d="M95.7,77.18c-3.63-3.63-9.16-4.48-13.65-2.34-1.11.53-1.46,1.94-.73,2.92.55.73,1.54.99,2.37.6,3.04-1.46,6.8-.89,9.27,1.57,2.46,2.46,3.03,6.22,1.57,9.27-.4.83-.14,1.82.6,2.37.98.74,2.39.38,2.92-.73,2.13-4.49,1.28-10.02-2.34-13.65Z"/></g></g></g>
 +</svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/minimax-code-global.svg magpie-0.1.3240/internal/provider/brandicons/minimax-code-global.svg
+diff --git a/internal/provider/brandicons/minimax-code-global.svg b/internal/provider/brandicons/minimax-code-global.svg
 new file mode 100644
 index 0000000..4c69509
 --- /dev/null
 +++ b/internal/provider/brandicons/minimax-code-global.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ><title>Minimax</title><defs><linearGradient id="lobe-icons-minimax-_R_0_" x1="0%" x2="100.182%" y1="50.057%" y2="50.057%"><stop offset="0%" stop-color="#E2167E"></stop><stop offset="100%" stop-color="#FE603C"></stop></linearGradient></defs><path d="M16.278 2c1.156 0 2.093.927 2.093 2.07v12.501a.74.74 0 00.744.709.74.74 0 00.743-.709V9.099a2.06 2.06 0 012.071-2.049A2.06 2.06 0 0124 9.1v6.561a.649.649 0 01-.652.645.649.649 0 01-.653-.645V9.1a.762.762 0 00-.766-.758.762.762 0 00-.766.758v7.472a2.037 2.037 0 01-2.048 2.026 2.037 2.037 0 01-2.048-2.026v-12.5a.785.785 0 00-.788-.753.785.785 0 00-.789.752l-.001 15.904A2.037 2.037 0 0113.441 22a2.037 2.037 0 01-2.048-2.026V18.04c0-.356.292-.645.652-.645.36 0 .652.289.652.645v1.934c0 .263.142.506.372.638.23.131.514.131.744 0a.734.734 0 00.372-.638V4.07c0-1.143.937-2.07 2.093-2.07zm-5.674 0c1.156 0 2.093.927 2.093 2.07v11.523a.648.648 0 01-.652.645.648.648 0 01-.652-.645V4.07a.785.785 0 00-.789-.78.785.785 0 00-.789.78v14.013a2.06 2.06 0 01-2.07 2.048 2.06 2.06 0 01-2.071-2.048V9.1a.762.762 0 00-.766-.758.762.762 0 00-.766.758v3.8a2.06 2.06 0 01-2.071 2.049A2.06 2.06 0 010 12.9v-1.378c0-.357.292-.646.652-.646.36 0 .653.29.653.646V12.9c0 .418.343.757.766.757s.766-.339.766-.757V9.099a2.06 2.06 0 012.07-2.048 2.06 2.06 0 012.071 2.048v8.984c0 .419.343.758.767.758.423 0 .766-.339.766-.758V4.07c0-1.143.937-2.07 2.093-2.07z" fill="url(#lobe-icons-minimax-_R_0_)" fill-rule="nonzero"></path></svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/minimax-code.svg magpie-0.1.3240/internal/provider/brandicons/minimax-code.svg
+diff --git a/internal/provider/brandicons/minimax-code.svg b/internal/provider/brandicons/minimax-code.svg
 new file mode 100644
 index 0000000..4c69509
 --- /dev/null
 +++ b/internal/provider/brandicons/minimax-code.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ><title>Minimax</title><defs><linearGradient id="lobe-icons-minimax-_R_0_" x1="0%" x2="100.182%" y1="50.057%" y2="50.057%"><stop offset="0%" stop-color="#E2167E"></stop><stop offset="100%" stop-color="#FE603C"></stop></linearGradient></defs><path d="M16.278 2c1.156 0 2.093.927 2.093 2.07v12.501a.74.74 0 00.744.709.74.74 0 00.743-.709V9.099a2.06 2.06 0 012.071-2.049A2.06 2.06 0 0124 9.1v6.561a.649.649 0 01-.652.645.649.649 0 01-.653-.645V9.1a.762.762 0 00-.766-.758.762.762 0 00-.766.758v7.472a2.037 2.037 0 01-2.048 2.026 2.037 2.037 0 01-2.048-2.026v-12.5a.785.785 0 00-.788-.753.785.785 0 00-.789.752l-.001 15.904A2.037 2.037 0 0113.441 22a2.037 2.037 0 01-2.048-2.026V18.04c0-.356.292-.645.652-.645.36 0 .652.289.652.645v1.934c0 .263.142.506.372.638.23.131.514.131.744 0a.734.734 0 00.372-.638V4.07c0-1.143.937-2.07 2.093-2.07zm-5.674 0c1.156 0 2.093.927 2.093 2.07v11.523a.648.648 0 01-.652.645.648.648 0 01-.652-.645V4.07a.785.785 0 00-.789-.78.785.785 0 00-.789.78v14.013a2.06 2.06 0 01-2.07 2.048 2.06 2.06 0 01-2.071-2.048V9.1a.762.762 0 00-.766-.758.762.762 0 00-.766.758v3.8a2.06 2.06 0 01-2.071 2.049A2.06 2.06 0 010 12.9v-1.378c0-.357.292-.646.652-.646.36 0 .653.29.653.646V12.9c0 .418.343.757.766.757s.766-.339.766-.757V9.099a2.06 2.06 0 012.07-2.048 2.06 2.06 0 012.071 2.048v8.984c0 .419.343.758.767.758.423 0 .766-.339.766-.758V4.07c0-1.143.937-2.07 2.093-2.07z" fill="url(#lobe-icons-minimax-_R_0_)" fill-rule="nonzero"></path></svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/opencode-zen-free.svg magpie-0.1.3240/internal/provider/brandicons/opencode-zen-free.svg
+diff --git a/internal/provider/brandicons/opencode-zen-free.svg b/internal/provider/brandicons/opencode-zen-free.svg
 new file mode 100644
 index 0000000..50d0242
 --- /dev/null
@@ -10639,7 +10830,7 @@ index 0000000..50d0242
 +<g class="l" fill="#111111" fill-rule="evenodd"><title>opencode</title><path d="M16 6H8v12h8V6zm4 16H4V2h16v20z"></path></g>
 +<g class="d" fill="#F2F2F7" fill-rule="evenodd"><title>opencode</title><path d="M16 6H8v12h8V6zm4 16H4V2h16v20z"></path></g>
 +</svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/qoder-cn.png magpie-0.1.3240/internal/provider/brandicons/qoder-cn.png
+diff --git a/internal/provider/brandicons/qoder-cn.png b/internal/provider/brandicons/qoder-cn.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..82d62386b0626a136945ff66253e5e05085989a3
 GIT binary patch
@@ -10745,7 +10936,7 @@ C*SQ-2
 literal 0
 HcmV?d00001
 
-diff --git magpie-0.1.3240/internal/provider/brandicons/qoder.png magpie-0.1.3240/internal/provider/brandicons/qoder.png
+diff --git a/internal/provider/brandicons/qoder.png b/internal/provider/brandicons/qoder.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..82d62386b0626a136945ff66253e5e05085989a3
 GIT binary patch
@@ -10851,7 +11042,7 @@ C*SQ-2
 literal 0
 HcmV?d00001
 
-diff --git magpie-0.1.3240/internal/provider/brandicons/qwenwork-enterprise.png magpie-0.1.3240/internal/provider/brandicons/qwenwork-enterprise.png
+diff --git a/internal/provider/brandicons/qwenwork-enterprise.png b/internal/provider/brandicons/qwenwork-enterprise.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..82d62386b0626a136945ff66253e5e05085989a3
 GIT binary patch
@@ -10957,7 +11148,7 @@ C*SQ-2
 literal 0
 HcmV?d00001
 
-diff --git magpie-0.1.3240/internal/provider/brandicons/qwenwork.png magpie-0.1.3240/internal/provider/brandicons/qwenwork.png
+diff --git a/internal/provider/brandicons/qwenwork.png b/internal/provider/brandicons/qwenwork.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..82d62386b0626a136945ff66253e5e05085989a3
 GIT binary patch
@@ -11063,7 +11254,7 @@ C*SQ-2
 literal 0
 HcmV?d00001
 
-diff --git magpie-0.1.3240/internal/provider/brandicons/raccoon.png magpie-0.1.3240/internal/provider/brandicons/raccoon.png
+diff --git a/internal/provider/brandicons/raccoon.png b/internal/provider/brandicons/raccoon.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..3177075a895fd89bad909d46104191170909df2d
 GIT binary patch
@@ -11157,7 +11348,7 @@ zG<e)tUw`l|At9l2x%k%4+obg6wK5GC>m0}Xo_xDqn%d<rBtS`CO|DGVEb#vT*rjPq
 literal 0
 HcmV?d00001
 
-diff --git magpie-0.1.3240/internal/provider/brandicons/trae-cn.svg magpie-0.1.3240/internal/provider/brandicons/trae-cn.svg
+diff --git a/internal/provider/brandicons/trae-cn.svg b/internal/provider/brandicons/trae-cn.svg
 new file mode 100644
 index 0000000..6bd046b
 --- /dev/null
@@ -11174,7 +11365,7 @@ index 0000000..6bd046b
 +<g class="l" ><image class="l" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAPBSURBVHhe7ZwtbxRRFEBXIhGIYghJA2kgTRpUDUkFsgKBQEACogmyogIBpA5DUl+DIgVVyS9o+gMQSGRlEYS6+8idztvs3s7uTL8ub+aekxwzs5109p6ZnbdNOhqdk5TSSkppLaX0KqW0jcWo89C5rNiZXYqU0g09uIjsichJgl4gIvsi8ialdNPOtDN6ABE5sgeH/iAixyKyqReyne9MtBoRObQHg/4iIj9TSnftrM+gLxKRX/YA0H/0bqDPCXbmY+orn+EPmDqCJTv76mGP234M6ot8+uGwflCAIIjIjr36edoPRL2kX8hXv64XIRgi8jEH8N3uhOGjS8P85M83fEHRq3/VboQ46B3gqd0IcWD5Fxy9A+ifEiEoBBAcAggOAQSHAIJDAMEhgOAQQHAIIDgEEBwCCA4BBIcAgkMAwSGA4BBAcAggOAQQHAIIDgEExyWA268ff8Hzad/D64IACtW+h9eFSwCPfn/Cc+oFARSqFwRQqF4QQKF6QQCF6gUBFKoXBFCoXhBAoXpBAIXqRTEB3P+2UTlU7n3dGGvPvUkvCMAJAmiRAIIHsLj7snKo5PNT7bk36QUBOEEALRIAARAAARBA1gsCcIIAWiQAArjSAJZ/vKu882H9r2r3X4QHB1tjF3dfVHaFAFokAAIgAAK4XAB56Ko9fg7hIjHkodtjnv7epyG0xUAALRLAtF4MIoBZQ59l1xDmDb7JeSEQQIsEMK0XBDAHArgi7Mk16RrA+/U/qj2O5eHBVqX9+VkSwAzsyTVJANN6MYgAMnNXAfXQuwzeMi8EVgEdsCfXJAFM68WgApgkh3DRoTeRQ1C7DH0SAmiRAAiAAAjg6gIoDQJokQAIgAAIgACyXhCAEwTQIgEQAAEQAAFkvSAAJwigRQIYcABdyP8k2b4RUfWCAArVCwIoVC8IoFC9IIBC9YIACtULAihULwigUL0ggEL1opgAbj1ZfqZOfmMWWS8IoFC9IIBC9aKYAOD/QADBIYDgEEBwCCA4BBAcAggOAQSHAIJDAMEhgOAQQHAIIDgEEBwCCA4BBIcAgkMAwSGA4BBAcAggOBrAW7sR4jASked2I8RB7wBrdiPEQQNYsBshDiNFRA7tDhg+InJUBcBKICYi8jkHsCAiJ/YFMHhWqgDqj4EduxeGi4jsj4c/cRc4si+E4VHf7ZemAlBEZJWPguGj3/3Y2Y/RnUQwaLbtzM+gXw6JyLH9SegvelHPvfIt9TPBnj0Q9A994Gv8zO+CLhV0vcgDYr/QO3h9Aa/ZmU7yD+fsWWgpoLfLAAAAAElFTkSuQmCC"/></g>
 +<g class="d" ><image class="d" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAQZSURBVHhe7dwhjxNNHMfxlchHIHjMUxI60+4chAsKQ4J4JAKBeAQkIEiQCAQCCA5DgsegyIFCPq+A8AIegUQi7xGESshsu8311223d9yU6fy/k3zM3s6Gznzb7lZQVccczoX90WjvunPhrnP1c+Qi3J3ty77u2S+NwWBwJl7c+3DgfZh4H34gf86FD8Nh/WAwuPyH7unGI17AufqrXhy7pD70fvwwvpF1f1eOWI334dPyxbCrnKs/j0aj87rXSyOe5Fz4ohdACerDeJ+gez4f8Z3P5pcufiVcHOveNzd7fOzbEN/kSzeH8UZBT0S5nAuvFt793O2bMwkhnGsCiI97HSegcM7VL5oAnKv/1T+ifPHRsH3m5xc+o6rhcHxVD8KOyvv6ph6EHTz+GRdvAJ/rQdhBAMYRgHEEYBwBGEcAxhGAcQRgHAEYRwDGEYBxBGAcARhHAMYRgHEEYBwBGEcAxhGAcQRg3FYC+PPetbc4Hl3DVAggU7qGqWwlgCv/v8Qx6RqmQgCZ0jVMhQAypWuYCgFkStcwFQLIlK5hKgSQKV3DVAggU7qGqRBApnQNUyGATOkappJNAP79/amO+SVw7+7P6WvvovNTIYAtIYAeBGA8gAuv7zR0bina1xfpa++i81MhgC0hgB4EQAAEQAAE0NL5qRDAlhBADwIggFMN4NJ/Txp/PbvxPdK/n0T4+GjuwuvbDT1nFQLoQQAEQAAE8GsBtJse6fXbEE4SQ7vpes3pv3saQl8MBNCDABbp/FSKCGDVpq+yaQjrNr7LuhAIoAcBLNL5qRDAGgRwSvTFddlqAE9vfIv0Omrv46OGzl+FAFbQF9eFABbp/FSKCKC19ilgtumbbLxaFwJPARvQF9eFABbp/FSKCuCoNoSTbnqXNoRok00/igB6EAABEAABnF4AuSGAHgRAAARAAATQ0vmpEMCWEEAPAiAAAiAAAmjp/FQIYEsIoAcBFBzAJtr/JFkXwipdn1QIIFO6PqkQQKZ0fVIhgEzp+qRCAJnS9UmFADKl65MKAWRK1ycVAsiUrk8qBJApXZ9Usgng7N+XbkVHfzGzTNcnFQLIlK5PKgSQKV2fVLIJAL8HARhHAMYRgHEEYBwBGEcAxhGAcQRgHAEYRwDGEYBxBGAcARhHAMYRgHEEYBwBGEcAxhGAcQRgXOV9eKwHYUfl3PgfPQg7qtFo77oehB1VCOGcHoQdVRzeh0/6B5TPufprEwBPAlbVb5oAZl8Dk+UTUDLnwn4TwPRTILzSE1Au58KH+ea3nwLxO0FPRJEm3l8cLwQQx3A4vspXQfnibz+69/Mx+2GICAoVb/h1z5fG9Meh+lAnY6dN1r7zdcyeDA46LoQdE2/4Or/zNxnxUSE+L3KDuGuaT/CD+Gmue3p0/ATGcPi51GjNwgAAAABJRU5ErkJggg=="/></g>
 +</svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/trae-global.svg magpie-0.1.3240/internal/provider/brandicons/trae-global.svg
+diff --git a/internal/provider/brandicons/trae-global.svg b/internal/provider/brandicons/trae-global.svg
 new file mode 100644
 index 0000000..6bd046b
 --- /dev/null
@@ -11191,21 +11382,21 @@ index 0000000..6bd046b
 +<g class="l" ><image class="l" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAPBSURBVHhe7ZwtbxRRFEBXIhGIYghJA2kgTRpUDUkFsgKBQEACogmyogIBpA5DUl+DIgVVyS9o+gMQSGRlEYS6+8idztvs3s7uTL8ub+aekxwzs5109p6ZnbdNOhqdk5TSSkppLaX0KqW0jcWo89C5rNiZXYqU0g09uIjsichJgl4gIvsi8ialdNPOtDN6ABE5sgeH/iAixyKyqReyne9MtBoRObQHg/4iIj9TSnftrM+gLxKRX/YA0H/0bqDPCXbmY+orn+EPmDqCJTv76mGP234M6ot8+uGwflCAIIjIjr36edoPRL2kX8hXv64XIRgi8jEH8N3uhOGjS8P85M83fEHRq3/VboQ46B3gqd0IcWD5Fxy9A+ifEiEoBBAcAggOAQSHAIJDAMEhgOAQQHAIIDgEEBwCCA4BBIcAgkMAwSGA4BBAcAggOAQQHAIIDgEExyWA268ff8Hzad/D64IACtW+h9eFSwCPfn/Cc+oFARSqFwRQqF4QQKF6QQCF6gUBFKoXBFCoXhBAoXpBAIXqRTEB3P+2UTlU7n3dGGvPvUkvCMAJAmiRAIIHsLj7snKo5PNT7bk36QUBOEEALRIAARAAARBA1gsCcIIAWiQAArjSAJZ/vKu882H9r2r3X4QHB1tjF3dfVHaFAFokAAIgAAK4XAB56Ko9fg7hIjHkodtjnv7epyG0xUAALRLAtF4MIoBZQ59l1xDmDb7JeSEQQIsEMK0XBDAHArgi7Mk16RrA+/U/qj2O5eHBVqX9+VkSwAzsyTVJANN6MYgAMnNXAfXQuwzeMi8EVgEdsCfXJAFM68WgApgkh3DRoTeRQ1C7DH0SAmiRAAiAAAjg6gIoDQJokQAIgAAIgACyXhCAEwTQIgEQAAEQAAFkvSAAJwigRQIYcABdyP8k2b4RUfWCAArVCwIoVC8IoFC9IIBC9YIACtULAihULwigUL0ggEL1opgAbj1ZfqZOfmMWWS8IoFC9IIBC9aKYAOD/QADBIYDgEEBwCCA4BBAcAggOAQSHAIJDAMEhgOAQQHAIIDgEEBwCCA4BBIcAgkMAwSGA4BBAcAggOBrAW7sR4jASked2I8RB7wBrdiPEQQNYsBshDiNFRA7tDhg+InJUBcBKICYi8jkHsCAiJ/YFMHhWqgDqj4EduxeGi4jsj4c/cRc4si+E4VHf7ZemAlBEZJWPguGj3/3Y2Y/RnUQwaLbtzM+gXw6JyLH9SegvelHPvfIt9TPBnj0Q9A994Gv8zO+CLhV0vcgDYr/QO3h9Aa/ZmU7yD+fsWWgpoLfLAAAAAElFTkSuQmCC"/></g>
 +<g class="d" ><image class="d" x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAQZSURBVHhe7dwhjxNNHMfxlchHIHjMUxI60+4chAsKQ4J4JAKBeAQkIEiQCAQCCA5DgsegyIFCPq+A8AIegUQi7xGESshsu8311223d9yU6fy/k3zM3s6Gznzb7lZQVccczoX90WjvunPhrnP1c+Qi3J3ty77u2S+NwWBwJl7c+3DgfZh4H34gf86FD8Nh/WAwuPyH7unGI17AufqrXhy7pD70fvwwvpF1f1eOWI334dPyxbCrnKs/j0aj87rXSyOe5Fz4ohdACerDeJ+gez4f8Z3P5pcufiVcHOveNzd7fOzbEN/kSzeH8UZBT0S5nAuvFt793O2bMwkhnGsCiI97HSegcM7VL5oAnKv/1T+ifPHRsH3m5xc+o6rhcHxVD8KOyvv6ph6EHTz+GRdvAJ/rQdhBAMYRgHEEYBwBGEcAxhGAcQRgHAEYRwDGEYBxBGAcARhHAMYRgHEEYBwBGEcAxhGAcQRg3FYC+PPetbc4Hl3DVAggU7qGqWwlgCv/v8Qx6RqmQgCZ0jVMhQAypWuYCgFkStcwFQLIlK5hKgSQKV3DVAggU7qGqRBApnQNUyGATOkappJNAP79/amO+SVw7+7P6WvvovNTIYAtIYAeBGA8gAuv7zR0bina1xfpa++i81MhgC0hgB4EQAAEQAAE0NL5qRDAlhBADwIggFMN4NJ/Txp/PbvxPdK/n0T4+GjuwuvbDT1nFQLoQQAEQAAE8GsBtJse6fXbEE4SQ7vpes3pv3saQl8MBNCDABbp/FSKCGDVpq+yaQjrNr7LuhAIoAcBLNL5qRDAGgRwSvTFddlqAE9vfIv0Omrv46OGzl+FAFbQF9eFABbp/FSKCKC19ilgtumbbLxaFwJPARvQF9eFABbp/FSKCuCoNoSTbnqXNoRok00/igB6EAABEAABnF4AuSGAHgRAAARAAATQ0vmpEMCWEEAPAiAAAiAAAmjp/FQIYEsIoAcBFBzAJtr/JFkXwipdn1QIIFO6PqkQQKZ0fVIhgEzp+qRCAJnS9UmFADKl65MKAWRK1ycVAsiUrk8qBJApXZ9Usgng7N+XbkVHfzGzTNcnFQLIlK5PKgSQKV2fVLIJAL8HARhHAMYRgHEEYBwBGEcAxhGAcQRgHAEYRwDGEYBxBGAcARhHAMYRgHEEYBwBGEcAxhGAcQRgXOV9eKwHYUfl3PgfPQg7qtFo77oehB1VCOGcHoQdVRzeh0/6B5TPufprEwBPAlbVb5oAZl8Dk+UTUDLnwn4TwPRTILzSE1Au58KH+ea3nwLxO0FPRJEm3l8cLwQQx3A4vspXQfnibz+69/Mx+2GICAoVb/h1z5fG9Meh+lAnY6dN1r7zdcyeDA46LoQdE2/4Or/zNxnxUSE+L3KDuGuaT/CD+Gmue3p0/ATGcPi51GjNwgAAAABJRU5ErkJggg=="/></g>
 +</svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/workbuddy-ai.svg magpie-0.1.3240/internal/provider/brandicons/workbuddy-ai.svg
+diff --git a/internal/provider/brandicons/workbuddy-ai.svg b/internal/provider/brandicons/workbuddy-ai.svg
 new file mode 100644
 index 0000000..61d0ff3
 --- /dev/null
 +++ b/internal/provider/brandicons/workbuddy-ai.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" ><defs><linearGradient id="gradient_0" gradientTransform="matrix(3.91889e-15 64 -64.0003 3.91887e-15 32.0002 -1.95943e-15)" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0EC7A8"/><stop offset="1" stop-color="#00C885"/></linearGradient></defs><rect fill="url(#gradient_0)" viewBox="0 0 64 64" width="64.0003" height="64" rx="13.8106" ry="13.8106"/><defs><filter id="filter_0" x="-3" y="13" width="78" height="69" filterUnits="userSpaceOnUse"><feGaussianBlur stdDeviation="4.4002" result="blur"/></filter></defs><g transform="matrix(1 0 0 1 18 18)" filter="url(#filter_0)"><clipPath id="clip_0"><path d="M63.9867 13.197Q63.9935 13.3503 63.9969 13.5037Q64.0003 13.6571 64.0003 13.8106L64.0003 50.1894Q64.0003 55.91 59.9553 59.955Q55.9103 64 50.1898 64L13.8106 64Q8.09 64 4.045 59.955Q0 55.91 0 50.1894L0 13.8106Q0 13.6571 0.0034 13.5037Q0.0068 13.3503 0.0136 13.197L63.9867 13.197Z" clip-rule="evenodd"/></clipPath><g clip-path="url(#clip_0)"><circle fill="#FFE255" fill-opacity="0.49" transform="matrix(1 0 0 1 14.7525 31.197)" cx="20.5928" cy="20.5928" r="20.5928"/></g></g><clipPath id="clip_1"><rect viewBox="0 0 64 64" width="64.0003" height="64" rx="13.8106" ry="13.8106"/></clipPath><g clip-path="url(#clip_1)"><defs><linearGradient id="gradient_1" gradientTransform="matrix(4.35136e-15 60.044 78.3872 0 39.1936 -2.86512e-06)" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#FFF" stop-opacity="0.8"/><stop offset="0.4377" stop-color="#FFF"/><stop offset="1" stop-color="#FFF"/></linearGradient></defs><path fill="url(#gradient_1)" fill-opacity="1" transform="matrix(0.866025 -0.5 0.5 0.866025 -7.25994 37.2434)" d="M10.4632 2.7569C11.0168 1.0854 11.4183 0.4342 12.0804 0.1628C12.482 0 13.4155 0.1302 14.4249 0.4884C16.9539 1.411 21.7513 4.6672 26.755 8.8677L27.276 9.3018L29.1971 8.9111C32.3882 8.2598 34.3961 8.0211 37.9128 7.9017C41.5815 7.7714 45.4237 8.1405 49.4831 9.0196L50.7856 9.3018L52.3051 8.0645C57.7647 3.6035 62.4102 0.6729 64.798 0.1845C65.6229 0.0109 65.6663 0.0109 66.0788 0.2171C66.7517 0.5427 67.1642 1.1939 67.6418 2.6918C68.7597 6.1867 69.4978 12.4712 69.3675 17.3989L69.3133 19.3092L70.1056 20.5031C70.8654 21.6645 71.9833 23.7918 72.3741 24.8121C72.5477 25.2788 72.5912 25.3114 73.0145 25.3765C74.9248 25.6696 76.694 27.7644 77.5731 30.7926C78.3655 33.517 78.3872 37.4027 77.6382 40.203C77.508 40.648 77.1498 41.5597 76.835 42.211C75.7171 44.4903 74.0022 45.8362 72.1896 45.8471C71.8205 45.847 71.7771 45.8796 71.3864 46.5743C70.0538 48.9871 68.2229 51.1078 65.931 52.9197L65.931 18.983L12.3947 18.983L12.3947 53.6887C12.3876 53.6834 12.3806 53.6781 12.3735 53.6727C9.8011 51.7407 7.2938 48.8536 6.165 46.5308C5.872 45.9122 5.8069 45.847 5.3727 45.7385C3.0608 45.1632 1.1397 42.4932 0.3473 38.7703C0.0326 37.2833 0 34.0597 0.2822 32.5075C0.9551 28.8823 2.7352 26.2882 5.0905 25.4851C5.6983 25.2788 5.72 25.268 6.0456 24.5191C6.5775 23.2926 7.5001 21.5559 8.1947 20.4922L8.8351 19.4937L8.8677 15.8793C8.9328 10.257 9.4755 5.8177 10.4632 2.7569ZM12.5027 53.7693C16.8022 56.9564 22.7683 58.8585 31.0748 59.6967C34.5807 60.044 42.7971 60.0114 46.4874 59.6207C53.3471 58.9152 59.0672 57.2654 63.1482 54.8341C63.7166 54.4938 64.2642 54.1388 64.7905 53.7693L12.5027 53.7693Z" fill-rule="evenodd"/><path fill="#FFF" transform="matrix(0.866025 -0.5 0.5 0.866025 29.5937 50.1354)" d="M6.4145 3.2072L6.4145 10.1152Q6.4145 11.4436 5.4751 12.383Q4.5357 13.3224 3.2072 13.3224L3.2072 13.3224Q1.8788 13.3224 0.9394 12.383Q0 11.4436 0 10.1152L0 3.2072Q0 1.8788 0.9394 0.9394Q1.8788 0 3.2072 0L3.2072 0Q4.5357 0 5.4751 0.9394Q6.4145 1.8788 6.4145 3.2072Z"/><path fill="#FFF" transform="matrix(0.866025 -0.5 0.5 0.866025 46.9001 40.1434)" d="M6.4145 3.2072L6.4145 10.1152Q6.4145 11.4436 5.4751 12.383Q4.5357 13.3224 3.2072 13.3224L3.2072 13.3224Q1.8788 13.3224 0.9394 12.383Q0 11.4436 0 10.1152L0 3.2072Q0 1.8788 0.9394 0.9394Q1.8788 0 3.2072 0L3.2072 0Q4.5357 0 5.4751 0.9394Q6.4145 1.8788 6.4145 3.2072Z"/></g></svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/workbuddy.svg magpie-0.1.3240/internal/provider/brandicons/workbuddy.svg
+diff --git a/internal/provider/brandicons/workbuddy.svg b/internal/provider/brandicons/workbuddy.svg
 new file mode 100644
 index 0000000..61d0ff3
 --- /dev/null
 +++ b/internal/provider/brandicons/workbuddy.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" ><defs><linearGradient id="gradient_0" gradientTransform="matrix(3.91889e-15 64 -64.0003 3.91887e-15 32.0002 -1.95943e-15)" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0EC7A8"/><stop offset="1" stop-color="#00C885"/></linearGradient></defs><rect fill="url(#gradient_0)" viewBox="0 0 64 64" width="64.0003" height="64" rx="13.8106" ry="13.8106"/><defs><filter id="filter_0" x="-3" y="13" width="78" height="69" filterUnits="userSpaceOnUse"><feGaussianBlur stdDeviation="4.4002" result="blur"/></filter></defs><g transform="matrix(1 0 0 1 18 18)" filter="url(#filter_0)"><clipPath id="clip_0"><path d="M63.9867 13.197Q63.9935 13.3503 63.9969 13.5037Q64.0003 13.6571 64.0003 13.8106L64.0003 50.1894Q64.0003 55.91 59.9553 59.955Q55.9103 64 50.1898 64L13.8106 64Q8.09 64 4.045 59.955Q0 55.91 0 50.1894L0 13.8106Q0 13.6571 0.0034 13.5037Q0.0068 13.3503 0.0136 13.197L63.9867 13.197Z" clip-rule="evenodd"/></clipPath><g clip-path="url(#clip_0)"><circle fill="#FFE255" fill-opacity="0.49" transform="matrix(1 0 0 1 14.7525 31.197)" cx="20.5928" cy="20.5928" r="20.5928"/></g></g><clipPath id="clip_1"><rect viewBox="0 0 64 64" width="64.0003" height="64" rx="13.8106" ry="13.8106"/></clipPath><g clip-path="url(#clip_1)"><defs><linearGradient id="gradient_1" gradientTransform="matrix(4.35136e-15 60.044 78.3872 0 39.1936 -2.86512e-06)" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#FFF" stop-opacity="0.8"/><stop offset="0.4377" stop-color="#FFF"/><stop offset="1" stop-color="#FFF"/></linearGradient></defs><path fill="url(#gradient_1)" fill-opacity="1" transform="matrix(0.866025 -0.5 0.5 0.866025 -7.25994 37.2434)" d="M10.4632 2.7569C11.0168 1.0854 11.4183 0.4342 12.0804 0.1628C12.482 0 13.4155 0.1302 14.4249 0.4884C16.9539 1.411 21.7513 4.6672 26.755 8.8677L27.276 9.3018L29.1971 8.9111C32.3882 8.2598 34.3961 8.0211 37.9128 7.9017C41.5815 7.7714 45.4237 8.1405 49.4831 9.0196L50.7856 9.3018L52.3051 8.0645C57.7647 3.6035 62.4102 0.6729 64.798 0.1845C65.6229 0.0109 65.6663 0.0109 66.0788 0.2171C66.7517 0.5427 67.1642 1.1939 67.6418 2.6918C68.7597 6.1867 69.4978 12.4712 69.3675 17.3989L69.3133 19.3092L70.1056 20.5031C70.8654 21.6645 71.9833 23.7918 72.3741 24.8121C72.5477 25.2788 72.5912 25.3114 73.0145 25.3765C74.9248 25.6696 76.694 27.7644 77.5731 30.7926C78.3655 33.517 78.3872 37.4027 77.6382 40.203C77.508 40.648 77.1498 41.5597 76.835 42.211C75.7171 44.4903 74.0022 45.8362 72.1896 45.8471C71.8205 45.847 71.7771 45.8796 71.3864 46.5743C70.0538 48.9871 68.2229 51.1078 65.931 52.9197L65.931 18.983L12.3947 18.983L12.3947 53.6887C12.3876 53.6834 12.3806 53.6781 12.3735 53.6727C9.8011 51.7407 7.2938 48.8536 6.165 46.5308C5.872 45.9122 5.8069 45.847 5.3727 45.7385C3.0608 45.1632 1.1397 42.4932 0.3473 38.7703C0.0326 37.2833 0 34.0597 0.2822 32.5075C0.9551 28.8823 2.7352 26.2882 5.0905 25.4851C5.6983 25.2788 5.72 25.268 6.0456 24.5191C6.5775 23.2926 7.5001 21.5559 8.1947 20.4922L8.8351 19.4937L8.8677 15.8793C8.9328 10.257 9.4755 5.8177 10.4632 2.7569ZM12.5027 53.7693C16.8022 56.9564 22.7683 58.8585 31.0748 59.6967C34.5807 60.044 42.7971 60.0114 46.4874 59.6207C53.3471 58.9152 59.0672 57.2654 63.1482 54.8341C63.7166 54.4938 64.2642 54.1388 64.7905 53.7693L12.5027 53.7693Z" fill-rule="evenodd"/><path fill="#FFF" transform="matrix(0.866025 -0.5 0.5 0.866025 29.5937 50.1354)" d="M6.4145 3.2072L6.4145 10.1152Q6.4145 11.4436 5.4751 12.383Q4.5357 13.3224 3.2072 13.3224L3.2072 13.3224Q1.8788 13.3224 0.9394 12.383Q0 11.4436 0 10.1152L0 3.2072Q0 1.8788 0.9394 0.9394Q1.8788 0 3.2072 0L3.2072 0Q4.5357 0 5.4751 0.9394Q6.4145 1.8788 6.4145 3.2072Z"/><path fill="#FFF" transform="matrix(0.866025 -0.5 0.5 0.866025 46.9001 40.1434)" d="M6.4145 3.2072L6.4145 10.1152Q6.4145 11.4436 5.4751 12.383Q4.5357 13.3224 3.2072 13.3224L3.2072 13.3224Q1.8788 13.3224 0.9394 12.383Q0 11.4436 0 10.1152L0 3.2072Q0 1.8788 0.9394 0.9394Q1.8788 0 3.2072 0L3.2072 0Q4.5357 0 5.4751 0.9394Q6.4145 1.8788 6.4145 3.2072Z"/></g></svg>
-diff --git magpie-0.1.3240/internal/provider/brandicons/zcode.png magpie-0.1.3240/internal/provider/brandicons/zcode.png
+diff --git a/internal/provider/brandicons/zcode.png b/internal/provider/brandicons/zcode.png
 new file mode 100644
 index 0000000000000000000000000000000000000000..377db60cc9239341c4d4055dadcf04eb1ba5f078
 GIT binary patch
@@ -11372,7 +11563,7 @@ Q7XSbN07*qoM6N<$g0(QZp8x;=
 literal 0
 HcmV?d00001
 
-diff --git magpie-0.1.3240/internal/provider/checkin_credits_test.go magpie-0.1.3240/internal/provider/checkin_credits_test.go
+diff --git a/internal/provider/checkin_credits_test.go b/internal/provider/checkin_credits_test.go
 new file mode 100644
 index 0000000..64df565
 --- /dev/null
@@ -11426,7 +11617,7 @@ index 0000000..64df565
 +	}
 +	return out
 +}
-diff --git magpie-0.1.3240/internal/provider/checkin_view.go magpie-0.1.3240/internal/provider/checkin_view.go
+diff --git a/internal/provider/checkin_view.go b/internal/provider/checkin_view.go
 new file mode 100644
 index 0000000..b947a16
 --- /dev/null
@@ -11639,7 +11830,7 @@ index 0000000..b947a16
 +	}
 +	return out
 +}
-diff --git magpie-0.1.3240/internal/provider/checkin_view_test.go magpie-0.1.3240/internal/provider/checkin_view_test.go
+diff --git a/internal/provider/checkin_view_test.go b/internal/provider/checkin_view_test.go
 new file mode 100644
 index 0000000..9072ffc
 --- /dev/null
@@ -11793,7 +11984,7 @@ index 0000000..9072ffc
 +		t.Errorf("空着的 collector 不该出现：%s", b)
 +	}
 +}
-diff --git magpie-0.1.3240/internal/provider/credits_estimate.go magpie-0.1.3240/internal/provider/credits_estimate.go
+diff --git a/internal/provider/credits_estimate.go b/internal/provider/credits_estimate.go
 new file mode 100644
 index 0000000..5d695ab
 --- /dev/null
@@ -11862,7 +12053,7 @@ index 0000000..5d695ab
 +	}
 +	return out
 +}
-diff --git magpie-0.1.3240/internal/provider/credits_estimate_test.go magpie-0.1.3240/internal/provider/credits_estimate_test.go
+diff --git a/internal/provider/credits_estimate_test.go b/internal/provider/credits_estimate_test.go
 new file mode 100644
 index 0000000..5c2f86f
 --- /dev/null
@@ -12000,7 +12191,7 @@ index 807a097..d5af823 100644
  	if g.Context < 0 {
  		g.Context = ContextSmallest
  	}
-diff --git magpie-0.1.3240/internal/provider/group_images_test.go magpie-0.1.3240/internal/provider/group_images_test.go
+diff --git a/internal/provider/group_images_test.go b/internal/provider/group_images_test.go
 new file mode 100644
 index 0000000..8fb2824
 --- /dev/null
@@ -12153,7 +12344,7 @@ index dfc2d94..15f2d24 100644
 +	})
  	pruneSmallIcons()
  }
-diff --git magpie-0.1.3240/internal/provider/model_filter_test.go magpie-0.1.3240/internal/provider/model_filter_test.go
+diff --git a/internal/provider/model_filter_test.go b/internal/provider/model_filter_test.go
 new file mode 100644
 index 0000000..9ec8ca3
 --- /dev/null
@@ -12375,7 +12566,7 @@ index f04d02b..caeb342 100644
  			return false, errors.New(p.ID + " makes images and videos only as its own API does: none of its models can be said to make them")
  		}
  		if !p.hasKindable(model) {
-diff --git magpie-0.1.3240/internal/provider/modelkind_serves_test.go magpie-0.1.3240/internal/provider/modelkind_serves_test.go
+diff --git a/internal/provider/modelkind_serves_test.go b/internal/provider/modelkind_serves_test.go
 new file mode 100644
 index 0000000..a5a4408
 --- /dev/null
@@ -12495,7 +12686,7 @@ index c0c525b..50fa60b 100644
  					// the vendor's own day turns then (Qoder's 10:00
  					// UTC+8); a time that doesn't parse is not told
  					if t, err := time.Parse(time.RFC3339, c.Until); err == nil {
-diff --git magpie-0.1.3240/internal/provider/plugin_checkin_accounts_test.go magpie-0.1.3240/internal/provider/plugin_checkin_accounts_test.go
+diff --git a/internal/provider/plugin_checkin_accounts_test.go b/internal/provider/plugin_checkin_accounts_test.go
 new file mode 100644
 index 0000000..d619600
 --- /dev/null
@@ -12568,7 +12759,7 @@ index 2f8c4ac..d7bd201 100644
  	if ic := pluginOwnIcon(pp.Icon); ic != "" {
  		return ic
  	}
-diff --git magpie-0.1.3240/internal/provider/plugin_kind_test.go magpie-0.1.3240/internal/provider/plugin_kind_test.go
+diff --git a/internal/provider/plugin_kind_test.go b/internal/provider/plugin_kind_test.go
 new file mode 100644
 index 0000000..0855a3a
 --- /dev/null
@@ -12935,7 +13126,7 @@ index 19c0304..b82e4d0 100644
  // PricesHeader asks a magpie's model list for what each model costs
  // there ("magpie_price"): a magpie that doesn't send it is told nothing
  // more than before.
-diff --git magpie-0.1.3240/internal/relay/client.go magpie-0.1.3240/internal/relay/client.go
+diff --git a/internal/relay/client.go b/internal/relay/client.go
 new file mode 100644
 index 0000000..72c8e96
 --- /dev/null
@@ -13219,7 +13410,7 @@ index 0000000..72c8e96
 +}
 +
 +func fmtStatus(status int) string { return fmt.Sprintf("http_%d", status) }
-diff --git magpie-0.1.3240/internal/relay/config.go magpie-0.1.3240/internal/relay/config.go
+diff --git a/internal/relay/config.go b/internal/relay/config.go
 new file mode 100644
 index 0000000..9aba97a
 --- /dev/null
@@ -13514,7 +13705,7 @@ index 0000000..9aba97a
 +	text = bearerPattern.ReplaceAllString(text, "${1}<REDACTED>")
 +	return text
 +}
-diff --git magpie-0.1.3240/internal/relay/manager.go magpie-0.1.3240/internal/relay/manager.go
+diff --git a/internal/relay/manager.go b/internal/relay/manager.go
 new file mode 100644
 index 0000000..5faa6bc
 --- /dev/null
@@ -13666,7 +13857,7 @@ index 0000000..5faa6bc
 +	}
 +	m.state = State{Status: "idle", BaseURL: m.state.BaseURL, Model: m.state.Model, KeyHint: m.state.KeyHint, HasKey: m.state.HasKey}
 +}
-diff --git magpie-0.1.3240/internal/relay/paths.go magpie-0.1.3240/internal/relay/paths.go
+diff --git a/internal/relay/paths.go b/internal/relay/paths.go
 new file mode 100644
 index 0000000..2684883
 --- /dev/null
@@ -13679,7 +13870,7 @@ index 0000000..2684883
 +// configDir 是 relay.json 与按平台密钥材料的落点，与 providers.json 同一个
 +// 配置目录（$MAGPIE_CONFIG 优先，便携模式下是程序旁的数据目录）。
 +func configDir() string { return appdir.Config() }
-diff --git magpie-0.1.3240/internal/relay/probe.go magpie-0.1.3240/internal/relay/probe.go
+diff --git a/internal/relay/probe.go b/internal/relay/probe.go
 new file mode 100644
 index 0000000..84b7e84
 --- /dev/null
@@ -14304,7 +14495,7 @@ index 0000000..84b7e84
 +	encoded, _ := json.Marshal(value)
 +	return string(encoded)
 +}
-diff --git magpie-0.1.3240/internal/relay/probe_test.go magpie-0.1.3240/internal/relay/probe_test.go
+diff --git a/internal/relay/probe_test.go b/internal/relay/probe_test.go
 new file mode 100644
 index 0000000..e1864d2
 --- /dev/null
@@ -14788,7 +14979,7 @@ index 0000000..e1864d2
 +		t.Fatal("太短的 Key 不该留任何字符")
 +	}
 +}
-diff --git magpie-0.1.3240/internal/relay/report.go magpie-0.1.3240/internal/relay/report.go
+diff --git a/internal/relay/report.go b/internal/relay/report.go
 new file mode 100644
 index 0000000..f256b70
 --- /dev/null
@@ -14904,7 +15095,7 @@ index 0000000..f256b70
 +	}
 +	return report
 +}
-diff --git magpie-0.1.3240/internal/relay/seal_other.go magpie-0.1.3240/internal/relay/seal_other.go
+diff --git a/internal/relay/seal_other.go b/internal/relay/seal_other.go
 new file mode 100644
 index 0000000..88ae55e
 --- /dev/null
@@ -14987,7 +15178,7 @@ index 0000000..88ae55e
 +	nonce, payload := sealed[:aead.NonceSize()], sealed[aead.NonceSize():]
 +	return aead.Open(nil, nonce, payload, nil)
 +}
-diff --git magpie-0.1.3240/internal/relay/seal_windows.go magpie-0.1.3240/internal/relay/seal_windows.go
+diff --git a/internal/relay/seal_windows.go b/internal/relay/seal_windows.go
 new file mode 100644
 index 0000000..612e706
 --- /dev/null
@@ -15077,7 +15268,7 @@ index 0000000..612e706
 +	}
 +	return plain, nil
 +}
-diff --git magpie-0.1.3240/internal/relay/store.go magpie-0.1.3240/internal/relay/store.go
+diff --git a/internal/relay/store.go b/internal/relay/store.go
 new file mode 100644
 index 0000000..6c2709a
 --- /dev/null
@@ -15209,7 +15400,7 @@ index 0000000..6c2709a
 +	}
 +	return stored.KeyHint
 +}
-diff --git magpie-0.1.3240/internal/relay/verdict.go magpie-0.1.3240/internal/relay/verdict.go
+diff --git a/internal/relay/verdict.go b/internal/relay/verdict.go
 new file mode 100644
 index 0000000..3b884bc
 --- /dev/null
@@ -15511,8 +15702,107 @@ index 083b27d..ff561c9 100644
  	// nor how long a routing group's classifier is given (#2934)
  	if _, sent := fields["classifyTimeout"]; !sent {
  		in.ClassifyTimeout = cur.ClassifyTimeout
+diff --git a/internal/usage/spend.go b/internal/usage/spend.go
+index 9c5ab1e..ed1b39d 100644
+--- a/internal/usage/spend.go
++++ b/internal/usage/spend.go
+@@ -99,12 +99,18 @@ func KeySpent(keyID string, start time.Time) float64 {
+ func readSpent(keyID string, start time.Time) float64 {
+ 	cost := NewCoster()
+ 	var spent float64
+-	Visit(start, func(r Record) {
++	count := func(r Record) {
+ 		if r.ProviderKeyID == keyID && spendCounts(r) && !r.Time.Before(start) {
+ 			c, _ := cost(r)
+ 			spent += c
+ 		}
+-	})
++	}
++	Visit(start, count)
++	// the log rolled at 128 MB (#46): a cap counted from a start before the
++	// live log's first record has the calls before it in usage.jsonl.1
++	if first := readLogSnapshot().first; first.IsZero() || start.Before(first) {
++		visitArchive(start, count)
++	}
+ 	return spent
+ }
+ 
+diff --git a/internal/usage/spend_test.go b/internal/usage/spend_test.go
+index fddd4d6..d9e5fdb 100644
+--- a/internal/usage/spend_test.go
++++ b/internal/usage/spend_test.go
+@@ -2,6 +2,7 @@ package usage
+ 
+ import (
+ 	"math"
++	"os"
+ 	"testing"
+ 	"time"
+ 
+@@ -77,3 +78,61 @@ func TestKeySpentCountsTheKeysCalls(t *testing.T) {
+ 		t.Fatalf("a key never used spent %v", got)
+ 	}
+ }
++
++// The log rolls at rotateMax, keeping one previous file (#46): the live log
++// starts anew, a spend cap counted from before the roll still reads the
++// calls rolled away, and the index is rebuilt for the new file.
++func TestLogRollsAndSpendCrossesTheRoll(t *testing.T) {
++	spendHome(t)
++	old := rotateMax
++	rotateMax = 64 << 10
++	t.Cleanup(func() { rotateMax = old })
++	key := provider.KeyID("sk-a")
++	now := time.Now()
++	start := now.Add(-2 * time.Hour)
++	call := func(at time.Time, in int) Record {
++		return Record{Time: at, Agent: "codex", Provider: "relay", Model: "gpt-9", ProviderKeyID: key, Input: in, Status: 200}
++	}
++	// 400 calls of $1: more than rotateMax of lines, so the log rolls once
++	const calls = 400
++	for i := range calls {
++		Append(call(now.Add(-time.Hour+time.Duration(i)*time.Second), 1e6))
++	}
++	rolled, err := os.Stat(Path() + ".1")
++	if err != nil || rolled.Size() < rotateMax {
++		t.Fatalf("log not rolled: %v %v", rolled, err)
++	}
++	if live, err := os.Stat(Path()); err != nil || live.Size() >= rotateMax {
++		t.Fatalf("live log not started anew: %v %v", live, err)
++	}
++	if got := KeySpent(key, start); math.Abs(got-calls) > 1e-9 {
++		t.Fatalf("key spent %v across the roll, want %d", got, calls)
++	}
++	// the index is the live log's, not the rolled-away one's
++	first := now.Add(-time.Hour)
++	if snap := readLogSnapshot(); snap.first.IsZero() || !snap.first.After(first) || len(snap.blocks) == 0 {
++		t.Fatalf("index not rebuilt for the new log: first %v, blocks %d", snap.first, len(snap.blocks))
++	}
++	// a second roll drops the .1 before it instead of keeping both
++	var before time.Time
++	visitArchive(time.Time{}, func(r Record) {
++		if before.IsZero() {
++			before = r.Time
++		}
++	})
++	for i := range calls {
++		Append(call(now.Add(time.Duration(i)*time.Second), 1e6))
++	}
++	var after time.Time
++	visitArchive(time.Time{}, func(r Record) {
++		if after.IsZero() {
++			after = r.Time
++		}
++	})
++	if !after.After(before) {
++		t.Fatalf("the second roll kept the older archive: first %v, was %v", after, before)
++	}
++	if _, err := os.Stat(Path() + ".2"); !os.IsNotExist(err) {
++		t.Fatalf("a second archive kept: %v", err)
++	}
++}
 diff --git a/internal/usage/usage.go b/internal/usage/usage.go
-index aaf065d..78c7940 100644
+index aaf065d..281e4bc 100644
 --- a/internal/usage/usage.go
 +++ b/internal/usage/usage.go
 @@ -317,6 +317,8 @@ func Append(r Record) {
@@ -15524,16 +15814,19 @@ index aaf065d..78c7940 100644
  	f, before := openLog(path)
  	if f == nil {
  		return
-@@ -335,6 +337,24 @@ func Append(r Record) {
+@@ -335,6 +337,56 @@ func Append(r Record) {
  	noteLogAppend(path, before, after)
  }
  
 +// rotateMax is how large usage.jsonl may grow before it is rolled to
-+// usage.jsonl.1, keeping one previous file (#46).
-+const rotateMax = 8 << 20
++// usage.jsonl.1, keeping one previous file (#46). Two of them are the most
++// the log takes; a variable for the tests, which write no 128 MB.
++var rotateMax int64 = 128 << 20
 +
 +// rollLog rolls path to path+".1" once it is large enough, closing the log
-+// Append keeps open so the next openLog makes a new one.
++// Append keeps open so the next openLog makes a new one. The .1 already
++// there goes first: Windows fails a rename onto an existing file, and a
++// roll that failed would leave the log growing as before (#46).
 +func rollLog(path string) {
 +	st, err := os.Stat(path)
 +	if err != nil || st.Size() < rotateMax {
@@ -15543,7 +15836,36 @@ index aaf065d..78c7940 100644
 +		heldLog.f.Close()
 +		heldLog.f = nil
 +	}
++	if os.Rename(path, path+".1") == nil {
++		return
++	}
++	os.Remove(path + ".1")
 +	_ = os.Rename(path, path+".1")
++}
++
++// visitArchive calls fn with each record of the rolled-away log,
++// usage.jsonl.1, since since (#46). The calls before the live log's first
++// record are there, so a key's spend cap counted from a start before the
++// roll still reads them. Read whole, as Load reads the live log: it has no
++// index of its own, being read only when a window reaches past the live
++// log's first record.
++func visitArchive(since time.Time, fn func(Record)) {
++	f, err := os.Open(Path() + ".1")
++	if err != nil {
++		return
++	}
++	defer f.Close()
++	reader := bufio.NewReaderSize(f, 64<<10)
++	for {
++		b, err := reader.ReadBytes('\n')
++		if err != nil {
++			break
++		} // an unfinished line is left, as Load leaves it
++		var r Record
++		if json.Unmarshal(b, &r) == nil && !r.IsProbe() && (since.IsZero() || !r.Time.Before(since)) {
++			fn(r)
++		}
++	}
 +}
 +
  // heldLog is the log Append keeps open between calls, under mu: every
