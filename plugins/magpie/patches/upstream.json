@@ -11,9 +11,9 @@
   "result": "clean",
   "counts": {
     "files": 141,
-    "hunks": 233,
+    "hunks": 234,
     "appliedFiles": 141,
-    "appliedHunks": 233,
+    "appliedHunks": 234,
     "conflictFiles": 0,
     "conflictHunks": 0
   },
