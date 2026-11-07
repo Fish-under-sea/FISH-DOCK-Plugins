@@ -1,19 +1,19 @@
 {
   "schema": 1,
   "upstream": "yetone/magpie",
-  "baseTag": "v0.1.3207",
-  "baseSha": "da548b4548400b2b2d5409f3c30b51e854b6ca53",
-  "fetchedAt": "2026-11-07T07:13:38.3685598+08:00",
-  "patch": "magpie-v0.1.3207+fish.26.patch",
-  "versionTag": "v0.1.3207+fish.26",
-  "fileVersion": "0.1.3207.26",
+  "baseTag": "v0.1.3240",
+  "baseSha": "e9bde2520db7e66da840d249b74abb75bb3bb0e9",
+  "fetchedAt": "2026-11-07T18:30:00+08:00",
+  "patch": "magpie-v0.1.3240+fish.27.patch",
+  "versionTag": "v0.1.3240+fish.27",
+  "fileVersion": "0.1.3240.27",
   "product": "magpie fish",
   "result": "clean",
   "counts": {
-    "files": 123,
-    "hunks": 175,
-    "appliedFiles": 123,
-    "appliedHunks": 175,
+    "files": 135,
+    "hunks": 214,
+    "appliedFiles": 135,
+    "appliedHunks": 214,
     "conflictFiles": 0,
     "conflictHunks": 0
   },
@@ -22,5 +22,6 @@
   "note2": "#33：neartoken 设置界面通道（neartoken:prefs）+ usage 逐条 rows 落进 fish.18。",
   "note3": "fish.24（magpie 插件 2.2.9）：#36 四项入内——插件页刷新触发重列、handOver 防抖（只认插件已登录那条、不再清 catalog）、分组语义口径钉住、旧 options 三键迁移；另加页面内嵌帧支持（frame-src 放行页面自己目录、bridge.js 任意深度可取），供合并后的「签到&探针」页内两页切换。",
   "note4": "fish.25（#42，基线 v0.1.3140）：模型分类改成「官方判定 + 用户自定义标注」——ModelKinds 从 image/video 扩到 speech/transcription/embedding/rerank，插件 provider 也可标（MarksServesKinds）；plugin.Model 增 kind 字段，pluginCatalog 优先按它落 Draws/Films/Serves；servingOf 收进插件声明的另一类模型（PluginServing），设置页语音/向量行与编辑器分区统一走 ServedAs；编辑器补「其他模型」栏（PluginUnkinded）与六类 Makes… 菜单；prefsKeep 补 speechModel / embedModel。",
-  "note5": "fish.26：把 fish.25 重放到上游 v0.1.3207（落后 67 个 tag）。两处冲突手工消化——providers.go 的 providerJSON 初始化行上游改了相邻字段，补上 MarksServesKinds；core_budget_test.go 上游预算未动而补丁的数值 hunk 对不上，按新基线实测重设 app.js 1,317,737 / 核心脚本 1,542,234。上游自己已把「按 list 顺序列 unticked」内联进各处，fish.24 引入的 unticked 函数随之不再需要，本次不再带。"
+  "note5": "fish.26：把 fish.25 重放到上游 v0.1.3207（落后 67 个 tag）。两处冲突手工消化——providers.go 的 providerJSON 初始化行上游改了相邻字段，补上 MarksServesKinds；core_budget_test.go 上游预算未动而补丁的数值 hunk 对不上，按新基线实测重设 app.js 1,317,737 / 核心脚本 1,542,234。上游自己已把「按 list 顺序列 unticked」内联进各处，fish.24 引入的 unticked 函数随之不再需要，本次不再带。",
+  "note6": "fish.27（#41 / #45，基线 v0.1.3240）：追平 33 个 tag，两处冲突消化（providers.go 的 MarksServesKinds 初始化字段、gateway-routing.md 的 #42 段落按上游新文重写）。provider sticky：#41 的 A 由上游 keepUnloaded 提供（本次只验证），B 加清单字段 magpie.keepListedUntilRemoved（默认保留、声明 false 可关，KeepListedUntilRemoved），C 加专用恢复钩子 neartoken:relist（provider.RestorePluginProviders：把 setAside 的记录放回并触发重列，takeBackLeft 改为返回放回数）。自启动适配 #45（另含 #41 的 P/Q，及复审修正：重试安装 busy 闸、KeepListedUntilRemoved 按 mtime+size 缓存、安装失败换国内镜像重试一次、失败信息截断 2,000 字符、retryInstall 抽公共函数）：安装失败可见与重试 magpie:plugin-retry、首装逐包进度 preinstallProgress 与 /api/preinstall、页面首装弹窗 + 总进度 + 本页锁定 + 三出口）：startWithBackoff 对 start 抛错同样退避重试（magpie），clash 的 autostartKernel 把准备段纳入同一轮重试并每轮只读一次 view，magpie 自启判断复用同一份 view 快照。"
 }
