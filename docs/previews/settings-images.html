@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>magpie 设置 · 图像（2.3.2 预览）</title>
+<style>
+  :root{
+    --bg:#161618; --card:#1f1f22; --line:#3a3a3f; --ink:#e8e8ea; --dim:#9a9aa2;
+    --accent:#5b8cff; --pill:#1a1a1d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;padding:28px 32px 80px}
+  .page{max-width:1180px;margin:0 auto}
+  h1{font-size:15px;font-weight:600;margin:0 0 14px;color:var(--dim)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .row{display:flex;align-items:center;gap:24px;padding:16px 20px;border-top:1px solid var(--line)}
+  .row:first-child{border-top:0}
+  .who{flex:1;min-width:0}
+  .name{font-weight:500}
+  .sub{color:var(--dim);font-size:12.5px;margin-top:3px}
+  .val{flex:0 0 auto;display:flex;align-items:center;gap:8px}
+  .chip{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--pill);white-space:nowrap}
+  .chip .ico{width:16px;height:16px;border-radius:4px;display:inline-block;background:linear-gradient(135deg,#6ea8ff,#8b6bff)}
+  .chip .dot{width:16px;height:16px;border-radius:4px;background:#3d3d44;display:inline-block}
+  .muted{color:var(--dim)}
+  .group{border-top:1px solid var(--line);padding:16px 20px}
+  .group-head{display:flex;align-items:baseline;gap:12px}
+  .group-head .name{font-size:14px}
+  .group-body{margin-top:10px;display:grid;gap:10px}
+  .subrow{display:flex;align-items:center;gap:20px}
+  .subrow .who{flex:0 0 200px;padding-left:14px}
+  .subrow .who .name{font-size:13px;font-weight:400;color:#cfcfd6}
+  .segs{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .segs span{padding:5px 12px;font-size:12.5px;color:var(--dim);border-left:1px solid var(--line);cursor:default}
+  .segs span:first-child{border-left:0}
+  .segs span.on{background:#26262b;color:var(--ink)}
+  .chip.small{width:96px;justify-content:center;font-variant-numeric:tabular-nums}
+  .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12.5px;color:#cfcfd6}
+  .copy{opacity:.55;font-size:12px}
+  .caret{opacity:.55;font-size:11px;margin-left:2px}
+  .tools{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap}
+  .tool{font:12px ui-monospace,Consolas,monospace;color:#b9c7ff;background:#1b1d24;border:1px solid #2c3140;border-radius:6px;padding:2px 8px}
+  .note{margin:14px 0 0;color:var(--dim);font-size:12.5px}
+  .legend{margin:18px 0 8px;color:var(--dim);font-size:12px}
+  .legend b{color:#cfcfd6;font-weight:500}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>设置 · 图像</h1>
+  <div class="card">
+
+    <div class="row">
+      <div class="who">
+        <div class="name">识图模型</div>
+        <div class="sub">把 Magpie Image Recognition 添加给 Agent…</div>
+      </div>
+      <div class="val">
+        <span class="chip"><span class="ico"></span>DeepSeek-V4.1-Flash · 付费组 · deepseek</span>
+        <span class="chip muted">默认</span>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="who">
+        <div class="name">生图模型</div>
+        <div class="sub">把 Magpie Image 添加给 Agent…</div>
+      </div>
+      <div class="val"><span class="chip"><span class="ico"></span>gpt-image-2.5-flare · NearToken</span><span class="chip small">5 分钟 <span class="caret">▾</span></span></span></div>
+    </div>
+
+    <div class="row">
+      <div class="who">
+        <div class="name">视频模型</div>
+        <div class="sub">生成视频用的模型，与生图模型分开挑；两边不重叠。</div>
+      </div>
+      <div class="val"><span class="chip"><span class="dot"></span>sd2.5 · NearToken</span><span class="chip small">15 分钟 <span class="caret">▾</span></span></span></div>
+    </div>
+
+    <div class="row">
+      <div class="who">
+        <div class="name">语音模型</div>
+        <div class="sub">语音合成与转写用的模型：单独列出，不在 Agent 的模型列表里。</div>
+      </div>
+      <div class="val"><span class="chip"><span class="ico"></span>gemini-3.8-flash-tts · NearToken</span><span class="chip small">5 分钟 <span class="caret">▾</span></span></span></div>
+    </div>
+
+    <div class="row">
+      <div class="who">
+        <div class="name">向量模型</div>
+        <div class="sub">向量与重排用的模型：单独列出，不在 Agent 的模型列表里。</div>
+      </div>
+      <div class="val"><span class="chip"><span class="ico"></span>gemini-embedding-2 · NearToken</span><span class="chip small">5 分钟 <span class="caret">▾</span></span></span></div>
+    </div>
+
+    <div class="row">
+      <div class="who">
+        <div class="name">识图 MCP 服务器</div>
+        <div class="sub">给 Agent 的识图工具端点。</div>
+      </div>
+      <div class="val"><span class="mono">http://127.0.0.1:3426/mcp/magpie/vision</span><span class="copy">⧉</span></div>
+    </div>
+
+    <div class="row">
+      <div class="who">
+        <div class="name">素材 MCP 服务器</div>
+        <div class="sub">图 / 视频 / 音频三类产物的出口，工具见下。</div>
+        <div class="tools">
+          <span class="tool">generate_image</span>
+          <span class="tool">generate_video</span>
+          <span class="tool">generate_audio</span>
+        </div>
+      </div>
+      <div class="val"><span class="mono">http://127.0.0.1:3426/mcp/magpie/materials</span><span class="copy">⧉</span></div>
+    </div>
+
+  </div>
+
+  <div class="legend">预览要点：<b>视频模型</b>是新行；<b>响应超时</b>不再是单独一栏——每个模型胶囊右侧一个小胶囊（与「思考强度」同款），点开选 5/10/15/30/60 分钟；<b>生图 MCP</b> 改名 <b>素材 MCP</b>，端点 <span class="mono">/mcp/magpie/materials</span>。</div>
+  <p class="note">这是静态预览（不连后端）：每行右侧的胶囊在真实页面里可点开选择器（5 / 10 / 15 / 30 / 60 分钟）。</p>
+</div>
+</body>
+</html>
