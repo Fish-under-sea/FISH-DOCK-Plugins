@@ -364,7 +364,7 @@ index 1c7eb03..7079848 100644
  		// the decision models its own pickers offer: of a provider with
  		// picks (OpenRouter's twenty-odd), the picked ones, so another
 diff --git a/internal/gateway/image_mcp.go b/internal/gateway/image_mcp.go
-index 2faedef..df5addb 100644
+index 2faedef..2daeb34 100644
 --- a/internal/gateway/image_mcp.go
 +++ b/internal/gateway/image_mcp.go
 @@ -42,6 +42,11 @@ import (
@@ -379,7 +379,7 @@ index 2faedef..df5addb 100644
  // ImageMCPFiles is where the images it made are served from.
  const ImageMCPFiles = ImageMCPPath + "/files/"
  
-@@ -70,9 +75,73 @@ func withMeta(res map[string]any, k string, v any) map[string]any {
+@@ -70,9 +75,149 @@ func withMeta(res map[string]any, k string, v any) map[string]any {
  const (
  	GenerateImageTool    = "generate_image"
  	GenerateVideoTool    = "generate_video"
@@ -419,7 +419,13 @@ index 2faedef..df5addb 100644
 +		// 上游的 /audio/speech 路由存在、但没有渠道能接：常见于只挂了 chat/gemini
 +		// 端点的供应商（NearToken 的 suno / TTS 就这样）。说清楚是供应商没开音频
 +		// 通道，别让人以为是 magpie 坏了（#purge 无关，见 neartoken 适配文档）。
++		// 供应商只挂了 chat/gemini 端点、没有 audio 渠道时（NearToken 的 suno_* 与
++		// gemini-*-tts 就是），改走同一供应商的 chat 端点再试一次：这类模型把音频
++		// 放在回复里（URL / data URI / message.audio.data），标准 audio 路径是走不通的。
 +		if code == http.StatusInternalServerError || code == http.StatusServiceUnavailable || code == http.StatusBadGateway {
++			if m := strings.TrimSpace(model); m != "" {
++				return s.mcpAudioChat(r, text, m, fmt.Sprint(a["voice"]), fmt.Sprint(a["format"]))
++			}
 +			return toolResult(GenerateAudioTool+": this model's provider has no working audio endpoint (it serves the audio path but no channel takes it). Ask the provider to enable an audio endpoint, or pick a model whose provider has one. Upstream said: "+body, true)
 +		}
 +		return toolResult(GenerateAudioTool+" failed: "+body, true)
@@ -431,6 +437,76 @@ index 2faedef..df5addb 100644
 +	return map[string]any{"content": []any{map[string]any{
 +		"type": "audio", "data": base64.StdEncoding.EncodeToString(rec.body.Bytes()), "mimeType": mime,
 +	}}, "isError": false}
++}
++
++// mcpAudioChat makes the same audio the chat way, for providers that serve
++// TTS and music models on the chat endpoint only (no audio channel): the
++// audio comes back in the answer — a data URI, a URL, or message.audio.data.
++func (s *Server) mcpAudioChat(r *http.Request, text, model, voice, format string) map[string]any {
++	where := " (chat fallback: " + model + ")"
++	body, _ := json.Marshal(map[string]any{
++		"model":    model,
++		"messages": []any{map[string]any{"role": "user", "content": text}},
++		"stream":   false,
++	})
++	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
++	if err != nil {
++		return toolResult(GenerateAudioTool+" failed"+where+": "+err.Error(), true)
++	}
++	req.Header.Set("Content-Type", "application/json")
++	rec := &mcpBuffer{}
++	s.handle(provider.Chat)(rec, req)
++	if rec.code != 0 && rec.code != http.StatusOK {
++		return toolResult(GenerateAudioTool+": this model's provider has no working audio endpoint, and its chat endpoint refused the request too"+where+": "+strings.TrimSpace(rec.body.String()), true)
++	}
++	var out struct {
++		Choices []struct {
++			Message struct {
++				Content string
++				Audio   *struct {
++					Data string
++				}
++			}
++		}
++	}
++	if json.Unmarshal(rec.body.Bytes(), &out) != nil || len(out.Choices) == 0 {
++		return toolResult(GenerateAudioTool+": the provider answered something this tool can't read as audio"+where, true)
++	}
++	if a := out.Choices[0].Message.Audio; a != nil && a.Data != "" {
++		return map[string]any{"content": []any{map[string]any{"type": "audio", "data": a.Data, "mimeType": mimeForFormat(format)}}, "isError": false}
++	}
++	said := strings.TrimSpace(out.Choices[0].Message.Content)
++	if i := strings.Index(said, "data:audio/"); i >= 0 {
++		rest := said[i:]
++		if j := strings.Index(rest, ";base64,"); j > 0 {
++			data := strings.Fields(rest[j+len(";base64,"):])
++			if len(data) > 0 {
++				return map[string]any{"content": []any{map[string]any{"type": "audio", "data": data[0], "mimeType": mimeForFormat(format)}}, "isError": false}
++			}
++		}
++	}
++	if i := strings.Index(said, "http"); i >= 0 {
++		return map[string]any{"content": []any{
++			map[string]any{"type": "text", "text": said},
++			map[string]any{"type": "resource_link", "uri": strings.TrimSpace(said[i:]), "name": "audio"},
++		}, "isError": false}
++	}
++	return toolResult(GenerateAudioTool+": the provider answered in text but named no audio"+where+": "+said, true)
++}
++
++// mimeForFormat is the audio type a format asks for.
++func mimeForFormat(format string) string {
++	switch strings.ToLower(strings.TrimSpace(format)) {
++	case "wav":
++		return "audio/wav"
++	case "opus":
++		return "audio/opus"
++	case "aac":
++		return "audio/aac"
++	case "flac":
++		return "audio/flac"
++	}
++	return "audio/mpeg"
 +}
 +
 +// mcpBuffer is the answer writer a tool's in-process call is made with.
@@ -453,7 +529,7 @@ index 2faedef..df5addb 100644
  // ImageToolProps is generate_image's arguments but where to save: images
  // says how an image to draw from may be given.
  func ImageToolProps(images string) map[string]any {
-@@ -156,6 +225,19 @@ func imageMCPTools(r *http.Request) []any {
+@@ -156,6 +301,19 @@ func imageMCPTools(r *http.Request) []any {
  			"inputSchema": ro(VideoToolProps(imageMCPFrom, imageMCPFrom+"s"), true),
  			"annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
  		},
@@ -473,7 +549,7 @@ index 2faedef..df5addb 100644
  		map[string]any{
  			"name":  GenerationResultTool,
  			"title": "Generation result",
-@@ -247,6 +329,8 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
+@@ -247,6 +405,8 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
  			return s.imageMCPDraw(r, p.Arguments), nil
  		case GenerateVideoTool:
  			return s.imageMCPFilm(r, p.Arguments), nil
@@ -482,7 +558,7 @@ index 2faedef..df5addb 100644
  		case GenerationResultTool:
  			var a struct {
  				ID string `json:"id"`
-@@ -254,7 +338,7 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
+@@ -254,7 +414,7 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
  			json.Unmarshal(p.Arguments, &a)
  			return s.imageMCPResult(r, strings.TrimSpace(a.ID)), nil
  		}
