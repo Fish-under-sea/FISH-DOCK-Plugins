@@ -643,6 +643,85 @@ index 18fe9e2..fe8b909 100644
  		t.Fatalf("tools: %s", w.Body.String())
  	}
  	m := readImageReply(t, imagePost(h, "127.0.0.1:5000", imageToolCall(GenerateImageTool, map[string]any{"prompt": "a magpie", "size": "1024x1024", "complexity": "low"})))
+diff --git magpie-0.1.3240/internal/gateway/materials_mcp_test.go magpie-0.1.3240/internal/gateway/materials_mcp_test.go
+new file mode 100644
+index 0000000..6958d6c
+--- /dev/null
++++ b/internal/gateway/materials_mcp_test.go
+@@ -0,0 +1,72 @@
++package gateway
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/yetone/magpie/internal/settings"
++)
++
++// mcpPostAt is mcpPost with the path given: the materials server is served at
++// its own path and must answer exactly as the old image one does (#41).
++func mcpPostAt(h http.Handler, path, addr, body string) *httptest.ResponseRecorder {
++	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
++	r.RemoteAddr = addr
++	r.Host = "127.0.0.1:3425"
++	r.Header.Set("Content-Type", "application/json")
++	r.Header.Set("Accept", "application/json, text/event-stream")
++	w := httptest.NewRecorder()
++	h.ServeHTTP(w, r)
++	return w
++}
++
++// The materials MCP serves the same tools under its new path, generate_audio
++// among them; the old image path keeps working.
++func TestMaterialsMCPPathServesTheSameTools(t *testing.T) {
++	s, _ := easeled(t)
++	t.Cleanup(s.imageStore.running.Wait)
++	h := lanGuard(s.Handler())
++	list := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
++	old := mcpPostAt(h, ImageMCPPath, "127.0.0.1:5000", list)
++	now := mcpPostAt(h, MaterialsMCPPath, "127.0.0.1:5000", list)
++	if old.Code != http.StatusOK || now.Code != http.StatusOK {
++		t.Fatalf("tools/list: old %d, materials %d", old.Code, now.Code)
++	}
++	names := func(w *httptest.ResponseRecorder) string {
++		var out struct {
++			Result struct {
++				Tools []struct{ Name string }
++			}
++		}
++		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
++			t.Fatalf("read %s: %v", w.Body.String(), err)
++		}
++		var ns []string
++		for _, tl := range out.Result.Tools {
++			ns = append(ns, tl.Name)
++		}
++		return strings.Join(ns, ",")
++	}
++	if a, b := names(old), names(now); a != b {
++		t.Fatalf("materials tools %q, image tools %q", b, a)
++	}
++	if got := names(now); got != "generate_image,generate_video,generate_audio,generation_result" {
++		t.Fatalf("tools: %s", got)
++	}
++}
++// The video model picked in Settings is what the video tool uses: the setting
++// wins over the automatic pick (#41).
++func TestVideoModelSettingIsWhatTheToolUses(t *testing.T) {
++	easeled(t)
++	st := settings.Load()
++	st.VideoModel = "neartoken/sd2.5"
++	if err := settings.Save(st); err != nil {
++		t.Fatal(err)
++	}
++	if got, ok := videomaker(); !ok || got != "neartoken/sd2.5" {
++		t.Fatalf("videomaker = %q, %v; want the setting", got, ok)
++	}
++}
+\ No newline at end of file
 diff --git a/internal/gateway/mcp_calls.go b/internal/gateway/mcp_calls.go
 index 27e2ec2..b3255a7 100644
 --- a/internal/gateway/mcp_calls.go
