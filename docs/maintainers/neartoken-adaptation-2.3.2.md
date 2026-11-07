@@ -13,7 +13,7 @@ magpie 按模型自己声明的 kind 分区，不猜。NearToken 提供的非对
 | --- | --- | --- |
 | 生图（如 `gpt-image-2.5-flare`） | `image` | 设置 › 图像 › 生图模型 |
 | 视频（如 `sd2.5`） | `video` | 设置 › 图像 › **视频模型** |
-| 语音合成 / 转写 / **音乐** | `speech`（音乐也归这类，见下） | 设置 › 图像 › 语音模型 |
+| 语音合成 / 转写 / **音乐** | `audio`（分区叫语音；字段值是 audio，见 §6.1） | 设置 › 图像 › 语音模型 |
 | 向量 / 重排 | `embedding` | 设置 › 图像 › 向量模型 |
 
 怎么标（按 NearToken 现在的清单写法选其一）：
@@ -52,3 +52,76 @@ magpie 2.3.2 加了一个专用恢复钩子 `neartoken:relist`：插件页在启
 
 - NearToken 需要的最低 magpie：**2.3.2**（`v0.1.3240+fish.27`）。
 - 抬 `magpie.min` 到 2.3.2 之后，再启用视频模型与 `generate_audio` 的说明。
+
+---
+
+## 6. NearToken 侧回填：实际核对结果（2026-11-07，插件 1.3.0）
+
+### 6.1 kind 取值：是 `audio`，不是 `speech`
+
+上面第 1 节的表格把语音写成 `kind: speech`，那是**分区名**。`internal/provider/plugins.go` 的 `pluginKind` 认的字段值仍是：
+
+```go
+case "image":     c.Draws = true
+case "video":     c.Films = true
+case "audio":     c.Serves = speechKindOf(m.ID)
+case "embedding": c.Serves = embedKindOf(m.ID)
+```
+
+NearToken 从 1.1.8 起发的就是 `image` / `video` / `audio` / `embedding`（`chat` 时不写该字段），与 2.3.2 一致，**这一项不需要改**。文档表格建议改成 `audio`，免得下一个人按 `speech` 写反。
+
+### 6.2 音乐模型不存在「独立 API」分支
+
+第 2 节预设了「音乐可能走 `/music/generations` 之类的独立 API」。实测本站不是这样：
+
+- `suno_lyrics` / `suno_music` / `suno_sound` / `suno_timing` / `suno_stems_by_url` 的 `supported_endpoint_types` 都是 `["openai"]`；
+- 分组是 `[满血] Suno`；
+- `POST /v1/music/generations` 返回 **404** `Invalid URL`。
+
+所以音乐模型和 TTS 一样，只挂 chat 端点，不涉及 `generate_audio` 的分流问题。
+
+### 6.3 关键实测：站点没有可用的 `/audio/*` 渠道
+
+拿宿主凭据直连站点探测（带 `x-neartoken-group` 走正确分组）：
+
+| 端点 | 结果 |
+| --- | --- |
+| `POST /v1/audio/speech`（`gemini-3.8-flash-tts`） | **500** `not implemented` / `convert_request_failed` |
+| `POST /v1/audio/transcriptions`（`gemini-3.5-transcribe`） | **503** `No available channel for model whisper-1` |
+| `POST /v1/music/generations` | **404** `Invalid URL` |
+
+站点自己声明的端点类型全集（`/api/pricing` 全量统计）：
+
+```
+anthropic, gemini, image-generation, openai, openai-response, openai-video
+```
+
+**没有 `audio`。** 也就是说 `/v1/audio/speech` 这条路由在站点上存在（返回 500 而不是 404），但没有渠道能接——TTS 模型实际挂在 `gemini` 与 `openai` 端点上，new-api 无法把它转换成 audio 请求。
+
+带上分组头后请求确实到了渠道（`group=#35`），失败在转换那一步，不是路由或鉴权问题。
+
+### 6.4 这带来的实际后果
+
+NearToken 的 TTS / 转写 / 音乐模型现在会：
+
+1. 按 `kind: audio` 正确进入 magpie 的「语音模型」分区（分类没问题）；
+2. 用户选中后，`generate_audio` 走 `/v1/audio/speech` → **上游 500**。
+
+对用户是「选得到但用不了」的迷惑状态。
+
+### 6.5 需要宿主决策的两条路
+
+- **A. 支持 gemini 原生 TTS**：`generate_audio` 遇到这类只挂 `gemini` 端点的模型时，改走 Gemini 的 `generateContent`（`responseModalities: ["AUDIO"]`），而不是 OpenAI 的 `/audio/speech`；
+- **B. 暂不接收这种 `audio`**：在 `pluginKind` 里加一道判据——模型只挂 chat 端点、又没有 audio 端点时，不把它当 `Serves=speech`，让它留在对话列表，等站点开了 audio 渠道再说。
+
+在宿主决定之前，NearToken 保持现状（标 `audio`），因为分类语义是对的；如果倾向 B，我们这边可以把 `kind` 改成不带，代价是这些模型不再出现在语音分区。
+
+### 6.6 已经做完的两项
+
+| 文档条目 | 状态 |
+| --- | --- |
+| 第 3 节 `neartoken:relist` | **已接**（1.3.0）：已连接时调一次，失败静默隔 3 秒重试一次，每会话最多两次；老宿主没这条通道直接跳过 |
+| 第 5 节 `magpie.min` | **已抬到 2.3.2**（1.3.0） |
+
+`neartoken:relist` 的实际效果目前还没在真机上等到「掉出后再自愈」的场景验证——需要一次插件重载触发掉出，再开插件页看是否自动恢复。这条等有实例时补。
+
