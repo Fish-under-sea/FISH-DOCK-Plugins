@@ -404,7 +404,58 @@ test('pruneTmp 清掉陈旧的导入目录与候选配置，留下正在用的',
  await readFile(live);
 });
 
-// #44：看门狗还原失败时把键名与 Win32 码写进租约旁的日志，并保留租约给下次重试。
+// C5：租约是恢复系统代理的唯一依据。坏 JSON、版本不符、缺字段、字段类型不对，
+// 全部走同一条「丢弃租约」路径；自愈只能返回 discard，不能把异常抛到启动路径上。
+test('C5 租约坏记录：坏 JSON / schema=2 / 缺字段 / 类型错误都丢弃且不抛',async()=>{
+ const live={ProxyEnable:1,ProxyServer:'foreign:8888',ProxyOverride:null};
+ const previous={ProxyEnable:0,ProxyServer:'',ProxyOverride:''};
+ const owned={ProxyEnable:1,ProxyServer:'127.0.0.1:7895',ProxyOverride:''};
+ const badRecords=[
+  '{"schema":1,',
+  JSON.stringify({schema:2,previous,owned}),
+  JSON.stringify({schema:1,previous}),
+  JSON.stringify({schema:1,owned}),
+  JSON.stringify({schema:1,previous:{ProxyEnable:'1',ProxyServer:'',ProxyOverride:''},owned}),
+  JSON.stringify({schema:1,previous,owned:{ProxyEnable:1,ProxyServer:127,ProxyOverride:''}}),
+  JSON.stringify({schema:1,previous:[],owned})
+ ];
+ for(const raw of badRecords){
+  let saved=raw,registryWrites=0;
+  const storage={read:async()=>saved,write:async(c,n,v)=>{saved=v}};
+  const adapter={read:async()=>({...live}),write:async()=>{registryWrites++}};
+  const lease=createProxyLease({storage,adapter});
+  const result=await lease.recoverStale();
+  assert.deepEqual(result,{act:'discard'},`坏记录应丢弃：${raw}`);
+  assert.equal(saved,'',`坏记录要清空：${raw}`);
+  assert.equal(registryWrites,0,'坏记录不许写注册表');
+ }
+});
+// C8：看门狗任务的生命周期跟着「系统代理租约」走——启用后创建，恢复后删除，
+// 停止/关闭时也要删除；注入执行器，单测不碰真实任务计划。
+test('C8 看门狗任务：代理启用后创建、恢复后删除，runtime 停止时也删除',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'clash-watchdog-task-'));
+ try{
+  const storage={read:async(c,n)=>{try{return await readFile(join(dir,c,n),'utf8')}catch{return null}},
+   write:async(c,n,v)=>{await mkdir(join(dir,c),{recursive:true});await writeFile(join(dir,c,n),v,'utf8')}};
+  let live={ProxyEnable:0,ProxyServer:'',ProxyOverride:''};
+  const proxyAdapter={read:async()=>({...live}),write:async values=>{live={...values}}};
+  const calls=[];
+  const runtime=createRuntime({dataDirectory:dir,storage,proxyAdapter,tun:null,
+   watchdogTask:{start:async payload=>{calls.push(['start',payload]);return {ok:true,act:'started'}},
+    stop:async()=>{calls.push(['stop']);return {ok:true,act:'removed'}}}});
+  await runtime.proxy.enable(7895,process.pid);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls[0][0],'start');
+  assert.equal(calls[0][1].leasePath,join(dir,'config','system-proxy.json'));
+  assert.equal(calls[0][1].ownerPid,process.pid);
+  await runtime.proxy.restore(7895);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls.at(-1),['stop']);
+  await runtime.stop();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls.filter(call=>call[0]==='stop').length,2,'runtime.stop 也要把任务收掉');
+ }finally{await rm(dir,{recursive:true,force:true})}
+});
 test('看门狗还原失败留下键名/错误码日志，租约保留',async()=>{
  const {recover}=await import('./watchdog.mjs');
  const dir=await mkdtemp(join(process.env.FISH_TEST_TMP||tmpdir(),'clash-watchdog-log-'));

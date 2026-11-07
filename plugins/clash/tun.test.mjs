@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { iniText, iniRead, validateJob, serviceRoot, jobIniPath, serviceIniPath, createTun, SERVICE_ID } from './tun.mjs';
+import { iniText, iniRead, validateJob, serviceRoot, jobIniPath, serviceIniPath, hostLeasePath, createTun, SERVICE_ID } from './tun.mjs';
 
 const HOME = 'D:/synthetic/.fish-dock/.fishplugin-clash';
 
@@ -25,16 +25,19 @@ test('服务路径固定在 ProgramData，job 与 service.ini 分离', () => {
 });
 
 function fixture({ state = 'stopped', ini = null, job = null, log = '' } = {}) {
-  const writes = [];
+  const writes = [], hostWrites = [], hostRemoved = [];
   const exec = async () => ({ code: 0, stdout: state === 'running' ? 'STATE : 4  RUNNING' : 'STATE : 1  STOPPED' });
   const io = {
     readIni: async () => ini,
     readJob: async () => job,
     readLog: async () => log,
     writeJob: async v => { writes.push(v); },
+    // C7：宿主租约写/删注入，单测不碰 ProgramData。
+    writeHost: async (path, value) => { hostWrites.push({ path, value }); },
+    removeHost: async path => { hostRemoved.push(path); },
     isFile: async () => true
   };
-  return { io, exec, writes };
+  return { io, exec, writes, hostWrites, hostRemoved };
 }
 
 test('status 汇总服务状态、内核绑定与最近日志', async () => {
@@ -69,6 +72,30 @@ test('enable 写 job.ini 并在服务日志确认启动；disable 写 enabled=0'
   phase = 'stop';
   assert.equal(await tun.disable(), true);
   assert.match(f.writes[1], /enabled=0/);
+});
+
+// C7：TUN 由 SYSTEM 服务托管，服务不随宿主 Job 消失。开启 TUN 时写宿主租约，
+// 关 TUN 时删掉；服务侧 Tick 看到宿主 pid 不在了就撤内核并 disable。
+test('C7 TUN 开启写宿主租约、关闭删除，路径与 service.ini 的 home 同源', async () => {
+  const f = fixture({ ini: { kernel: 'C:/k/mihomo.exe', home: HOME } });
+  const tun = createTun({ programData: 'C:/ProgramData', exec: f.exec, platform: 'win32', io: f.io });
+  assert.equal(hostLeasePath(HOME), 'D:\\synthetic\\.fish-dock\\.fishplugin-clash\\host.json');
+  await tun.enable({ config: `${HOME}/tmp/mihomo-runtime.json`, hostPid: 4242 });
+  assert.equal(f.hostWrites.length, 1);
+  assert.equal(f.hostWrites[0].path, hostLeasePath(HOME));
+  const lease = JSON.parse(f.hostWrites[0].value);
+  assert.equal(lease.pid, 4242);
+  assert.ok(Number.isFinite(lease.at) && lease.at > 0);
+  await tun.disable();
+  assert.deepEqual(f.hostRemoved, [hostLeasePath(HOME)]);
+});
+
+// 没传宿主 pid（例如老调用方）时不写一个 pid 无效的租约——那会让服务误判宿主已死。
+test('C7 没有宿主 pid 时不写宿主租约', async () => {
+  const f = fixture({ ini: { kernel: 'C:/k/mihomo.exe', home: HOME } });
+  const tun = createTun({ programData: 'C:/ProgramData', exec: f.exec, platform: 'win32', io: f.io });
+  await tun.enable({ config: `${HOME}/tmp/mihomo-runtime.json` });
+  assert.equal(f.hostWrites.length, 0);
 });
 
 test('enable 拒绝越界配置，不写 job.ini', async () => {

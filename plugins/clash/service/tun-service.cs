@@ -10,6 +10,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.ServiceProcess;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 public sealed class FishClashTunService : ServiceBase
@@ -26,6 +27,8 @@ public sealed class FishClashTunService : ServiceBase
     private string lastJob = "";
     private int restarts;
     private DateTime lastStart = DateTime.MinValue;
+    // C7：宿主已经没了。一旦认定，本次服务生命周期内不再拉起内核。
+    private bool hostGone;
     private readonly object gate = new object();
 
     public FishClashTunService()
@@ -113,6 +116,19 @@ public sealed class FishClashTunService : ServiceBase
     {
         try
         {
+            // C7：宿主不在了就自己撤——TUN 服务是 SYSTEM 托管、独立于宿主的 Job，
+            // 宿主崩溃后内核还会一直把整机流量劫走。这里停内核 + 把 job.ini 置 0，
+            // 等于让虚拟网卡随内核一起消失，用户下一次开 Dock 再重新接管。
+            if (hostGone) return;
+            if (!string.IsNullOrEmpty(home) && HostIsGone())
+            {
+                hostGone = true;
+                Log("host is gone: taking the tun down");
+                KillChild();
+                try { File.WriteAllText(jobPath, "enabled=0" + Environment.NewLine); lastJob = "0|"; }
+                catch (Exception error) { Log("job.ini reset failed: " + error.Message); }
+                return;
+            }
             string config; bool enabled;
             var ok = ReadJob(out config, out enabled);
             var job = ok ? (enabled ? "1|" + config : "0|") : "missing";
@@ -132,6 +148,42 @@ public sealed class FishClashTunService : ServiceBase
             Launch(config);
         }
         catch (Exception error) { Log("watchdog error: " + error.Message); }
+    }
+
+    // C7：宿主租约（插件在 TUN 接管期间写的 <home>/host.json）。没有租约就不据此
+    // 动手——老调用方、还没接管的机器都不该被这个判据误伤。
+    private bool HostIsGone()
+    {
+        try
+        {
+            var lease = Path.Combine(home, "host.json");
+            if (!File.Exists(lease)) return false;
+            var text = File.ReadAllText(lease);
+            var pidMatch = Regex.Match(text, "\"pid\"\\s*:\\s*([0-9]+)");
+            if (!pidMatch.Success) return false;
+            int pid;
+            if (!int.TryParse(pidMatch.Groups[1].Value, out pid) || pid <= 0) return false;
+            long at = 0;
+            var atMatch = Regex.Match(text, "\"at\"\\s*:\\s*([0-9]+)");
+            if (atMatch.Success) long.TryParse(atMatch.Groups[1].Value, out at);
+            try
+            {
+                using (var probe = Process.GetProcessById(pid))
+                {
+                    if (probe.HasExited) return true;
+                    // pid 被系统复用：租约写下之后才启动的进程，不是当初那个宿主。
+                    if (at > 0)
+                    {
+                        var recorded = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMilliseconds(at);
+                        if (probe.StartTime.ToUniversalTime() > recorded.AddSeconds(5)) return true;
+                    }
+                    return false;
+                }
+            }
+            catch (ArgumentException) { return true; }          // 没有这个 pid
+            catch (InvalidOperationException) { return true; }   // 刚好在这一刻退出
+        }
+        catch { return false; }
     }
 
     private void Apply()

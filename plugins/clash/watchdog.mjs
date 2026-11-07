@@ -1,7 +1,7 @@
 // 独立看门狗：Dock 被强杀（或更新时宿主直接消失）以后，插件进程没了，没人再去
 // 恢复系统代理——注册表还指着 127.0.0.1:<mixedPort>，内核要么已经死了（彻底断网），
-// 要么还挂着但没人管（节点一换就回环）。这个进程在插件启动时以 detached 方式拉起，
-// 只干一件事：父进程一消失，就把系统代理还原、把内核结束掉。
+// 要么还挂着但没人管（节点一换就回环）。这个进程由「任务计划」拉起（watchdog-task.mjs），
+// 独立于宿主给插件建的 Job，只干一件事：父进程一消失，就把系统代理还原、把内核结束掉。
 //
 // 为什么不在插件里做：宿主被 Task Manager 结束时插件进程同时被杀，任何「退出时清理」
 // 的代码都来不及跑；只有另起一个进程才盯得住。
@@ -10,7 +10,7 @@
 // <dataDirectory>/config/system-proxy.json 这个真实文件。
 import {existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync, appendFileSync, statSync} from 'node:fs';
 import {dirname} from 'node:path';
-import {spawn} from 'node:child_process';
+import {spawn,execFile} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 export const RECORD_KEYS = ['ProxyEnable', 'ProxyServer', 'ProxyOverride'];
@@ -141,8 +141,19 @@ export async function recover({leasePath, parentPid, mihomoPid, read = () => pow
   return failure ? {act, ...failure} : {act};
 }
 
+// C8：看门狗由任务计划拉起，退出前要把自己的任务注销；否则父进程早没了，任务每 5 分钟
+// 还会再拉起一个新看门狗。用 execFile 传参数，不拼 shell 字符串（任务名/路径带空格）。
+export function deleteTask(taskName,run=(file,args,options,callback)=>execFile(file,args,options,callback)){
+ if(!taskName)return Promise.resolve({ok:true,skipped:true});
+ return new Promise(resolve=>{
+  try{
+   run('schtasks',['/Delete','/TN',String(taskName),'/F'],{windowsHide:true},error=>resolve(error?{ok:false}:{ok:true}));
+  }catch{resolve({ok:false})}
+ });
+}
+
 async function main() {
-  const [parentPid, leasePath, mihomoPid, port] = process.argv.slice(2);
+  const [parentPid, leasePath, mihomoPid, port, taskName] = process.argv.slice(2);
   const pid = Number(parentPid);
   const kernel = Number(mihomoPid);
   const mixed = Number(port);
@@ -153,10 +164,17 @@ async function main() {
   while (Date.now() < deadline) {
     if (!processAlive(pid)) {
       const record = readLease(leasePath);
-      // 记录已经换成新实例的（owner.pid 不同）就别动——那台正在跑。
-      if (record?.owner && Number.isInteger(record.owner.pid) && record.owner.pid !== pid) process.exit(0);
-      if (record?.owned?.ProxyServer && Number.isInteger(mixed) && record.owned.ProxyServer !== `127.0.0.1:${mixed}`) process.exit(0);
+      // 记录已经换成新实例的（owner.pid 不同） or 已清空：任务一起注销，然后退出。
+      if (record?.owner && Number.isInteger(record.owner.pid) && record.owner.pid !== pid) {
+        await deleteTask(taskName);
+        process.exit(0);
+      }
+      if (record?.owned?.ProxyServer && Number.isInteger(mixed) && record.owned.ProxyServer !== `127.0.0.1:${mixed}`) {
+        await deleteTask(taskName);
+        process.exit(0);
+      }
       await recover({leasePath, parentPid: pid, mihomoPid: kernel}).catch(() => {});
+      await deleteTask(taskName);
       process.exit(0);
     }
     await new Promise((r) => setTimeout(r, 800));

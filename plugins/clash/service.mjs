@@ -24,6 +24,9 @@ const defaultPidAlive=pid=>{
 // ORPHAN_SLACK_MS 同口径。取不到（无权限、进程已退、平台不认、PowerShell 全不可用）就返回 null，
 // 调用方一律当作「不是本插件的内核」，不发信号。
 const PID_REUSE_SLACK_MS=5000;
+// 停止时「探活 + 收尾」的加总预算（C6）：控制器永远不回时，stop() 必须在 2 秒内返回。
+// 系统代理已经在第一件事里还回去了，这里的等待只为把内核状态说准，不值得拖住页面。
+const KERNEL_STOP_BUDGET_MS=1600;
 // 解释器候选：FISH_PWSH 覆盖（tun.mjs 也用这个）→ powsh → Windows PowerShell 5.1
 // （5.1 同样能算 Get-Process 的 StartTime；没有 pwsh 的机器不能让清理能力整个失效）。
 function powershellCandidates() {
@@ -608,6 +611,16 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       return view({controller:false});
     });
   }
+  // C3：一次没成功的启动，留下的东西按「内核句柄 → 运行态 → 系统代理」收干净。
+  // 代理恢复失败只记日志：它绝不能把真正的原因（被取消、SPAWN_FAILED、控制器没就绪）盖掉。
+  async function abandonStart({candidate=null}={}){
+    try{if(candidate)await candidate.stop()}catch{/* 内核已经不在、或这根句柄收不掉 */}
+    running=null;kernelPid=null;
+    // 只有真的写过运行态才清：没起来的一轮不该在磁盘上留下一个空记录。
+    try{if(await readRunState())await clearRunState()}catch{}
+    try{await runtime.proxy.restore((await config()).mixedPort)}
+    catch(error){console.error('[clash] 启动失败后恢复系统代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
+  }
   async function start() {
     if(operation)return operation.promise;
       const task={name:'starting',promise:null,controller:new AbortController()};operation=task;operationError='';
@@ -632,8 +645,13 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       }
       secret=await context.secrets.read('keys','controller.key')||randomBytes(32).toString('hex');
       await context.secrets.write('keys','controller.key',secret);
-      const candidate=await runtime.start({...c,secret,subscriptions:enabled,request,signal:task.controller.signal});running=candidate;
-      try{await request('/version')}catch{await candidate.stop();running=null;throw coded('CONTROLLER_UNREACHABLE','内核控制器尚未就绪')}
+      let candidate=null;
+      // C3：拉起失败（含被取消）也要把这一轮的残留收干净；原错误码原样抛出去，
+      // 代理恢复失败只记日志，绝不盖掉「为什么没起来」。
+      try{candidate=await runtime.start({...c,secret,subscriptions:enabled,request,signal:task.controller.signal})}
+      catch(error){await abandonStart();throw error}
+      running=candidate;
+      try{await request('/version')}catch{await abandonStart({candidate});throw coded('CONTROLLER_UNREACHABLE','内核控制器尚未就绪')}
       startedAt=Date.now();ipCache=null;attached=false;attachError=null;attachTask=null;attachRetryAt=0;
       kernelPid=Number.isInteger(candidate.pid)?candidate.pid:null;
       // 运行态落盘是「下次能 attach」的唯一依据；写失败不该让已经起来的内核回滚。
@@ -648,28 +666,52 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     return task.promise;
   }
   // 停止是两件事：内核必须杀干净，系统代理恢复失败只降级为警告（#14 现象 B）。
-  // 顺序也是结论的一部分——先杀内核，再动注册表，恢复失败才拦不住内核。
+  // 顺序是结论的一部分（2.3.4 的 C1/C2）：**先还系统代理，再收内核**。宿主给
+  // deactivate 的预算到点就会 kill 插件，排在后面的那一步等于没做——2026-11-07 现场
+  // 就是「内核刚死、注册表还指着它」，用户整台机器没网。
   async function stop() {
     if(operation?.name==='stopping')return operation.promise;
     const prior=operation?.promise;operation?.controller?.abort();
     const task={name:'stopping',promise:null};operation=task;operationError='';
     task.promise=(async()=>{
+      // ── 第一件事：把系统代理还回去 ────────────────────────────────────
+      const result={kernel:'absent',proxy:'skipped',code:null,message:'',ok:true};
+      let proxyError=null;
+      try{const current=await config();await runtime.proxy.restore(current.mixedPort);result.proxy='restored'}
+      catch(error){
+        proxyError=error;result.proxy='failed';result.ok=false;
+        if(error?.code){
+          result.code=error.code;
+          // #44：把被拒的键名与 Win32 码带进结果，页面与日志不用再猜是哪一步。
+          const why=[typeof error?.key==='string'&&error.key?`写入 ${error.key} 失败`:'',
+            Number.isInteger(error?.win32)&&error.win32>0?`Win32 ${error.win32}`:''].filter(Boolean).join('，');
+          result.message=`系统代理恢复失败（${error.code}${why?`：${why}`:''}）`;
+        }
+      }
       await prior?.catch(()=>{});
       for(const job of jobs.values())job.controller.abort();
       await Promise.allSettled([...jobs.values()].map(j=>j.promise));
       // 插件重载过就只剩落盘记录：先尝试 attach，才能认出「内核其实还在跑」。
-      await ready();
-      const result={kernel:'absent',proxy:'skipped',code:null,message:'',ok:true};
-      let kernelError=null,keepRecord=false,keepAttachError=false;
+      // C6：探活与收尾共享一份 1.6 秒预算。控制器永远不回时，用户要的是「代理已经好了、
+      // 内核状态待确认」，不是一个转不完的圈。
+      const deadline=Date.now()+KERNEL_STOP_BUDGET_MS;
+      const late=Symbol('late');
+      const bounded=work=>Promise.race([Promise.resolve().then(()=>work),
+        new Promise(resolve=>setTimeout(()=>resolve(late),Math.max(0,deadline-Date.now())))]);
+      let kernelError=null,keepRecord=false,keepAttachError=false,timedOut=false;
       try{
-        if(running){await running.stop();result.kernel='stopped'}
-        else{
-          const record=await readRunState();
-          if(record){
+        const attached=await bounded(ready());
+        if(attached===late)timedOut=true;
+        if(!timedOut&&running){await bounded(running.stop());result.kernel='stopped'}
+        else if(!timedOut){
+          const record=await bounded(readRunState());
+          if(record===late)timedOut=true;
+          else if(record){
             // 用户点「停止」是默认路径，这里同样不能只凭 pid 存活就发信号（复审 F2）。
-            const verdict=await residualKernel(record);
-            if(verdict==='service'){try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}result.kernel='stopped'}
-            else if(verdict==='reclaim'){await terminateKernel(record.pid);result.kernel='stopped'}
+            const verdict=await bounded(residualKernel(record));
+            if(verdict===late)timedOut=true;
+            else if(verdict==='service'){try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}result.kernel='stopped'}
+            else if(verdict==='reclaim'){await bounded(terminateKernel(record.pid));result.kernel='stopped'}
             else if(verdict==='attachable'){
               // 控制器还应答：先把这个内核接管成自己的句柄，再按正常路径停——不对没有句柄的 pid 发信号。
               attachRetryAt=0;attachTask=null;
@@ -692,7 +734,14 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       }catch(error){
         kernelError=error;result.kernel='failed';result.ok=false;
         result.code=error?.code??'KERNEL_STOP_UNCONFIRMED';
-        result.message='内核未能确认停止，请在任务管理器中结束 mihomo 进程后重试';
+        result.message='内核未确认停止（控制器无响应），请在任务管理器中结束 mihomo 进程后重试';
+      }
+      if(timedOut&&!kernelError){
+        // 探活超时＝放弃确认：不谎报 stopped，也不谎报 absent。
+        result.kernel='failed';result.ok=false;
+        result.code='KERNEL_STOP_UNCONFIRMED';
+        result.message='内核未确认停止（控制器无响应），请在任务管理器中结束 mihomo 进程后重试';
+        operationError=result.message;
       }
       running=null;startedAt=0;ipCache=null;attached=false;kernelPid=null;
       // TUN 由 SYSTEM 服务托管时，确保服务侧内核也停下（running 为空时的兜底）。
@@ -701,20 +750,9 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       if(!keepRecord)await clearRunState();
       attachTask=null;attachRetryAt=0;
       if(!keepRecord&&!keepAttachError)attachError=null;
-      // 系统代理恢复：只有带 code 的适配层错误才降级为警告；
-      // 没有 code 的异常说明不是已知状况，保持原有「停止失败」语义，但带上结构化结果。
-      let proxyError=null;
-      try{await runtime.proxy.restore((await config()).mixedPort);result.proxy='restored'}
-      catch(error){
-        proxyError=error;result.proxy='failed';result.ok=false;
-        if(error?.code){
-          result.code=error.code;
-          // #44：把被拒的键名与 Win32 码带进结果，页面与日志不用再猜是哪一步。
-          const why=[typeof error?.key==='string'&&error.key?`写入 ${error.key} 失败`:'',
-            Number.isInteger(error?.win32)&&error.win32>0?`Win32 ${error.win32}`:''].filter(Boolean).join('，');
-          result.message=`内核已停止，系统代理恢复失败（${error.code}${why?`：${why}`:''}）`;
-        }
-      }
+      // 结尾不再重复恢复系统代理：第一件事已经做过，重复一次只会在预算末尾再抢一次注册表。
+      // 「内核已经停了、只是代理没还回去」时把这句话补全：用户要知道内核那半是好的。
+      if(result.proxy==='failed'&&result.message&&!result.message.startsWith('内核'))result.message='内核已停止，'+result.message;
       if(kernelError)throw coded(result.code,result.message,{result});
       if(proxyError&&!proxyError.code)throw Object.assign(proxyError,{result});
       if(proxyError)operationError=result.message;

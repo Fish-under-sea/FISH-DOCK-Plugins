@@ -73,3 +73,47 @@
    后续若再加「整体替换视图」的入口，必须走它；否则首屏/刷新会再次出现「标签写已启用、卡片无高亮」。
 3. `swapConfig` 的 rename 失败分支现在也删候选文件；`SUBSCRIPTION_SWITCH_FAILED` 的 `cause` 改为
    **原始错误对象**（保留堆栈与 URL），日志侧取原始码请用 `error.cause.code`。
+## 8. 2.3.4：断网四层兜底（C1–C8）
+
+现场：2026-11-07 关掉 Clash 后整机断网——注册表 `ProxyEnable=1`、`ProxyServer=127.0.0.1:7895`，
+而 7895 已经没有监听。四条路径各自能造成它，这次一起补齐。
+
+1. **C1/C2/C4 停止顺序**：`service.stop()` 的第一件事改成 `runtime.proxy.restore(mixedPort)`，
+   之后才收内核；结尾不再重复恢复。宿主给 `deactivate` 的预算（2.1.8 起单独 30 秒）到点就 kill
+   插件，排在后面的那一步等于没做——这就是现场那个「内核刚死、注册表还指着它」。
+2. **C3 启动失败**：`abandonStart()` 统一收尾（收候选内核 → 清 `run-state.json` → 还代理），
+   被取消 / `SPAWN_FAILED` / `CONTROLLER_UNREACHABLE` 三条路都不再留死代理；代理恢复失败只记
+   日志，绝不盖掉原错误码。
+3. **C5 坏租约**：`schema` 不符、缺 `previous`/`owned`、字段类型不对，全部走同一条「丢弃 + 带 code」
+   路径；`recoverStale()` 遇到坏记录返回 `{act:'discard'}`。
+4. **C6 半死内核**：停止时的「探活 + 收尾」共享 `KERNEL_STOP_BUDGET_MS=1600` 预算。控制器永不
+   回时 `stop()` 1.6 秒返回：代理已恢复、内核状态报 `failed / KERNEL_STOP_UNCONFIRMED`，
+   不再把页面挂住。
+5. **C7 TUN 宿主看门狗**：插件在 `tun.enable()` 时写 `<home>/host.json`（`{pid,at}`，`home` 就是
+   `service.ini` 里那个），`disable()` 删掉；`tun-service.cs` 的 `Tick()` 每 1.5 秒读它，宿主进程
+   不在（或 pid 被复用：进程启动时刻晚于租约 5 秒以上）就停内核 + 把 `job.ini` 的 `enabled`
+   置 0。服务是 SYSTEM 托管、独立于宿主的 Job，这一步只能由服务自己做。
+6. **C8 看门狗改任务计划**：不再 `spawn(detached)`（Windows 上不带 `CREATE_BREAKAWAY_FROM_JOB`，
+   宿主一死 Job 关闭，看门狗跟着消失）。`watchdog-task.mjs` 用一次 pwsh 注册
+   `FISH Dock clash watchdog-<SID>`（`-Once` + 每 5 分钟重复 + `IgnoreNew` + 13 小时上限）并
+   立即启动；只在系统代理被接管期间存在：`proxy.enable()` 成功才建，`restore()` 成功就注销，
+   `stop()/shutdown()` 也注销。看门狗自己恢复完用 `schtasks /Delete` 删掉自己的任务。
+
+### 重新编译 tun-service.exe（C# 5，勿用新语法）
+
+```powershell
+$csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+& $csc /nologo /target:exe /platform:anycpu /optimize+ `
+  /out:"plugins\clash\service\tun-service.exe" /r:System.ServiceProcess.dll `
+  "plugins\clash\service\tun-service.cs"
+```
+
+**已在用 TUN 的用户要重新点一次「安装 TUN 服务」**：服务 exe 是安装时复制到
+`%ProgramData%\FishDock\clash-tun` 的，插件升级不会替你替换正在运行的那一份。
+
+### 单测
+
+- `node --test --test-isolation=none "plugins/clash/*.test.mjs"`：166 条，164 通过、0 失败
+  （`page.browser.test.mjs` 需要 Edge + playwright，本机不跑）。
+- 新增：C1/C2 顺序、C3 三条失败路径、C6 预算、C7 宿主租约写/删、C8 任务注册/注销与
+  自删任务。

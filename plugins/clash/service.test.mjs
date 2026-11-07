@@ -12,7 +12,12 @@ test('failed proxy restoration still stops the owned core and remains retryable'
  await f.service.stop();assert.equal((await f.service.view()).error,'');
 });
 function fixture(disk=new Map(),options={}) {
- const requests=[],updates=[],kills=[],swaps=[];let up=false,starts=0,stops=0,owned,fail=false,blocked=null,delayError=null,switchDown=false,startDown=false;
+ // events 只记录「谁先谁后」：断网修复的顺序断言（C1/C2）靠它，不参与业务逻辑。
+ const events=[],requests=[],updates=[],kills=[],swaps=[];let up=false,starts=0,stops=0,owned,fail=false,blocked=null,delayError=null,switchDown=false,startDown=false;
+ // 控制器永不响应：探活预算（C6）必须让 stop() 在 2 秒内返回。
+ const controllerHang=options.controllerHang===true;
+ // /version 失败：启动失败路径（C3）要给 candidate 收尾并还代理。
+ let versionDown=options.versionDown===true;
  // external 模拟「插件进程重启后仍有残留内核」：pid 还活着、控制器可应答，但不是本实例 spawn 的。
  const external=options.external?{alive:true,...options.external}:null;
  const controllerUp=options.controller!==false;
@@ -25,8 +30,11 @@ function fixture(disk=new Map(),options={}) {
  const subs=()=>owned?.subscriptions??external?.subscriptions??[];
  const request=async(path,options={})=>{
   requests.push({path,...options});
+  // 控制器挂起：连超时都不回，专门验证 stop() 的探活预算。
+  if(controllerHang)return new Promise(()=>{});
   // 目标内核不认 PUT /configs（老版本/被代理挡住）：热切换必须明确失败并回滚。
   if(switchDown&&path.startsWith('/configs?force=true'))throw Object.assign(Error('控制器拒绝热重载'),{code:'CONTROLLER_UNREACHABLE'});
+  if(versionDown&&path==='/version')throw Object.assign(Error('控制器尚未就绪'),{code:'CONTROLLER_UNREACHABLE'});
   if(delayError&&path.includes('/delay?'))throw delayError;
   if(!controllerUp)throw Object.assign(Error('控制器不可达'),{code:'CONTROLLER_UNREACHABLE'});
   // 残留内核（不是本实例 spawn 的）控制器不通：用来证明 attach 失败后也不会盲杀 pid。
@@ -47,9 +55,9 @@ function fixture(disk=new Map(),options={}) {
    path==='/rules'?{rules:[{type:'MATCH',payload:'',proxy:'🐟 漏网之鱼'},{type:'GEOSITE',payload:'cn',proxy:'🎯 全球直连'},{type:'GEOIP',payload:'cn',proxy:'🎯 全球直连'}]}:
    path.includes('/delay?')?{delay:path.includes('youtube')?0:87}:{url:'https://private.test/?token=PRIVATE'};
  };
- const runtime={start:async c=>{if(startDown)throw Object.assign(Error('启动失败'),{code:'SPAWN_FAILED'});starts++;up=true;owned=c;return {alive:()=>up,pid:kernelPid,mode:'process',stop:async()=>{stops++;up=false}}},
+ const runtime={start:async c=>{if(startDown)throw Object.assign(Error('启动失败'),{code:'SPAWN_FAILED'});starts++;up=true;owned=c;events.push('kernel-start');return {alive:()=>up,pid:kernelPid,mode:'process',stop:async()=>{stops++;up=false;events.push('kernel-stop')}}},
   // 结束残留内核（不是本实例 spawn 的）：记录 pid，按 external 状态回报是否真的没了。
-  kill:async pid=>{kills.push(pid);if(external&&external.pid===pid)external.alive=false;return true},
+  kill:async pid=>{kills.push(pid);events.push('kernel-kill');if(external&&external.pid===pid)external.alive=false;return true},
   updateSubscription:async c=>{updates.push(c);await blocked;if(c.signal.aborted||fail)throw Error('token=PRIVATE');await c.apply?.();await c.commit({nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}});return {nodeCount:2,userInfo:{upload:1,download:2,total:10,used:3,expire:1767225600}}},
   // 运行中热切换：service 只把「新启用集 + apply 回调」交出去；这里记录调用并真的走 apply，
   // 好让「PUT /configs?force=true 失败」这条路径也能被验证（配置文件的 rename 由 runtime 真实实现负责）。
@@ -57,12 +65,12 @@ function fixture(disk=new Map(),options={}) {
    swaps.push({settings,secret,subscriptions:subscriptions.map(s=>[s.id,s.enabled])});
    await apply(`${context.dataDirectory}/tmp/mihomo-runtime.next.json`);
   },
-  proxy:{enable:async()=>{},restore:async()=>{},active:()=>false},
+  proxy:{enable:async()=>{events.push('proxy-enable')},restore:async()=>{events.push('proxy-restore')},active:()=>false},
   tun:{status:async()=>({installed:tunInstalled,state:tunInstalled?'running':'absent',kernel:tunKernel,log:''}),
    install:async({kernel})=>{tunInstalled=true;tunKernel=kernel},
    uninstall:async()=>{tunInstalled=false;return {installed:false}},
    enable:async()=>true,disable:async()=>true},
-  tunStop:async()=>{},
+  tunStop:async()=>{events.push('tun-stop')},
   // #46：宿主的 storage 没有 delete，订阅地址/缓存由 runtime 自己删；夹具照做。
   removeSubscription:async id=>{disk.delete(`secret/credentials/${id}.yaml`);disk.delete(`secret/credentials/${id}.json`)},
   removeCredential:async name=>{disk.delete(`secret/credentials/${name}`)}};
@@ -82,11 +90,13 @@ function fixture(disk=new Map(),options={}) {
   }catch{/* 坏记录按取不到处理 */}
   return null;
  }});
- return {service,disk,requests,updates,swaps,runtime,context,external,stats:()=>({starts,stops,up,owned,kills}),
+ return {service,disk,requests,updates,swaps,runtime,context,external,events,stats:()=>({starts,stops,up,owned,kills}),
   // 模拟「目标内核不认 PUT /configs」。
   refuseReload:(on=true)=>{switchDown=on},fail:()=>{fail=true},
   // 模拟「重启内核失败」（热切换失败后的兜底路径）。
   refuseStart:(on=true)=>{startDown=on},
+  // 模拟「/version 永远不就绪」（C3 的启动失败路径）。
+  refuseVersion:(on=true)=>{versionDown=on},
   // 模拟「残留内核的控制器从不通恢复为可达」。
   setExternalController:on=>{externalDown=on===false},
   breakDelay:error=>{delayError=error},
@@ -609,6 +619,106 @@ test('注册表读写失败带代码同样只降级：内核已停止 + 系统�
  assert.match(state.error,/PROXY_REGISTRY_WRITE_FAILED/);
  assert.match(state.error,/写入 ProxyServer 失败/);
  assert.match(state.error,/Win32 5/);
+});
+// C1（断网第一层）：宿主给 deactivate 只有 5 秒，超时直接 kill 插件。若先杀内核、最后才
+// 动注册表，插件被 kill 时系统代理还指着刚死的 127.0.0.1:<mixedPort>，用户整机断网。
+// 所以 stop() 的第一件事必须是 restore，结尾不再重复。
+test('C1 停止先恢复系统代理，再结束内核',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ f.events.length=0;
+ await f.service.stop();
+ const restored=f.events.indexOf('proxy-restore'),stopped=f.events.indexOf('kernel-stop');
+ assert.ok(restored>=0,'系统代理必须被恢复');
+ assert.ok(stopped>=0,'内核必须被结束');
+ assert.ok(restored<stopped,`restore 必须先于结束内核（实际 ${f.events.join(' → ')}）`);
+ assert.equal(f.events.filter(event=>event==='proxy-restore').length,1,'结尾不许再重复恢复一次');
+});
+// C2：deactivate → service.shutdown() → stop()。停用路径同样只能恢复一次，且先于内核结束。
+test('C2 停用只恢复一次系统代理，且发生在内核结束之前',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ f.events.length=0;
+ await f.service.shutdown();
+ assert.equal(f.events.filter(event=>event==='proxy-restore').length,1);
+ const restored=f.events.indexOf('proxy-restore'),stopped=f.events.indexOf('kernel-stop');
+ assert.ok(restored>=0&&stopped>=0&&restored<stopped,`实际 ${f.events.join(' → ')}`);
+});
+// C3：启动被取消。内核没起来，但 run-state 与系统代理租约都不能留；恢复失败只记日志，
+// 不能把「启动已取消」改写成代理错误。
+test('C3 启动被取消：run-state 与租约都不残留，代理恢复被调用',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ f.disk.set('config/system-proxy.json',JSON.stringify({schema:1,
+  previous:{ProxyEnable:0,ProxyServer:'',ProxyOverride:''},
+  owned:{ProxyEnable:1,ProxyServer:'127.0.0.1:7895',ProxyOverride:''}}));
+ let restores=0;
+ f.runtime.proxy.restore=async()=>{restores++;f.disk.delete('config/system-proxy.json')};
+ let seenSignal;
+ f.runtime.start=async({signal})=>{
+  seenSignal=signal;
+  // 模拟「内核已经拉起来、运行态已落盘，随后启动被取消」。
+  f.disk.set('config/run-state.json',JSON.stringify({schema:1,pid:4242,mode:'process',
+   mixedPort:7895,controllerPort:9099,startedAt:Date.now(),subscriptions:[],secretFingerprint:'0'.repeat(16)}));
+  await new Promise((resolve,reject)=>{
+   if(signal.aborted)return reject(Error('aborted'));
+   signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true});
+  });
+ };
+ const starting=f.service.start();const rejected=assert.rejects(starting);
+ await tick();await f.service.stop();await rejected;
+ assert.equal(seenSignal.aborted,true);
+ assert.equal(f.disk.has('config/system-proxy.json'),false,'租约要清掉');
+ assert.equal(f.disk.get('config/run-state.json'),'','运行态记录要清掉');
+ assert.equal(restores,2,'启动清理一次 + 停止一次');
+});
+// C3：runtime.start 自己抛错（内核没起来）：只清运行态并还代理，原错误码必须保留。
+test('C3 内核启动失败：不残留运行态，代理恢复失败不掩盖原错误',async()=>{
+ const f=fixture();await f.service.save(kernel);f.refuseStart();
+ f.disk.set('config/system-proxy.json','{"schema":1,"previous":{},"owned":{}}');
+ let restores=0;
+ f.runtime.proxy.restore=async()=>{restores++;throw Object.assign(Error('registry denied'),{code:'PROXY_REGISTRY_WRITE_FAILED'})};
+ await assert.rejects(f.service.start(),error=>error.code==='SPAWN_FAILED','不能被代理恢复错误掩盖');
+ assert.equal(restores,1);
+ assert.ok(!f.disk.has('config/run-state.json'),'不应留下运行态记录');
+});
+// C3：内核起来了但控制器没就绪：要收掉 candidate，不能把半启动的内核留在后台。
+test('C3 控制器不就绪：启动失败也收掉内核并还代理',async()=>{
+ const f=fixture();await f.service.save(kernel);f.refuseVersion();
+ let restores=0;
+ f.runtime.proxy.restore=async()=>{restores++;f.disk.delete('config/system-proxy.json')};
+ f.disk.set('config/system-proxy.json','{"schema":1,"previous":{},"owned":{}}');
+ await assert.rejects(f.service.start(),error=>error.code==='CONTROLLER_UNREACHABLE');
+ assert.equal(f.stats().starts,1);
+ assert.equal(f.stats().stops,1,'启动出来的半成品内核要收掉');
+ assert.equal(restores,1);
+ assert.equal(f.disk.has('config/system-proxy.json'),false);
+ assert.ok(!f.disk.has('config/run-state.json'),'启动没成功就不该有运行态记录');
+});
+// C6：控制器永不响应（不是超时，是永远不回）。探活与收尾共享 2 秒预算：
+// 到点放弃确认、直接返回；代理已经在最前面恢复好了。
+test('C6 控制器永不响应：stop 2 秒内返回且代理已恢复',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ const record=JSON.parse(f.disk.get('config/run-state.json'));
+ const g=fixture(f.disk,{external:{pid:record.pid},controllerHang:true});
+ let restores=0;g.runtime.proxy.restore=async()=>{restores++};
+ const at=Date.now();const state=await g.service.stop();const elapsed=Date.now()-at;
+ assert.ok(elapsed<2200,`stop 必须在 2 秒内返回（实际 ${elapsed}ms）`);
+ assert.equal(restores,1,'代理必须先恢复');
+ assert.equal(state.stop.proxy,'restored');
+ // 探活失败＝放弃确认：不谎报 stopped，也不谎报 absent。
+ assert.equal(state.stop.kernel,'failed');
+ assert.equal(state.stop.code,'KERNEL_STOP_UNCONFIRMED');
+ assert.match(state.error,/未确认停止/);
+});
+// C4：clash.stop 是 fire-and-forget，但错误必须落进 operationError，页面刷新能看到，
+// 不能出现「接口说停了、状态还是运行中」。
+test('C4 停止失败经 operationError 暴露，不静默吞掉',async()=>{
+ const f=fixture();await f.service.save(kernel);await f.service.start();
+ f.runtime.proxy.restore=async()=>{throw Object.assign(Error('registry denied'),{code:'PROXY_REGISTRY_WRITE_FAILED'})};
+ const state=await f.service.stop();
+ assert.equal(state.stop.proxy,'failed');
+ assert.match(state.error,/PROXY_REGISTRY_WRITE_FAILED/);
+ const after=await f.service.view({controller:false});
+ assert.equal(after.running,false);
+ assert.match(after.error,/PROXY_REGISTRY_WRITE_FAILED/,'刷新后仍能看到失败原因');
 });
 // 现象 D：换节点后 IP 信息仍是旧节点的出口。
 test('换节点后服务端清空出口 IP 缓存，不再返回旧节点出口',async()=>{

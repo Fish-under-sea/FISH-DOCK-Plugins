@@ -1,13 +1,15 @@
 import {spawn} from 'node:child_process';
 import {join,dirname} from 'node:path';
 import {createServer,connect as netConnect} from 'node:net';
-import {fileURLToPath} from 'node:url';
 import {connect as tlsConnect} from 'node:tls';
 import http from 'node:http';
 import {mkdir} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {writeFile,rename,readFile,unlink,readdir,stat,rm} from 'node:fs/promises';
 import {createSubscriptionRuntime,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
+// C8：看门狗不再用 detached 子进程（Windows 上 detached 不带 CREATE_BREAKAWAY_FROM_JOB，
+// 宿主一死 Job 关闭，看门狗跟着消失），改成任务计划拉起的独立进程。
+import {start as startWatchdogTask,stop as stopWatchdogTask} from './watchdog-task.mjs';
 // 校验错误统一挂码：文案在 shared/errors.mjs 按 code 查表，页面不再做中文正则匹配。
 import {serviceError} from '../../shared/errors.mjs';
 const coded=(code,message,extra)=>{
@@ -31,6 +33,18 @@ export async function killProcess(pid,{timeoutMs=2000,step=80}={}){
  return !processAlive(pid);
 }
 export {processAlive};
+// 恢复记录里的快照必须是三项固定键的字典，且类型正确：坏记录一律丢弃，绝不能让
+// undefined / 字符串流进注册表写入（C5）。null 是「注册表里没有这个值」的合法表示。
+const proxySnapshot=value=>{
+ if(!value||typeof value!=='object'||Array.isArray(value))return false;
+ for(const key of ['ProxyEnable','ProxyServer','ProxyOverride']){
+  const item=value[key];
+  if(item===null||item===undefined)continue;
+  if(key==='ProxyEnable'){if(!Number.isInteger(item))return false;continue}
+  if(typeof item!=='string')return false;
+ }
+ return true;
+};
 export function createProxyLease({storage,adapter}){
  let active=false;
  const same=(a,b)=>['ProxyEnable','ProxyServer','ProxyOverride'].every(k=>a[k]===b[k]);
@@ -74,7 +88,9 @@ export function createProxyLease({storage,adapter}){
   }
   let record=null;
   try{record=JSON.parse(raw)}catch{/* 坏 JSON 与坏结构同样处理 */}
-  if(!record||record.schema!==1||!record.previous||!record.owned){
+  // C5：schema 不符、缺 previous/owned、字段类型不对，全部走同一条丢弃路径——
+  // 恢复系统代理不能因为一条坏记录把「停止内核」或「启动自愈」整个拖死。
+  if(!record||typeof record!=='object'||record.schema!==1||!proxySnapshot(record.previous)||!proxySnapshot(record.owned)){
    await discard();
    throw coded('PROXY_RESTORE_RECORD_INVALID','系统代理恢复记录无效，已丢弃');
   }
@@ -272,9 +288,37 @@ export async function pruneTmp(dataDirectory){
  if(removed)console.error(`[clash] TEMP 清理：删除 ${removed} 个过期条目`)
 }
 export function createRuntime(context){
- const adapter={async read(){return powershell('read')},async write(values){await powershell('write',values)}};
- const proxy=createProxyLease({storage:context.storage,adapter});
+ const adapter=context.proxyAdapter||{async read(){return powershell('read')},async write(values){await powershell('write',values)}};
+ const lease=createProxyLease({storage:context.storage,adapter});
  const tun=context.tun||null;
+ // C8：看门狗任务只在「系统代理被本插件接管」期间存在。start/stop 由任务计划执行，
+ // 这里只负责生命周期；失败只记日志，绝不拦住开/关代理。
+ const watchdog=context.watchdogTask||{start:startWatchdogTask,stop:stopWatchdogTask};
+ const watchdogLeasePath=join(context.dataDirectory,'config','system-proxy.json');
+ let watchdogPort=0,watchdogKernelPid=0;
+ const logWatchdog=error=>console.error('[clash] 看门狗任务操作失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''));
+ function armWatchdog(){
+  if(!lease.active())return;
+  const payload={leasePath:watchdogLeasePath,mihomoPid:watchdogKernelPid,port:watchdogPort,ownerPid:process.pid};
+  // fire-and-forget：任务计划要起一次 pwsh，不能让「开代理」等它。
+  Promise.resolve().then(()=>watchdog.start(payload)).then(result=>{
+   if(result&&result.ok===false)console.error('[clash] 看门狗任务创建失败：'+(result.error??'UNKNOWN'));
+  }).catch(logWatchdog);
+ }
+ function disarmWatchdog(){
+  Promise.resolve().then(()=>watchdog.stop()).then(result=>{
+   if(result&&result.ok===false)console.error('[clash] 看门狗任务注销失败：'+(result.error??'UNKNOWN'));
+  }).catch(logWatchdog);
+ }
+ // 恢复系统代理成功＝不再需要看门狗；失败则保留任务，让它下次还能重试（C8）。
+ const proxy={...lease,
+  enable:async(port,ownerPid)=>{await lease.enable(port,ownerPid);watchdogPort=port;armWatchdog()},
+  restore:async port=>{const result=await lease.restore(port);disarmWatchdog();return result},
+  recoverStale:async()=>{
+   const result=await lease.recoverStale();
+   if(result?.act==='restore'||result?.act==='discard')disarmWatchdog();
+   return result;
+  }};
  // 启动自愈只跑一次，且 start() 会先等它：上一次 Dock 被强杀留下的租约要先还原，
  // 否则可能与随后的「启用系统代理」抢注册表（先写新租约、再被旧记录还原掉）。
  let recovery=null;
@@ -352,9 +396,12 @@ export function createRuntime(context){
     const error=Error('已安装的 TUN 服务绑定了另一个内核，请重新安装服务');error.code='TUN_KERNEL_MISMATCH';throw error}
    viaService=true;
    try{
-    const applied=await tun.enable({config:runtimePath,home:context.dataDirectory});
+    // C7：宿主租约写进服务侧能读到的 <home>/host.json；宿主消失后服务据此撤内核。
+    const applied=await tun.enable({config:runtimePath,home:context.dataDirectory,hostPid:process.pid});
     if(!applied)throw serviceError('TUN_START_UNCONFIRMED');
     if(!(await waitController(c,15000)))throw serviceError('TUN_READY_TIMEOUT');
+    // TUN 内核由服务托管，没有本进程的 pid：看门狗只负责还代理。
+    watchdogKernelPid=0;watchdogPort=c.mixedPort;armWatchdog();
     return {alive:()=>viaService,pid:null,mode:'service',stop:async()=>{await tun.disable().catch(()=>{});viaService=false}};
    }catch(error){viaService=false;throw error}
   }
@@ -368,11 +415,9 @@ export function createRuntime(context){
   let failure=null;child.on('error',()=>{failure=Error('mihomo 内核启动失败')});
   const exited=new Promise(resolve=>{child.once('exit',resolve);child.once('error',resolve)});
   const alive=()=>!failure&&child.exitCode===null&&child.signalCode===null;
-  let stopping,watchdogPid=0;
+  let stopping;
   function stop(){
    return stopping??=(async()=>{
-    // 正常停止：先遣散看门狗，否则它会把下面这次「主动停止」当成宿主意外退出。
-    if(watchdogPid)try{process.kill(watchdogPid,'SIGTERM')}catch{};
     if(alive()){child.kill('SIGTERM');const timer=setTimeout(()=>child.kill('SIGKILL'),1500);
      try{await exited}finally{clearTimeout(timer)}}
     await context.storage.write('tmp','mihomo-runtime.json','');
@@ -386,10 +431,11 @@ export function createRuntime(context){
     void proxy.restore(c.mixedPort).catch(()=>{});
     void (async()=>{try{const info=await tun?.status();if(info?.enabled)await tun.disable()}catch{/* 服务未装或已停 */}})();
    });
-   // Dock 被强杀时插件进程同时消失，上面那个 exit 回调没机会跑：另起一个看门狗
-   // 盯住本进程，它一消失就还原系统代理并把内核结束掉（watchdog.mjs）。
-   if(proxy.active())watchdogPid=spawnWatchdog({leasePath:join(context.dataDirectory,'config','system-proxy.json'),mihomoPid:child.pid,port:c.mixedPort});
-   return {alive,stop,pid:child.pid,mode:'process',watchdogPid};
+   // C8：Dock/插件进程被强杀时，退出回调没机会跑。看门狗改成任务计划拉起的进程
+   // （独立于宿主的 Job 对象），它盯住本进程与租约，宿主消失就还代理 + 结束内核。
+   watchdogKernelPid=Number.isInteger(child.pid)?child.pid:0;watchdogPort=c.mixedPort;
+   armWatchdog();
+   return {alive,stop,pid:child.pid,mode:'process'};
   }catch(error){await stop();throw error}
  }
  return {start,proxy,tun,proxiedGet,writeConfig,swapConfig,recoverStaleOnce,configPath:()=>join(context.dataDirectory,'tmp',RUNTIME_CONFIG),
@@ -403,6 +449,8 @@ export function createRuntime(context){
   try{const info=await tun.status();if(info?.enabled&&info.state!=='stopped')await tun.disable()}catch{/* 服务未装或已停 */}
   viaService=false;
  },
+  // C8：插件停用/关闭时不再保留看门狗任务（代理还在接管时由 proxy.restore 负责）。
+  stop:async()=>{disarmWatchdog()},shutdown:async()=>{disarmWatchdog()},
   ...createSubscriptionRuntime(context)};
 }
 // 使用固定脚本和 JSON stdin，配置值不会拼入 PowerShell 源码。
@@ -501,14 +549,5 @@ export function proxiedGet(url,{port,timeoutMs=6000,limit=64*1024}={}){
   tunnel.end();
  });
 }
-// spawnWatchdog 起一个脱离本进程的看门狗（stdio 全 ignore：宿主死了管道也断，
-// 不能再依赖它）。它只认三件事：本进程 pid、租约文件、内核 pid 与混合端口。
-function spawnWatchdog({leasePath,mihomoPid,port}){
- try{
-  const file=fileURLToPath(new URL('./watchdog.mjs',import.meta.url));
-  const child=spawn(process.execPath,[file,String(process.pid),leasePath,String(mihomoPid),String(port)],
-   {detached:true,stdio:'ignore',windowsHide:true,cwd:dirname(file)});
-  child.unref();
-  return child.pid||0;
- }catch{return 0}
-}
+// C8：看门狗不再由本进程 spawn（Windows 上 detached 仍留在宿主的 Job 里，宿主一死
+// 它跟着消失），改由任务计划拉起 watchdog.mjs，生命周期跟着系统代理租约走。

@@ -3,7 +3,7 @@
 // 运行期用户只能改 job.ini（config 路径 + enabled），且路径被限制在 home 内。
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile, stat, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
@@ -15,6 +15,8 @@ const SERVICE_EXE = fileURLToPath(new URL('./service/tun-service.exe', import.me
 export function serviceRoot(programData) { return join(programData, ...SERVICE_DIR.split('/')); }
 export function serviceIniPath(programData) { return join(serviceRoot(programData), 'service.ini'); }
 export function jobIniPath(programData) { return join(serviceRoot(programData), 'job.ini'); }
+// C7：宿主租约放在服务侧 home（= service.ini 的 home）根上，TUN 服务 Tick 直接读它。
+export function hostLeasePath(home) { return join(home, 'host.json'); }
 
 export function iniText(rows) {
   return Object.entries(rows).map(([k, v]) => `${k}=${v}`).join('\r\n') + '\r\n';
@@ -54,6 +56,9 @@ export function createTun({ context, programData, exec = runExec, platform = pro
   const readJob = io?.readJob ? io.readJob : async () => { try { return iniRead(await readFile(job, 'utf8')); } catch { return null; } };
   const readLog = io?.readLog ? io.readLog : async () => { try { return await readFile(log, 'utf8'); } catch { return ''; } };
   const writeJob = io?.writeJob ? io.writeJob : async text => { await mkdir(root, { recursive: true }); await writeFile(job, text, 'utf8'); };
+  // C7：宿主租约写/删；注入后单测不碰真实数据目录。
+  const writeHost = io?.writeHost ? io.writeHost : async (path, value) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, value, 'utf8'); };
+  const removeHost = io?.removeHost ? io.removeHost : async path => { await rm(path, { force: true }); };
   const isFile = io?.isFile ? io.isFile : async p => { try { return (await stat(p)).isFile(); } catch { return false; } };
 
   async function status() {
@@ -122,13 +127,22 @@ export function createTun({ context, programData, exec = runExec, platform = pro
   }
 
   // 运行期：普通权限，只写 job.ini，服务自己 watch 并重启内核。
-  async function enable({ config, home } = {}) {
-    const target = validateJob({ config, home: home || (await readIni())?.home });
+  async function enable({ config, home, hostPid } = {}) {
+    const source = home || (await readIni())?.home;
+    const target = validateJob({ config, home: source });
+    // C7：宿主租约——服务侧 Tick 靠它判断「宿主还在不在」。只在拿到有效 pid 时写：
+    // 写一个无效 pid 会让服务把正常内核当成「宿主崩了」撤掉，比不写更糟。
+    if (Number.isInteger(hostPid) && hostPid > 0 && source) {
+      await writeHost(hostLeasePath(source), JSON.stringify({ pid: hostPid, at: Date.now() }));
+    }
     await writeJob(iniText({ enabled: 1, config: target }));
     return waitFor('start');
   }
 
   async function disable() {
+    // 先撤租约再停内核：服务看到租约没了只会停，不会把它当成「宿主崩了」又拉起来。
+    const home = (await readIni())?.home;
+    if (home) await removeHost(hostLeasePath(home)).catch(() => {});
     await writeJob(iniText({ enabled: 0 }));
     return waitFor('stop');
   }
