@@ -10,10 +10,10 @@
   "product": "magpie fish",
   "result": "clean",
   "counts": {
-    "files": 135,
-    "hunks": 214,
-    "appliedFiles": 135,
-    "appliedHunks": 214,
+    "files": 141,
+    "hunks": 233,
+    "appliedFiles": 141,
+    "appliedHunks": 233,
     "conflictFiles": 0,
     "conflictHunks": 0
   },

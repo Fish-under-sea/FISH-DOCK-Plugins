@@ -228,6 +228,29 @@ index 0000000..92542b2
 +		t.Fatalf("Chat = %+v, want only gpt-6", got)
 +	}
 +}
+diff --git a/internal/gateway/embeddings.go b/internal/gateway/embeddings.go
+index 0d51708..36bceec 100644
+--- a/internal/gateway/embeddings.go
++++ b/internal/gateway/embeddings.go
+@@ -13,6 +13,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/yetone/magpie/internal/provider"
++	"github.com/yetone/magpie/internal/settings"
+ 	"github.com/yetone/magpie/internal/usage"
+ )
+ 
+@@ -28,6 +29,10 @@ const retrieveTimeout = 3 * time.Minute
+ // it said it. The call is recorded and its tokens counted like a turn's.
+ func (s *Server) retrieve(path, operation string) http.HandlerFunc {
+ 	return func(w http.ResponseWriter, r *http.Request) {
++		// 向量与重排给多久：设置 › 图像 › 向量模型右侧的胶囊（#41）
++		ctx, cancel := context.WithTimeout(r.Context(), settings.Load().EmbedWait())
++		defer cancel()
++		r = r.WithContext(ctx)
+ 		body, admitted := s.requestBody(w, r, provider.Chat)
+ 		if !admitted {
+ 			return
 diff --git a/internal/gateway/gateway.go b/internal/gateway/gateway.go
 index 1c7eb03..7079848 100644
 --- a/internal/gateway/gateway.go
@@ -341,7 +364,7 @@ index 1c7eb03..7079848 100644
  		// the decision models its own pickers offer: of a provider with
  		// picks (OpenRouter's twenty-odd), the picked ones, so another
 diff --git a/internal/gateway/image_mcp.go b/internal/gateway/image_mcp.go
-index 2faedef..75109ad 100644
+index 2faedef..deb2048 100644
 --- a/internal/gateway/image_mcp.go
 +++ b/internal/gateway/image_mcp.go
 @@ -42,6 +42,11 @@ import (
@@ -356,6 +379,145 @@ index 2faedef..75109ad 100644
  // ImageMCPFiles is where the images it made are served from.
  const ImageMCPFiles = ImageMCPPath + "/files/"
  
+@@ -70,9 +75,61 @@ func withMeta(res map[string]any, k string, v any) map[string]any {
+ const (
+ 	GenerateImageTool    = "generate_image"
+ 	GenerateVideoTool    = "generate_video"
++	GenerateAudioTool    = "generate_audio"
+ 	GenerationResultTool = "generation_result"
+ )
+ 
++// mcpAudio makes audio with the speech model through the same path as
++// POST /v1/audio/speech, so its models, limits and usage hold it too (#41).
++func (s *Server) mcpAudio(r *http.Request, args json.RawMessage) map[string]any {
++	var a map[string]any
++	if json.Unmarshal(args, &a) != nil {
++		return toolResult(GenerateAudioTool+" needs an object", true)
++	}
++	text, _ := a["text"].(string)
++	if strings.TrimSpace(text) == "" {
++		return toolResult(GenerateAudioTool+" needs text", true)
++	}
++	body, _ := json.Marshal(map[string]any{"input": text, "voice": a["voice"], "response_format": a["format"], "model": a["model"]})
++	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "/v1/audio/speech", bytes.NewReader(body))
++	if err != nil {
++		return toolResult(GenerateAudioTool+" failed: "+err.Error(), true)
++	}
++	rec := &mcpBuffer{}
++	s.speak(rec, req)
++	code := rec.code
++	if code == 0 {
++		code = http.StatusOK
++	}
++	if code != http.StatusOK {
++		return toolResult(GenerateAudioTool+" failed: "+strings.TrimSpace(rec.body.String()), true)
++	}
++	mime := rec.header.Get("Content-Type")
++	if mime == "" {
++		mime = "audio/mpeg"
++	}
++	return map[string]any{"content": []any{map[string]any{
++		"type": "audio", "data": base64.StdEncoding.EncodeToString(rec.body.Bytes()), "mimeType": mime,
++	}}, "isError": false}
++}
++
++// mcpBuffer is the answer writer a tool's in-process call is made with.
++type mcpBuffer struct {
++	header http.Header
++	code   int
++	body   bytes.Buffer
++}
++
++func (b *mcpBuffer) Header() http.Header {
++	if b.header == nil {
++		b.header = http.Header{}
++	}
++	return b.header
++}
++func (b *mcpBuffer) Write(p []byte) (int, error) { return b.body.Write(p) }
++func (b *mcpBuffer) WriteHeader(code int)       { b.code = code }
++
++
+ // ImageToolProps is generate_image's arguments but where to save: images
+ // says how an image to draw from may be given.
+ func ImageToolProps(images string) map[string]any {
+@@ -156,6 +213,19 @@ func imageMCPTools(r *http.Request) []any {
+ 			"inputSchema": ro(VideoToolProps(imageMCPFrom, imageMCPFrom+"s"), true),
+ 			"annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
+ 		},
++		map[string]any{
++			"name":  GenerateAudioTool,
++			"title": "Generate audio",
++			"description": "Make audio from text — speech through the speech model, or music if the speech model does it — and get the audio itself back (base64 in the answer). " +
++				"This is the same path as the audio API (POST /v1/audio/speech), so magpie's speech model, limits and usage hold it as they hold that call.",
++			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
++				"text":   map[string]any{"type": "string", "description": "What to say, or the prompt of the music to make."},
++				"voice":  map[string]any{"type": "string", "description": "The voice, for models that take one (coral, alloy, …)."},
++				"format": map[string]any{"type": "string", "description": "mp3, wav or opus; the model's default when unset."},
++				"model":  map[string]any{"type": "string", "description": "The model to make it with: the speech model set in magpie when unset."},
++			}, "required": []string{"text"}},
++			"annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
++		},
+ 		map[string]any{
+ 			"name":  GenerationResultTool,
+ 			"title": "Generation result",
+@@ -247,6 +317,8 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
+ 			return s.imageMCPDraw(r, p.Arguments), nil
+ 		case GenerateVideoTool:
+ 			return s.imageMCPFilm(r, p.Arguments), nil
++		case GenerateAudioTool:
++			return s.mcpAudio(r, p.Arguments), nil
+ 		case GenerationResultTool:
+ 			var a struct {
+ 				ID string `json:"id"`
+@@ -254,7 +326,7 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
+ 			json.Unmarshal(p.Arguments, &a)
+ 			return s.imageMCPResult(r, strings.TrimSpace(a.ID)), nil
+ 		}
+-		return nil, map[string]any{"code": -32602, "message": "unknown tool " + p.Name + ": this server has " + GenerateImageTool + ", " + GenerateVideoTool + " and " + GenerationResultTool}
++		return nil, map[string]any{"code": -32602, "message": "unknown tool " + p.Name + ": this server has " + GenerateImageTool + ", " + GenerateVideoTool + ", " + GenerateAudioTool + " and " + GenerationResultTool}
+ 	}
+ 	return nil, map[string]any{"code": -32601, "message": "method not found: " + m.Method}
+ }
+diff --git a/internal/gateway/image_mcp_test.go b/internal/gateway/image_mcp_test.go
+index 18fe9e2..fe8b909 100644
+--- a/internal/gateway/image_mcp_test.go
++++ b/internal/gateway/image_mcp_test.go
+@@ -121,7 +121,7 @@ func TestImageMCPDrawsAndServesTheImage(t *testing.T) {
+ 			t.Fatalf("%s takes a path the gateway can't write to", tl.Name)
+ 		}
+ 	}
+-	if strings.Join(names, ",") != "generate_image,generate_video,generation_result" || len(list.Result.Tools[0].InputSchema.Properties) != len(ImageToolProps(""))+1 {
++	if strings.Join(names, ",") != "generate_image,generate_video,generate_audio,generation_result" || len(list.Result.Tools[0].InputSchema.Properties) != len(ImageToolProps(""))+1 {
+ 		t.Fatalf("tools: %s", w.Body.String())
+ 	}
+ 	m := readImageReply(t, imagePost(h, "127.0.0.1:5000", imageToolCall(GenerateImageTool, map[string]any{"prompt": "a magpie", "size": "1024x1024", "complexity": "low"})))
+diff --git a/internal/gateway/mcp_calls.go b/internal/gateway/mcp_calls.go
+index 27e2ec2..b3255a7 100644
+--- a/internal/gateway/mcp_calls.go
++++ b/internal/gateway/mcp_calls.go
+@@ -201,7 +201,7 @@ func imageMCPCalled(r *http.Request, raw json.RawMessage) (any, map[string]any)
+ 		return nil, map[string]any{"code": -32602, "message": "invalid params: " + err.Error()}
+ 	}
+ 	switch c.Tool {
+-	case GenerateImageTool, GenerateVideoTool, GenerationResultTool:
++	case GenerateImageTool, GenerateVideoTool, GenerateAudioTool, GenerationResultTool:
+ 	default:
+ 		return nil, map[string]any{"code": -32602, "message": "no tool " + c.Tool + " is Magpie Image's"}
+ 	}
+diff --git a/internal/gateway/own_mcp.go b/internal/gateway/own_mcp.go
+index bdaa428..60bf70e 100644
+--- a/internal/gateway/own_mcp.go
++++ b/internal/gateway/own_mcp.go
+@@ -81,7 +81,7 @@ func OwnMCPTools(ctx context.Context) []OwnMCPServer {
+ 		case "magpie-vision":
+ 			s.Tools = []string{visionMCPTool}
+ 		case imageServerName:
+-			s.Tools = []string{GenerateImageTool, GenerateVideoTool, GenerationResultTool}
++			s.Tools = []string{GenerateImageTool, GenerateVideoTool, GenerateAudioTool, GenerationResultTool}
+ 		case "magpie-tools":
+ 			ts, _ := servedTools(ctx)
+ 			for _, t := range ts {
 diff --git magpie-0.1.3240/internal/gateway/speakers_kinds_test.go magpie-0.1.3240/internal/gateway/speakers_kinds_test.go
 new file mode 100644
 index 0000000..23df9d6
@@ -460,11 +622,42 @@ index 0000000..23df9d6
 +		t.Errorf("Speakers = %v, want the one said to be a speech model", got)
 +	}
 +}
+diff --git a/internal/gateway/speech.go b/internal/gateway/speech.go
+index f14ca4c..575cebe 100644
+--- a/internal/gateway/speech.go
++++ b/internal/gateway/speech.go
+@@ -9,6 +9,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/yetone/magpie/internal/provider"
++	"github.com/yetone/magpie/internal/settings"
+ )
+ 
+ // speak serves OpenAI's text-to-speech API: POST /v1/audio/speech. The
+@@ -22,6 +23,10 @@ import (
+ // It is routed, limited and recorded as an embeddings call is
+ // (serveRetrieval).
+ func (s *Server) speak(w http.ResponseWriter, r *http.Request) {
++	// 语音与音乐给多久：设置 › 图像 › 语音模型右侧的胶囊（#41）
++	ctx, cancel := context.WithTimeout(r.Context(), settings.Load().SpeechWait())
++	defer cancel()
++	r = r.WithContext(ctx)
+ 	body, admitted := s.requestBody(w, r, provider.Chat)
+ 	if !admitted {
+ 		return
 diff --git a/internal/gateway/video.go b/internal/gateway/video.go
-index 8aa25f5..e2d0408 100644
+index 8aa25f5..161fa0c 100644
 --- a/internal/gateway/video.go
 +++ b/internal/gateway/video.go
-@@ -111,6 +111,72 @@ func OfferedVideomakers(p provider.Provider) []catalog.Model {
+@@ -62,7 +62,6 @@ const maxVideoBytes = 512 << 20
+ // videoTimeout is how long a video's vendor is given to answer each of its
+ // calls: to take the video on, say how it goes, and send it. A video is
+ // made between them, so Settings' Image generation timeout isn't it.
+-const videoTimeout = 5 * time.Minute
+ 
+ // Videomakers are the models a provider can make videos with: a Grok
+ // subscription's, another magpie's, a preset plan's models when magpie
+@@ -111,6 +110,72 @@ func OfferedVideomakers(p provider.Provider) []catalog.Model {
  	return slices.DeleteFunc(slices.Clone(ms), func(m catalog.Model) bool { return p.VideomakerHidden(m.ID) })
  }
  
@@ -537,6 +730,33 @@ index 8aa25f5..e2d0408 100644
  // customVideomakers are the video models of a provider set up with a base
  // URL — not a subscription's account, not another magpie, not a preset plan
  // whose own video API magpie speaks — that its fetched model list marks
+@@ -1119,7 +1184,7 @@ func (s *Server) videosCreate(w http.ResponseWriter, r *http.Request) {
+ 		w, done = restoring(w)
+ 		defer done()
+ 	}
+-	ctx, cancel := drawWithin(r.Context(), videoTimeout)
++	ctx, cancel := drawWithin(r.Context(), settings.Load().VideoWait())
+ 	defer cancel()
+ 	var (
+ 		v       videoStart
+@@ -1387,7 +1452,7 @@ func (s *Server) videosGet(w http.ResponseWriter, r *http.Request) {
+ 		writeError(w, provider.Chat, 403, held)
+ 		return
+ 	}
+-	ctx, cancel := drawWithin(r.Context(), videoTimeout)
++	ctx, cancel := drawWithin(r.Context(), settings.Load().VideoWait())
+ 	defer cancel()
+ 	if filmsOpenAI(p) {
+ 		obj, model, code, err := s.openAIVideo(ctx, p, vendorID, id)
+@@ -1431,7 +1496,7 @@ func (s *Server) videosContent(w http.ResponseWriter, r *http.Request) {
+ 		writeError(w, provider.Chat, 403, held)
+ 		return
+ 	}
+-	ctx, cancel := drawWithin(r.Context(), videoTimeout)
++	ctx, cancel := drawWithin(r.Context(), settings.Load().VideoWait())
+ 	defer cancel()
+ 	if filmsOpenAI(p) {
+ 		if _, models := keyHolds(r); models {
 diff --git a/internal/gui/api.go b/internal/gui/api.go
 index fd6685b..5671cfa 100644
 --- a/internal/gui/api.go
@@ -625,21 +845,22 @@ index fd6685b..5671cfa 100644
  	usageRoutes(mux, w)
  	callerKeyRoutes(mux)
 diff --git a/internal/gui/assets/app.css b/internal/gui/assets/app.css
-index e200119..120cca1 100644
+index e200119..0e12c6d 100644
 --- a/internal/gui/assets/app.css
 +++ b/internal/gui/assets/app.css
-@@ -3970,6 +3970,9 @@ input.words.search-key, input.words.search-url { flex: 1 1 120px; width: auto; m
+@@ -3970,6 +3970,10 @@ input.words.search-key, input.words.search-url { flex: 1 1 120px; width: auto; m
  .prefs .val.searcher-then-list > .rt-cond { min-width: 0; max-width: 100%; }
  .searcher-then-n { color: var(--muted); font-variant-numeric: tabular-nums; }
  .side-effort .effort-ic svg { width: 100%; height: 100%; }
-+.prefs .val > .side-timeout { flex: none; }
++.prefs .val > .side-timeout { flex: none; min-width: 6em; white-space: nowrap; justify-content: center; }
 +.side-timeout .timeout-num { min-width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; }
 +.side-timeout .timeout-unit { opacity: .7; }
++.side-timeout .timeout-caret { opacity: .55; font-size: 11px; margin-left: 1px; }
  .row.pref.lan-address-row { position: relative; height: 50px; transition: height .28s var(--ease); }
  .row.pref.lan-address-row .who { position: absolute; top: 16px; left: 14px; }
  .prefs .lan-address-row .val { max-width: 64%; }
 diff --git a/internal/gui/assets/app.js b/internal/gui/assets/app.js
-index c0f628d..8a7e2f5 100644
+index c0f628d..44dc166 100644
 --- a/internal/gui/assets/app.js
 +++ b/internal/gui/assets/app.js
 @@ -124,7 +124,15 @@ const readTags = new WeakMap();
@@ -983,7 +1204,7 @@ index c0f628d..8a7e2f5 100644
    };
    mcpRow("visionMcpRow", "/mcp/magpie/vision", t("Image recognition MCP server"), t("Agents can add image recognition as an MCP server (Streamable HTTP) with one analyze_image tool, which reads an image with the Image recognition model from a file path, a URL or a data URL. From another computer, send a gateway key as Authorization: Bearer <key> and the image as a URL or data URL."));
 -  mcpRow("imageMcpRow", "/mcp/magpie/image", t("Image generation MCP server"), t("Agents can add image generation as an MCP server (Streamable HTTP) with generate_image, generate_video and generation_result tools, which draw with the Image generation model. An image comes back in the answer and at a URL kept for an hour, a video at a URL; nothing is saved in the agent's project. From another computer, send a gateway key as Authorization: Bearer <key>."));
-+  mcpRow("materialsMcpRow", "/mcp/magpie/materials", t("Materials MCP server"), t("Agents can add materials as an MCP server (Streamable HTTP) with generate_image, generate_video, speak and generation_result tools, which draw with the image model, make videos with the video model and speak with the speech model. Images and videos come back at a URL kept for an hour, speech at a URL too. From another computer, send a gateway key as Authorization: Bearer <key>."));
++  mcpRow("materialsMcpRow", "/mcp/magpie/materials", t("Materials MCP server"), t("Agents can add materials as an MCP server (Streamable HTTP) with generate_image, generate_video, generate_audio and generation_result tools, which draw with the image model, make videos with the video model and make audio — speech or music — with the speech model. Images and videos come back at a URL kept for an hour, speech at a URL too. From another computer, send a gateway key as Authorization: Bearer <key>."));
  }
  
  // libWay: a row's way to give agents magpie's own server name in the
@@ -1091,14 +1312,14 @@ index c0f628d..8a7e2f5 100644
  // shown for a model whose levels aren't known.
 +function sideTimeoutChip(val, key, value, save) {
 +  // 每个媒体模型各自的响应超时，收在模型胶囊右侧的小胶囊里（#41）
-+  const b = el("button", "rt-cond on side-timeout");
++  const b = el("button", "rt-cond on side-effort side-timeout");
 +  b.type = "button";
 +  b.setAttribute("aria-haspopup", "menu");
 +  b.setAttribute("aria-expanded", "false");
 +  const mins = value > 0 ? value : 5;
 +  b.setAttribute("aria-label", t("Response timeout") + ": " + mins + " min");
 +  b.title = t("How long this model is given before the request is given up");
-+  b.append(el("span", "timeout-num", String(mins)), el("span", "timeout-unit", t("min")));
++  b.append(el("span", "timeout-num", String(mins)), el("span", "timeout-unit", t("min")), el("span", "timeout-caret", "▾"));
 +  b.onclick = (e) => {
 +    e.stopPropagation();
 +    if (protoMenu?.anchor === b) { closeProtoMenu(); return; }
@@ -14932,7 +15153,7 @@ index 0000000..3b884bc
 +	return fmt.Sprintf("%.1f%%", delta*100)
 +}
 diff --git a/internal/settings/settings.go b/internal/settings/settings.go
-index dd3ef35..cf0144e 100644
+index dd3ef35..4addfb1 100644
 --- a/internal/settings/settings.go
 +++ b/internal/settings/settings.go
 @@ -500,6 +500,23 @@ type Settings struct {
@@ -14959,7 +15180,40 @@ index dd3ef35..cf0144e 100644
  	// ImageTimeout is how long, in minutes, a vendor is given to draw an
  	// image and send it (neighbads on X: a slow image endpoint needs more
  	// than 5): from 1 to ImageTimeoutMost, 0 for ImageTimeoutDefault.
-@@ -2259,6 +2276,18 @@ func saveOwn(s Settings, recording, reads bool) error {
+@@ -1176,6 +1193,20 @@ func (s Settings) ImageWait() time.Duration {
+ 	return time.Duration(min(m, ImageTimeoutMost)) * time.Minute
+ }
+ 
++// VideoWait, SpeechWait and EmbedWait are how long a vendor is given for
++// the other media kinds (#41): VideoTimeout's minutes and so on, each
++// defaulting to ImageTimeout's default and bounded the same way.
++func (s Settings) VideoWait() time.Duration { return mediaWait(s.VideoTimeout) }
++func (s Settings) SpeechWait() time.Duration { return mediaWait(s.SpeechTimeout) }
++func (s Settings) EmbedWait() time.Duration { return mediaWait(s.EmbedTimeout) }
++
++func mediaWait(m int) time.Duration {
++	if m < 1 {
++		m = ImageTimeoutDefault
++	}
++	return time.Duration(min(m, ImageTimeoutMost)) * time.Minute
++}
++
+ // CodexResetLeadDefault is CodexResetLead's minutes when it is unset, and
+ // CodexResetLeadLeast and CodexResetLeadMost the range it can be set in;
+ // CodexResetLeads the choices the app's menu offers, besides its Custom…
+@@ -2153,6 +2184,11 @@ func saveOwn(s Settings, recording, reads bool) error {
+ 			return fmt.Errorf("an update mirror is an http(s) address put before the github.com URL, like https://mirror.example/, not %q", m)
+ 		}
+ 	}
++	for name, m := range map[string]int{"video": s.VideoTimeout, "speech": s.SpeechTimeout, "embedding": s.EmbedTimeout} {
++		if m < 0 || m > ImageTimeoutMost {
++			return fmt.Errorf("%s is given from 1 to %d minutes, or 0 for %d, not %d", name, ImageTimeoutMost, ImageTimeoutDefault, m)
++		}
++	}
+ 	if s.ImageTimeout < 0 || s.ImageTimeout > ImageTimeoutMost {
+ 		return fmt.Errorf("image generation is given from 1 to %d minutes, or 0 for %d, not %d", ImageTimeoutMost, ImageTimeoutDefault, s.ImageTimeout)
+ 	}
+@@ -2259,6 +2295,18 @@ func saveOwn(s Settings, recording, reads bool) error {
  	if s.ImageGen != "" && s.ImageGen != "off" && !strings.Contains(s.ImageGen, "/") {
  		return fmt.Errorf("the image generation model must be a model's id such as openai/gpt-image-2, or off, not %q", s.ImageGen)
  	}
@@ -14978,3 +15232,36 @@ index dd3ef35..cf0144e 100644
  	rules, err := redact.CheckRules(s.RedactRules)
  	if err != nil {
  		return err
+diff --git a/internal/settingsapi/settingsapi.go b/internal/settingsapi/settingsapi.go
+index 083b27d..ff561c9 100644
+--- a/internal/settingsapi/settingsapi.go
++++ b/internal/settingsapi/settingsapi.go
+@@ -46,7 +46,7 @@ var Keys = []string{
+ 	"workbuddyCheckin", "traeCheckin", "minimaxCheckin", "qoderCheckin",
+ 	// models: replies, vision, images, search
+ 	"replyModel", "noLoopGuard", "claudeLeanPrompt", "claudePrintMode", "refusalRetries", "retryAfterCap",
+-	"vision", "visionEffort", "imageGen", "imageTimeout", "classifyTimeout",
++	"vision", "visionEffort", "imageGen", "videoModel", "imageTimeout", "videoTimeout", "speechTimeout", "embedTimeout", "speechModel", "embedModel", "classifyTimeout",
+ 	"searcher", "searcherThen", "searcherEffort", "searchFirst",
+ 	// updates
+ 	"noUpdatePill", "noAutoUpdate", "updateEvery", "noAutoDownload", "autoRestart", "updateChannel",
+@@ -207,6 +207,19 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
+ 	if _, sent := fields["imageTimeout"]; !sent {
+ 		in.ImageTimeout = cur.ImageTimeout
+ 	}
++	// nor the other media kinds' minutes, or the video model (#41)
++	if _, sent := fields["videoTimeout"]; !sent {
++		in.VideoTimeout = cur.VideoTimeout
++	}
++	if _, sent := fields["speechTimeout"]; !sent {
++		in.SpeechTimeout = cur.SpeechTimeout
++	}
++	if _, sent := fields["embedTimeout"]; !sent {
++		in.EmbedTimeout = cur.EmbedTimeout
++	}
++	if _, sent := fields["videoModel"]; !sent {
++		in.VideoModel = cur.VideoModel
++	}
+ 	// nor how long a routing group's classifier is given (#2934)
+ 	if _, sent := fields["classifyTimeout"]; !sent {
+ 		in.ClassifyTimeout = cur.ClassifyTimeout
