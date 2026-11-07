@@ -1181,7 +1181,7 @@ index e200119..0e12c6d 100644
  .row.pref.lan-address-row .who { position: absolute; top: 16px; left: 14px; }
  .prefs .lan-address-row .val { max-width: 64%; }
 diff --git a/internal/gui/assets/app.js b/internal/gui/assets/app.js
-index c0f628d..44dc166 100644
+index c0f628d..3933c42 100644
 --- a/internal/gui/assets/app.js
 +++ b/internal/gui/assets/app.js
 @@ -124,7 +124,15 @@ const readTags = new WeakMap();
@@ -1566,18 +1566,21 @@ index c0f628d..44dc166 100644
  // renderImageGen: the model magpie's generate_image tool draws with — the
  // one magpie picks, one named, or none — and where agents are given the tool.
  function renderImageGen(s, keep, box) {
-@@ -21577,6 +21682,7 @@ function renderImageGen(s, keep, box) {
+@@ -21577,12 +21682,57 @@ function renderImageGen(s, keep, box) {
    onPick: (id) => { if (id !== shown) savePrefs({ ...keep, imageGen: id }); } }, b, ev);
    const val = el("div", "val");
    val.append(b);
 +  sideTimeoutChip(val, "imageTimeout", s.imageTimeout, (n) => savePrefs({ ...keep, imageTimeout: n }));
    r.append(who, val);
    box.append(r);
-   // how long a vendor is given to draw an image and send it: 5 minutes
-@@ -21585,6 +21691,52 @@ function renderImageGen(s, keep, box) {
-     [5, 10, 15, 30, 60], s.imageTimeout > 0 ? s.imageTimeout : 5, "{n} min", (n) => savePrefs({ ...keep, imageTimeout: n })));
- }
- 
+-  // how long a vendor is given to draw an image and send it: 5 minutes
+-  // unless set, as a slow image endpoint needs more (neighbads on X)
+-  box.append(waitRow("imageTimeoutRow", t("Image generation timeout"), t("How long a provider is given to draw an image and send it, before the request is given up. A slow image endpoint may need longer"),
+-    [5, 10, 15, 30, 60], s.imageTimeout > 0 ? s.imageTimeout : 5, "{n} min", (n) => savePrefs({ ...keep, imageTimeout: n })));
++  // the image timeout is the row's chip above, as video's and the speech and
++  // embedding ones are: no second row of its own (2.3.3)
++}
++
 +// renderSpeechAndEmbed: Settings' rows for the speech and embedding models
 +// (#24). Each is a picker over the provider's own models of that kind, as
 +// the image one is; no tool reads them yet, so the rows are for telling
@@ -1622,12 +1625,10 @@ index c0f628d..44dc166 100644
 +  row("embedModel", s.embedModels || [], t("Embedding model"),
 +    t("The model text is embedded or reranked by, when a request names it: agents don't chat with these, so they aren't among the models list."),
 +    "no embedding model named");
-+}
-+
+ }
+ 
  // segRow: a Settings row, its name and sub, and segs of items at cur
- function segRow(id, name, sub, items, cur, pick, cls = "sub wraps") {
-   const r = el("div", "row pref"), who = el("div", "who"), val = el("div", "val");
-@@ -21611,6 +21763,26 @@ function mcpAddress(s, path) {
+@@ -21611,6 +21761,26 @@ function mcpAddress(s, path) {
  // "外置模型能不能提供思考深度选项"): only the levels that model has, and
  // Default, which leaves it as magpie asks it (dflt says how). Nothing is
  // shown for a model whose levels aren't known.
@@ -1654,7 +1655,7 @@ index c0f628d..44dc166 100644
  function sideEffortChip(val, levels, saved, now, cls, dflt, save) {
    if (!levels?.length) return;
    const b = el("button", "rt-cond on side-effort " + cls);
-@@ -22376,7 +22548,7 @@ async function renderUpdate(r, u) {
+@@ -22376,7 +22546,7 @@ async function renderUpdate(r, u) {
    const kept = val.querySelector("button.update-page");
    for (const b of val.querySelectorAll("button")) if (b !== kept) b.remove();
    let pageShown = false;
@@ -1663,7 +1664,7 @@ index c0f628d..44dc166 100644
    const dim = () => { for (const b of val.querySelectorAll("button")) { b.disabled = true; b.classList.add("busy"); } };
    // where GitHub is slow to magpie, the update can be fetched in the
    // browser instead, through its own proxy or accelerator (PapainTea on X)
-@@ -22478,7 +22650,7 @@ async function renderUpdate(r, u) {
+@@ -22478,7 +22648,7 @@ async function renderUpdate(r, u) {
        sub.textContent = t("{v} is out", { v: u.latest });
        if (u.stuck) sub.textContent += " · " + updateStuck(u);
        if (u.packaged) { sub.classList.add("wraps"); btn(t("Check"), check); break; }
@@ -1672,7 +1673,7 @@ index c0f628d..44dc166 100644
        if (!web) page();
        break;
      case "downloading":
-@@ -22671,7 +22843,7 @@ function prefsKeep(s) {
+@@ -22671,7 +22841,7 @@ function prefsKeep(s) {
      codexWarmAts: warmTimes(s.codexWarmAts, s.codexWarmAt), claudeWarmAts: warmTimes(s.claudeWarmAts, s.claudeWarmAt), workbuddyCheckin: !!s.workbuddyCheckin, traeCheckin: !!s.traeCheckin, minimaxCheckin: !!s.minimaxCheckin, qoderCheckin: !!s.qoderCheckin, noStats: !!s.noStats, noUsageStats: !!s.noUsageStats, signInLinkOnly: !!s.signInLinkOnly,
      replyModel: s.replyModel || "", noLoopGuard: !!s.noLoopGuard, claudeLeanPrompt: !!s.claudeLeanPrompt, claudePrintMode: !!s.claudePrintMode, refusalRetries: s.refusalRetries ?? null, retryAfterCap: s.retryAfterCap ?? null,
      noUpdatePill: !!s.noUpdatePill, noAutoUpdate: !!s.noAutoUpdate, updateEvery: s.updateEvery || 360, autoRestart: !!s.autoRestart, noAutoDownload: !!s.noAutoDownload, updateChannel: s.updateChannel || "",
@@ -1681,7 +1682,7 @@ index c0f628d..44dc166 100644
      chineseUnits: !!s.chineseUnits, usageAlert: s.usageAlert || 0, balanceAlert: s.balanceAlert || 0, resetReminder: s.resetReminder || 0,
      turnDoneAlert: s.turnDoneAlert || 0, maskAlert: !!s.maskAlert };
  }
-@@ -23847,8 +24019,13 @@ function navSubGlide(box, row) {
+@@ -23847,8 +24017,13 @@ function navSubGlide(box, row) {
    hl.style.transform = `translateY(${row.offsetTop}px)`;
    hl.style.height = row.offsetHeight + "px";
  }
@@ -1697,7 +1698,7 @@ index c0f628d..44dc166 100644
  var NAV_SPRING = { response: 0.42, damping: 0.84 }; // seconds, fraction: SwiftUI's terms
  var navTop = { row: null, y: 0, h: 0, vy: 0, vh: 0, at: 0, raf: 0, seen: false };
  const navTopOn = () => $("#nav")?.querySelector("button[data-view].on") || null;
-@@ -23859,7 +24036,8 @@ function navTopHl() {
+@@ -23859,7 +24034,8 @@ function navTopHl() {
      hl = el("i", "nav-top-hl");
      hl.hidden = true;
      nav.append(hl);
@@ -1707,7 +1708,7 @@ index c0f628d..44dc166 100644
      new ResizeObserver(() => { if (!navTop.raf && navTop.row && !hl.hidden) navTopPut(hl, navTop.row); }).observe(nav);
    }
    return hl;
-@@ -23878,7 +24056,9 @@ function navTopGo(row, glide) {
+@@ -23878,7 +24054,9 @@ function navTopGo(row, glide) {
    const nav = $("#nav"), hl = navTopHl();
    const to = sideNav() && row && !row.hidden && row.offsetParent ? row : null;
    nav.classList.toggle("hl-on", !!to);
@@ -1718,7 +1719,7 @@ index c0f628d..44dc166 100644
    if (to && ((to === navTop.row && !navTop.raf) || !navTop.seen)) glide = false;
    navTop.row = to;
    if (!to) { cancelAnimationFrame(navTop.raf); navTop.raf = 0; hl.hidden = true; return; }
-@@ -23895,23 +24075,13 @@ function navTopGo(row, glide) {
+@@ -23895,23 +24073,13 @@ function navTopGo(row, glide) {
    }
    if (!navTop.raf) { navTop.at = performance.now(); navTop.raf = requestAnimationFrame(navTopStep); }
  }
@@ -1743,7 +1744,7 @@ index c0f628d..44dc166 100644
    // a few small steps a frame keep the spring true at any frame rate
    for (let i = 0, d = dt / 4; i < 4; i++) {
      navTop.vy += (k * (ty - navTop.y) - c * navTop.vy) * d;
-@@ -24468,4 +24638,4 @@ if (mode === "window" && params.get("import")) {
+@@ -24468,4 +24636,4 @@ if (mode === "window" && params.get("import")) {
    }).catch(() => {});
  }
  if (mode === "window" && params.get("ask") === "quit") { params.delete("ask"); history.replaceState(null, "", "?" + params); askQuit(); }
@@ -1751,10 +1752,19 @@ index c0f628d..44dc166 100644
 +if (mode === "window" && params.get("view") === "providers" && params.get("edit")) editing = params.get("edit");
 \ No newline at end of file
 diff --git a/internal/gui/assets/i18n.js b/internal/gui/assets/i18n.js
-index 50d3615..173c66b 100644
+index 50d3615..2496f2f 100644
 --- a/internal/gui/assets/i18n.js
 +++ b/internal/gui/assets/i18n.js
-@@ -1660,6 +1660,35 @@ const I18N = {
+@@ -1480,6 +1480,8 @@ const I18N = {
+     "Off: kept with its key, and never asked": "关闭：保留它和它的密钥，但不再调用",
+     "On: asked in its turn": "开启：按顺序轮到时调用",
+     "Image recognition MCP server": "识图 MCP 服务器",
++    "Materials MCP server": "素材 MCP 服务器",
++    "Agents can add materials as an MCP server (Streamable HTTP) with generate_image, generate_video, generate_audio and generation_result tools, which draw with the image model, make videos with the video model and make audio — speech or music — with the speech model. Images and videos come back at a URL kept for an hour, speech at a URL too. From another computer, send a gateway key as Authorization: Bearer <key>.": "智能体可以把素材添加为 MCP 服务器（Streamable HTTP），提供 generate_image、generate_video、generate_audio 与 generation_result 工具：用生图模型画图、用视频模型出片、用语音模型生成音频（语音或音乐）。图片与视频以保留一小时的 URL 返回，语音也是 URL。从其他电脑访问时，请以 Authorization: Bearer <key> 发送网关密钥。",
+     "Agents can add image recognition as an MCP server (Streamable HTTP) with one analyze_image tool, which reads an image with the Image recognition model from a file path, a URL or a data URL. From another computer, send a gateway key as Authorization: Bearer <key> and the image as a URL or data URL.": "智能体可以把识图添加为 MCP 服务器（Streamable HTTP），提供一个 analyze_image 工具：用识图模型读取文件路径、URL 或 data URL 中的图片。从其他电脑访问时，请以 Authorization: Bearer <key> 发送网关密钥，图片以 URL 或 data URL 传入。",
+     "The other is asked when it fails": "失败时再用另一种",
+     "Models that search by themselves": "自带联网搜索的模型",
+@@ -1660,6 +1662,35 @@ const I18N = {
      "{n} image model": "{n} 个图像模型",
      "{n} image models": "{n} 个图像模型",
      "Image models": "图像模型",
@@ -1790,7 +1800,34 @@ index 50d3615..173c66b 100644
      "Settings → Images lists the ticked ones. Agents don't chat with these, so they aren't among its models.": "设置 → 图像 只列出已勾选的。Agent 不与它们对话，故不在模型列表中。",
      "Video models": "视频模型",
      "Only the ticked ones are offered when making a video. Agents don't chat with these, so they aren't among its models.": "生成视频时只提供已勾选的。Agent 不与它们对话，故不在模型列表中。",
-@@ -18923,4 +18952,4 @@ function translateStatic() {
+@@ -6149,6 +6180,8 @@ const I18N = {
+     "Off: kept with its key, and never asked": "關閉：保留它和它的金鑰，但不再呼叫",
+     "On: asked in its turn": "開啟：依順序輪到時呼叫",
+     "Image recognition MCP server": "識圖 MCP 伺服器",
++    "Materials MCP server": "素材 MCP 伺服器",
++    "Agents can add materials as an MCP server (Streamable HTTP) with generate_image, generate_video, generate_audio and generation_result tools, which draw with the image model, make videos with the video model and make audio — speech or music — with the speech model. Images and videos come back at a URL kept for an hour, speech at a URL too. From another computer, send a gateway key as Authorization: Bearer <key>.": "智慧體可以把素材加入為 MCP 伺服器（Streamable HTTP），提供 generate_image、generate_video、generate_audio 與 generation_result 工具：用生圖模型畫圖、用影片模型出片、用語音模型生成音訊（語音或音樂）。圖片與影片以保留一小時的 URL 回傳，語音也是 URL。從其他電腦存取時，請以 Authorization: Bearer <key> 傳送閘道金鑰。",
+     "Agents can add image recognition as an MCP server (Streamable HTTP) with one analyze_image tool, which reads an image with the Image recognition model from a file path, a URL or a data URL. From another computer, send a gateway key as Authorization: Bearer <key> and the image as a URL or data URL.": "智慧體可以把識圖新增為 MCP 伺服器（Streamable HTTP），提供一個 analyze_image 工具：用識圖模型讀取檔案路徑、URL 或 data URL 中的圖片。從其他電腦存取時，請以 Authorization: Bearer <key> 傳送閘道金鑰，圖片以 URL 或 data URL 傳入。",
+     "The other is asked when it fails": "失敗時再用另一種",
+     "Models that search by themselves": "自帶聯網搜尋的模型",
+@@ -10788,6 +10821,8 @@ const I18N = {
+     "Off: kept with its key, and never asked": "オフ：キーごと残し、呼び出さない",
+     "On: asked in its turn": "オン：順番が来たら呼び出す",
+     "Image recognition MCP server": "画像認識 MCP サーバー",
++    "Materials MCP server": "素材 MCP サーバー",
++    "Agents can add materials as an MCP server (Streamable HTTP) with generate_image, generate_video, generate_audio and generation_result tools, which draw with the image model, make videos with the video model and make audio — speech or music — with the speech model. Images and videos come back at a URL kept for an hour, speech at a URL too. From another computer, send a gateway key as Authorization: Bearer <key>.": "エージェントは素材を MCP サーバー（Streamable HTTP）として追加でき、generate_image、generate_video、generate_audio、generation_result の各ツールを利用できます。画像モデルで画像を生成し、動画モデルで動画を作成し、音声モデルで音声（スピーチまたは音楽）を生成します。画像と動画は 1 時間保持される URL で返り、音声も URL で返ります。別のコンピューターからは Authorization: Bearer <key> でゲートウェイキーを送信してください。",
+     "Agents can add image recognition as an MCP server (Streamable HTTP) with one analyze_image tool, which reads an image with the Image recognition model from a file path, a URL or a data URL. From another computer, send a gateway key as Authorization: Bearer <key> and the image as a URL or data URL.": "エージェントは、画像認識を analyze_image ツール 1 つを持つ MCP サーバー（Streamable HTTP）として追加できます。画像認識のモデルで、ファイルパス、URL、data URL の画像を読み取ります。別のコンピューターからは、ゲートウェイキーを Authorization: Bearer <key> として送り、画像は URL か data URL で渡してください。",
+     "The other is asked when it fails": "失敗したときはもう一方を使います",
+     "Models that search by themselves": "自分でウェブ検索するモデル",
+@@ -15458,6 +15493,8 @@ const I18N = {
+     "Off: kept with its key, and never asked": "Aus: mit Schlüssel behalten, aber nie gefragt",
+     "On: asked in its turn": "An: wird der Reihe nach gefragt",
+     "Image recognition MCP server": "Bilderkennung als MCP-Server",
++    "Materials MCP server": "Material-MCP-Server",
++    "Agents can add materials as an MCP server (Streamable HTTP) with generate_image, generate_video, generate_audio and generation_result tools, which draw with the image model, make videos with the video model and make audio — speech or music — with the speech model. Images and videos come back at a URL kept for an hour, speech at a URL too. From another computer, send a gateway key as Authorization: Bearer <key>.": "Agenten können Materialien als MCP-Server (Streamable HTTP) mit den Werkzeugen generate_image, generate_video, generate_audio und generation_result hinzufügen: Bilder mit dem Bildmodell, Videos mit dem Videomodell und Audio – Sprache oder Musik – mit dem Sprachmodell. Bilder und Videos kommen als eine Stunde gültige URL zurück, Sprache ebenfalls als URL. Von einem anderen Computer den Gateway-Schlüssel als Authorization: Bearer <key> senden.",
+     "Agents can add image recognition as an MCP server (Streamable HTTP) with one analyze_image tool, which reads an image with the Image recognition model from a file path, a URL or a data URL. From another computer, send a gateway key as Authorization: Bearer <key> and the image as a URL or data URL.": "Agenten können die Bilderkennung als MCP-Server (Streamable HTTP) mit einem analyze_image-Tool hinzufügen, das ein Bild aus einem Dateipfad, einer URL oder einer Data-URL mit dem Modell der Bilderkennung liest. Von einem anderen Computer aus einen Gateway-Schlüssel als Authorization: Bearer <key> senden und das Bild als URL oder Data-URL übergeben.",
+     "The other is asked when it fails": "Scheitert es, wird das andere gefragt",
+     "Models that search by themselves": "Modelle, die selbst suchen",
+@@ -18923,4 +18960,4 @@ function translateStatic() {
    // another language makes the tabs wider in the header as it was fitted, and
    // they ran under the magpie and the window's buttons (kiwiflysky on X)
    window.fitTop?.();
@@ -4094,6 +4131,158 @@ index 0000000..d062f50
 +  assert.equal(r.requests.length, 1);
 +  assert.equal(r.popups.length, 0, 'no second attempt after an ambiguous failure');
 +});
+diff --git a/internal/gui/tests/image-timeout-setting.test.cjs b/internal/gui/tests/image-timeout-setting.test.cjs
+deleted file mode 100644
+index 2abcc0c..0000000
+--- a/internal/gui/tests/image-timeout-setting.test.cjs
++++ /dev/null
+@@ -1,146 +0,0 @@
+-// Run with Node's test runner and Playwright on the module path; see README.md.
+-// Settings › Models › Images (neighbads on X: a slow image endpoint needs
+-// longer than the 5 minutes drawing was given): Image generation timeout
+-// is 5 min at first, 30 min saves imageTimeout 30 with the rest of the
+-// settings kept and the page not moved by the click, and 5 min saves 5. A
+-// value set by hand in settings.json shows as its own choice, pressed. In
+-// English, Chinese, Traditional Chinese, Japanese and German, 1100 and 420
+-// wide.
+-const assert = require("node:assert/strict");
+-const fs = require("node:fs/promises");
+-const path = require("node:path");
+-const { test } = require("node:test");
+-const { chromium, webkit } = require("playwright");
+-const { reach, watchSettingsReads, settingsDrawn } = require("./reader.cjs");
+-
+-const assets = path.resolve(__dirname, "../assets");
+-const words = {
+-  en: { name: "Image generation timeout", head: "Images", min: (n) => `${n} min`, sub: "A slow image endpoint may need longer" },
+-  zh: { name: "生图超时", head: "图像", min: (n) => `${n} 分钟`, sub: "较慢的生图接口可能需要更长" },
+-  "zh-TW": { name: "生圖逾時", head: "影像", min: (n) => `${n} 分鐘`, sub: "較慢的生圖端點可能需要更長" },
+-  ja: { name: "画像生成のタイムアウト", head: "画像", min: (n) => `${n} 分`, sub: "遅い画像エンドポイント" },
+-  de: { name: "Zeitlimit für Bilderzeugung", head: "Bilder", min: (n) => `${n} min`, sub: "langsamer Bild-Endpunkt" },
+-};
+-
+-function serve(lang, saved, own) {
+-  const settings = { lang, theme: "light", redact: true, imageGen: "off", ...own };
+-  const state = { agents: [], profiles: [], settings };
+-  return async (r) => {
+-    const url = new URL(r.request().url());
+-    const json = (data) => r.fulfill({ json: data });
+-    if (url.pathname === "/boot.js") return r.fulfill({ contentType: "text/javascript", body: `window.bootPrefs = {lang:"${lang}",theme:"light",web:true};` });
+-    if (url.pathname === "/wails/runtime.js") return r.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
+-    if (url.pathname === "/api/state") return json(state);
+-    if (url.pathname === "/api/settings") {
+-      if (r.request().method() === "POST") {
+-        saved.push(JSON.parse(r.request().postData()));
+-        Object.assign(settings, saved.at(-1));
+-      }
+-      return json(settings);
+-    }
+-    if (url.pathname === "/api/groups") return json({ models: [], groups: [], pools: [] });
+-    if (url.pathname === "/api/providers") return json({ providers: [], presets: [], excluded: [], gateway: { running: true, window: true, url: "http://127.0.0.1:3999" } });
+-    if (url.pathname.startsWith("/api/")) return json({});
+-    const file = path.join(assets, url.pathname === "/" ? "index.html" : url.pathname);
+-    const contentType = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png" }[path.extname(file)];
+-    await r.fulfill({ body: await fs.readFile(file), contentType });
+-  };
+-}
+-
+-async function open(engine, lang, width, saved, own, t) {
+-  const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
+-  t.after(() => browser.close());
+-  const page = await (await browser.newContext({ viewport: { width, height: 900 } })).newPage();
+-  page.setDefaultTimeout(5000);
+-  page.setDefaultNavigationTimeout(60000);
+-  const errors = [];
+-  page.on("pageerror", (e) => errors.push(e.message));
+-  await page.route("**/*", serve(lang, saved, own));
+-  await watchSettingsReads(page);
+-  await page.goto("http://magpie.test/?view=settings&tab=models");
+-  await settingsDrawn(page); // rows found are the ones that stay (#1659)
+-  const row = page.locator("#imagesList #imageTimeoutRow");
+-  await row.waitFor();
+-  return { page, row, errors };
+-}
+-
+-for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
+-  for (const lang of ["en", "zh", "zh-TW", "ja", "de"]) for (const width of [1100, 420]) {
+-    const w = words[lang];
+-    test(`${engine} ${lang} ${width}: how long an image is given to be drawn`, async (t) => {
+-      const saved = [];
+-      const { page, row, errors } = await open(engine, lang, width, saved, {}, t);
+-      // scrolled to as a reader does, with the wheel
+-      await page.mouse.move(width / 2, 450);
+-      for (let i = 0; i < 40; i++) {
+-        const box = await row.boundingBox();
+-        if (box && box.y >= 0 && box.y + box.height <= 900) break;
+-        await page.mouse.wheel(0, 120);
+-        await page.waitForTimeout(50);
+-      }
+-      assert.equal(await row.locator(".name").textContent(), w.name);
+-      assert((await row.locator(".sub").textContent()).includes(w.sub));
+-      // its explanation rests out of sight, shown whole in the row's hover card
+-      // (settings-hints.test.cjs)
+-      assert.equal(await row.locator(".sub").first().evaluate((e) => getComputedStyle(e).getPropertyValue("--hint").trim()), "1", "the explanation shows at rest");
+-      for (const part of [".name", ".segs"]) {
+-        const fit = await row.locator(part).first().evaluate((e) => {
+-          const r = e.getBoundingClientRect();
+-          return e.scrollWidth <= e.clientWidth + 1 && r.width > 0 && r.right <= innerWidth + 1;
+-        });
+-        assert(fit, `${part} fits at ${width}`);
+-      }
+-      assert.equal(await page.locator("#imagesList").evaluate((l) => l.previousElementSibling.textContent.trim()), w.head);
+-      assert.deepEqual(await row.locator(".segs button").allTextContents(), [5, 10, 15, 30, 60].map(w.min));
+-      assert.equal(await row.locator(".segs button[aria-pressed=true]").textContent(), w.min(5), "5 min at first");
+-
+-      const at = () => page.evaluate(() => [scrollX, scrollY, document.querySelector("#imageTimeoutRow").closest(".view").scrollTop]);
+-      const moved = [];
+-      const click = async (name) => {
+-        const button = row.locator(".segs button", { hasText: new RegExp(`^${name}$`) });
+-        await reach(page, button);
+-        let before = await at();
+-        for (let i = 0; i < 40; i++) {
+-          await page.waitForTimeout(100);
+-          const now = await at();
+-          if (JSON.stringify(now) === JSON.stringify(before)) break;
+-          before = now;
+-        }
+-        const b = await button.boundingBox();
+-        await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+-        await page.waitForTimeout(100);
+-        const after = await at();
+-        if (JSON.stringify(after) !== JSON.stringify(before)) moved.push(`${name}: ${before} → ${after}`);
+-      };
+-      await row.evaluate((e) => { e.dataset.before = "1"; });
+-      await click(w.min(30));
+-      for (let i = 0; i < 200 && !saved.length; i++) await page.waitForTimeout(50);
+-      assert.equal(saved.length, 1, "saved once");
+-      assert.equal(saved[0].imageTimeout, 30);
+-      assert.equal(saved[0].imageGen, "off", "the row above it kept");
+-      assert.equal(saved[0].redact, true, "the rest kept");
+-      assert.equal(saved[0].lang, lang);
+-      await page.waitForFunction((m) => {
+-        const r = document.querySelector("#imageTimeoutRow");
+-        return r && !r.dataset.before && r.querySelector(".segs button[aria-pressed=true]")?.textContent === m;
+-      }, w.min(30), { timeout: 10000 });
+-      await click(w.min(5));
+-      for (let i = 0; i < 200 && saved.length < 2; i++) await page.waitForTimeout(50);
+-      assert.equal(saved.length, 2, `saved again: ${JSON.stringify(saved)}`);
+-      assert.equal(saved[1].imageTimeout, 5);
+-      assert.deepEqual(moved, [], "the click moved nothing");
+-      assert.deepEqual(errors, []);
+-    });
+-  }
+-  test(`${engine}: minutes set by hand show as their own choice, and are sent on with other saves`, async (t) => {
+-    const saved = [];
+-    const { page, row, errors } = await open(engine, "en", 1100, saved, { imageTimeout: 45 }, t);
+-    assert.deepEqual(await row.locator(".segs button").allTextContents(), ["5 min", "10 min", "15 min", "30 min", "60 min", "45 min"]);
+-    assert.equal(await row.locator(".segs button[aria-pressed=true]").textContent(), "45 min");
+-    // another row's save keeps the minutes
+-    await page.evaluate(() => savePrefs({ ...prefsKeep(prefs), redact: false }));
+-    for (let i = 0; i < 200 && !saved.length; i++) await page.waitForTimeout(50);
+-    assert.equal(saved[0].imageTimeout, 45, JSON.stringify(saved));
+-    assert.deepEqual(errors, []);
+-  });
+-}
 diff --git a/internal/gui/tests/plugin-external-links.test.cjs b/internal/gui/tests/plugin-external-links.test.cjs
 new file mode 100644
 index 0000000..17c8c1f
