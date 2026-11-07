@@ -15511,3 +15511,41 @@ index 083b27d..ff561c9 100644
  	// nor how long a routing group's classifier is given (#2934)
  	if _, sent := fields["classifyTimeout"]; !sent {
  		in.ClassifyTimeout = cur.ClassifyTimeout
+diff --git a/internal/usage/usage.go b/internal/usage/usage.go
+index aaf065d..78c7940 100644
+--- a/internal/usage/usage.go
++++ b/internal/usage/usage.go
+@@ -317,6 +317,8 @@ func Append(r Record) {
+ 	mu.Lock()
+ 	defer mu.Unlock()
+ 	path := Path()
++	// 记满就滚一份（#46）：整份日志要被 Ledger 读全，不能无上限地长。
++	rollLog(path)
+ 	f, before := openLog(path)
+ 	if f == nil {
+ 		return
+@@ -335,6 +337,24 @@ func Append(r Record) {
+ 	noteLogAppend(path, before, after)
+ }
+ 
++// rotateMax is how large usage.jsonl may grow before it is rolled to
++// usage.jsonl.1, keeping one previous file (#46).
++const rotateMax = 8 << 20
++
++// rollLog rolls path to path+".1" once it is large enough, closing the log
++// Append keeps open so the next openLog makes a new one.
++func rollLog(path string) {
++	st, err := os.Stat(path)
++	if err != nil || st.Size() < rotateMax {
++		return
++	}
++	if heldLog.f != nil {
++		heldLog.f.Close()
++		heldLog.f = nil
++	}
++	_ = os.Rename(path, path+".1")
++}
++
+ // heldLog is the log Append keeps open between calls, under mu: every
+ // request appends, and an open and a close of usage.jsonl each time was
+ // most of Append's time (#3725). It is written to only while Path still
