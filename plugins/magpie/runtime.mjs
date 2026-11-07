@@ -51,8 +51,13 @@ export async function recordGatewayError(root,{error,phase,port}={}){
   const file=path.join(root,'gateway-error.log');
   // 与 magpie.log 同口径：1 MB 滚动、保留上一份（#41 复审：原来只追加、
   // 没有上界，插件反复启动失败时会一直长下去）
+  // Windows 上目标已存在时 rename 会失败：先删旧的再改名（#46，与
+  // createTailLog 的写法一致），否则这段轮转等于没写、日志照样无界。
   const st=await fs.stat(file).catch(()=>null);
-  if(st&&st.size>1024*1024)await fs.rename(file,file+'.1').catch(()=>{});
+  if(st&&st.size>1024*1024){
+   await fs.rm(file+'.1',{force:true}).catch(()=>{});
+   await fs.rename(file,file+'.1').catch(()=>{});
+  }
   await fs.appendFile(file,line)
  }catch{}
  return line;
@@ -78,6 +83,22 @@ export function createTailLog({file,limit=1024*1024}={}){
   try{await fs.appendFile(file,text);size+=bytes}catch{}
  }
  return {file,write(chunk){const text=String(chunk);queue=queue.then(()=>append(text)).catch(()=>{});return queue}};
+}
+
+// TEMP/TMP 指向 <插件数据目录>/tmp（environment.mjs）：旧版把 bun 缓存在
+// tmp/magpie 里留着（#46 实测 202MB 停在同一天），强杀后的下载残片也在这里。
+// 启动前清掉超过一天的条目：正在被写的那种 mtime 都很新，不会误删。
+const CACHE_GRACE=24*60*60*1000;
+export async function pruneCache(cache){
+ let names;try{names=await fs.readdir(cache)}catch{return}
+ let removed=0;
+ for(const name of names){
+  const entry=path.join(cache,name);
+  let info;try{info=await fs.stat(entry)}catch{continue}
+  if(Date.now()-info.mtimeMs<=CACHE_GRACE)continue;
+  try{await fs.rm(entry,{recursive:true,force:true});removed++}catch{}
+ }
+ if(removed)console.error(`[magpie] TEMP 清理：删除 ${removed} 个过期条目`)
 }
 
 // gateway 停在 error 或启动抛错时按递增间隔重试；用户停止或已恢复就停手，
@@ -135,6 +156,8 @@ export function createRuntime(context){
    if(!path.isAbsolute(context.dataDirectory))throw Error('缺少插件数据目录');
    const root=context.dataDirectory,credentials=path.join(root,'credentials'),cache=path.join(root,'tmp');
    try{await fs.mkdir(credentials,{recursive:true});await fs.mkdir(cache,{recursive:true})}catch{throw serviceError('DATA_UNWRITABLE')}
+   // #46：崩掉的上一轮留下的 TEMP 残片在启动前清掉，清不掉也不拦启动。
+   await pruneCache(cache)
    // 上游便携模式优先于 XDG。插件只运行不附带便携目录的已验证副本。
    for(const name of ['data','.portable']){try{await fs.stat(path.join(path.dirname(executable),name));throw Error('服务旁存在便携数据，请使用独立服务副本')}catch(error){if(error.code!=='ENOENT')throw error}}
    let stat;try{stat=await fs.stat(executable)}catch(error){if(error.code==='ENOENT')throw serviceError('EXECUTABLE_MISSING');throw error}

@@ -63,3 +63,24 @@ test('成功准备后清掉过期副本与过期复制残留：目录只剩当�
  assert.match(path.basename(next.executable),/^magpie-[0-9a-f]{64}\.exe$/);
  assert.equal(await fs.readFile(next.executable,'utf8'),'binary-v2');
 });
+
+// #46：旧版自更新留下的 magpie.exe / magpie.exe.new / magpie.before-*.exe 不算
+// 便携副本，留着永不再用。宽限期一过就清；宽限期内的（可能还有旧客户端在跑）不动。
+test('旧名自更新副本宽限期后清掉，宽限期内不动',async()=>{
+ const root=await fs.mkdtemp(path.join(process.env.FISH_TEST_TMP||os.tmpdir(),['magpie','legacy'].join('-')));
+ const source=path.join(root,'package','magpie.exe'),credentials=path.join(root,'plugin','credentials');
+ await fs.mkdir(path.dirname(source),{recursive:true});await fs.writeFile(source,'binary-v1');
+ const first=await preparePortableRuntime(source,credentials);
+ const directory=path.dirname(first.executable);
+ const legacy=['magpie.exe','magpie.exe.new','magpie.before-20251001.exe'].map(name=>path.join(directory,name));
+ for(const entry of legacy)await fs.writeFile(entry,'legacy-copy');
+ const past=new Date(Date.now()-2*24*60*60*1000);
+ for(const entry of legacy)await fs.utimes(entry,past,past);
+ const freshLegacy=path.join(directory,'magpie.before-fresh.exe');await fs.writeFile(freshLegacy,'legacy-copy');
+ await fs.writeFile(source,'binary-v2');
+ const next=await preparePortableRuntime(source,credentials);
+ const names=await fs.readdir(directory);
+ for(const entry of legacy)assert.equal(names.includes(path.basename(entry)),false,path.basename(entry));
+ assert.ok(names.includes(path.basename(freshLegacy)),'宽限期内的旧名不该被删');
+ assert.ok(names.includes(path.basename(next.executable)));
+});

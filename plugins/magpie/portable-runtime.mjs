@@ -18,9 +18,15 @@ async function aged(entry,grace=0){
 // 历史副本每次更新都多一个 70MB，复制临时名随强杀堆积。发布并校验当前副本成功
 // 后清掉它们；正在被占用的旧副本本就删不掉（EBUSY/EPERM），尽力而为，绝不因
 // 清理失败拦下启动，也不碰 data 与 marker。
+//
+// 旧版自更新还用过别的名字（magpie.exe / magpie.exe.new / magpie.before-*.exe，
+// #46 实测一个目录里 271MB / 4 个）：它们不是便携副本命名，留着永不再用。给一天
+// 宽限再删，避免与刚降级、还在跑旧运行时的插件抢文件。
+const LEGACY_EXE_GRACE=24*60*60*1000;
 async function pruneRuntime(directory,current){
  let names;try{names=await fs.readdir(directory)}catch{return}
- const previous=[];
+ const previous=[];let removed=0;
+ const drop=async entry=>{try{await fs.rm(entry,{recursive:true,force:true});removed++}catch{}};
  for(const name of names){
   if(name===current||name==='data'||name==='.portable')continue;
   const entry=path.join(directory,name);
@@ -28,13 +34,19 @@ async function pruneRuntime(directory,current){
    try{previous.push({entry,time:(await fs.stat(entry)).mtimeMs})}catch{}
    continue;
   }
+  // 旧名二进制：当前副本永远不叫这些名字，宽限期一过就清。
+  if(/^magpie\.exe(?:\.new)?$|^magpie\.before-.+\.exe$/i.test(name)){
+   if(await aged(entry,LEGACY_EXE_GRACE))await drop(entry);
+   continue;
+  }
   if(!/^\.(?:binary|data)-/.test(name))continue;
-  if(await aged(entry,STAGING_GRACE))await fs.rm(entry,{recursive:true,force:true}).catch(()=>{});
+  if(await aged(entry,STAGING_GRACE))await drop(entry);
  }
  // 最新的那一个留在回选缓存里，其余历史副本立即清理。
  previous.sort((left,right)=>right.time-left.time);
- for(const {entry} of previous.slice(KEEP_PREVIOUS))
-  await fs.rm(entry,{recursive:true,force:true}).catch(()=>{});
+ for(const {entry} of previous.slice(KEEP_PREVIOUS))await drop(entry);
+ // 清理动作留一行在插件日志里，事后能对上「哪个目录少了什么」（#46）。
+ if(removed)console.error(`[magpie] 运行时清理：删除 ${removed} 个过期副本/残片`)
 }
 
 // 新旧程序并存，原便携 data 位置固定，旧客户端的程序路径始终保留。

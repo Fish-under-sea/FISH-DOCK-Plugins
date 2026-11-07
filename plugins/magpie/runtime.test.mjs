@@ -201,3 +201,31 @@ test('#37 magpie 的 stdout 落进 magpie.log，超过 1 MB 滚动成 .1',async(
  assert.equal(await fs.readFile(file,'utf8'),'b'.repeat(700));
  await fs.rm(root,{recursive:true,force:true});
 });
+
+// #46：滚动前先删 .1。Windows 上 rename 到已存在的文件会失败，失败后继续 append，
+// 这段轮转就等于没写。用一条超过 1 MB 的日志 + 一份旧 .1 验证真的换掉了。
+test('gateway error 日志超过 1 MB 先删 .1 再滚',async()=>{
+ const root=await fs.mkdtemp(path.join(process.env.FISH_TEST_TMP||os.tmpdir(),'magpie-errorroll-'));
+ const log=path.join(root,'gateway-error.log');
+ await fs.writeFile(log,'x'.repeat(1024*1024+1));
+ await fs.writeFile(log+'.1','older-archive');
+ const {recordGatewayError}=await import('./runtime.mjs');
+ await recordGatewayError(root,{error:serviceError('GATEWAY_ERROR'),phase:'test',port:1});
+ assert.ok((await fs.readFile(log+'.1','utf8')).startsWith('x'),'旧的 .1 应被刚滚的那份替换');
+ assert.equal((await fs.readFile(log,'utf8')).trim().split('\n').length,1);
+});
+
+// #46：TEMP/TMP 指向 <插件数据目录>/tmp，旧版把 bun 缓存在 tmp/magpie 里留着。
+// 启动前清掉一天前的残留，正在写的（mtime 新）不动。
+test('pruneCache 清掉一天前的 TEMP 残留，留下正在用的',async()=>{
+ const root=await fs.mkdtemp(path.join(process.env.FISH_TEST_TMP||os.tmpdir(),'magpie-cache-'));
+ const stale=path.join(root,'magpie');await fs.mkdir(stale);
+ await fs.writeFile(path.join(stale,'bun-cache'),'x');
+ const fresh=path.join(root,'mihomo.tmp');await fs.writeFile(fresh,'x');
+ const old=new Date(Date.now()-2*24*60*60*1000);
+ await fs.utimes(stale,old,old);
+ const {pruneCache}=await import('./runtime.mjs');
+ await pruneCache(root);
+ await assert.rejects(fs.stat(stale),{code:'ENOENT'});
+ await fs.stat(fresh);
+});
