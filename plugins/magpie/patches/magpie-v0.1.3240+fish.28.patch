@@ -364,7 +364,7 @@ index 1c7eb03..7079848 100644
  		// the decision models its own pickers offer: of a provider with
  		// picks (OpenRouter's twenty-odd), the picked ones, so another
 diff --git a/internal/gateway/image_mcp.go b/internal/gateway/image_mcp.go
-index 2faedef..ffbc15e 100644
+index 2faedef..b0957fa 100644
 --- a/internal/gateway/image_mcp.go
 +++ b/internal/gateway/image_mcp.go
 @@ -42,6 +42,11 @@ import (
@@ -379,7 +379,7 @@ index 2faedef..ffbc15e 100644
  // ImageMCPFiles is where the images it made are served from.
  const ImageMCPFiles = ImageMCPPath + "/files/"
  
-@@ -70,9 +75,154 @@ func withMeta(res map[string]any, k string, v any) map[string]any {
+@@ -70,9 +75,212 @@ func withMeta(res map[string]any, k string, v any) map[string]any {
  const (
  	GenerateImageTool    = "generate_image"
  	GenerateVideoTool    = "generate_video"
@@ -429,7 +429,13 @@ index 2faedef..ffbc15e 100644
 +			(code == http.StatusNotFound && (strings.Contains(body, "model_not_found") || strings.Contains(body, "No available channel")))
 +		if noAudio {
 +			if m := strings.TrimSpace(model); m != "" {
-+				return s.mcpAudioChat(r, text, m, fmt.Sprint(a["voice"]), fmt.Sprint(a["format"]))
++				// 先按 OpenAI 兼容的 chat 方式要；不行再按 Gemini 原生 generateContent
++				// （responseModalities: AUDIO）要一遍：NearToken 的 TTS 两种都只挂上
++				// 上游通道，站点恢复后哪条通就用哪条（#41）。
++				if got := s.mcpAudioChat(r, text, m, fmt.Sprint(a["voice"]), fmt.Sprint(a["format"])); !isToolError(got) {
++					return got
++				}
++				return s.mcpAudioGemini(r, text, m)
 +			}
 +			return toolResult(GenerateAudioTool+": this model's provider has no working audio endpoint (it serves the audio path but no channel takes it). Ask the provider to enable an audio endpoint, or pick a model whose provider has one. Upstream said: "+body, true)
 +		}
@@ -499,6 +505,58 @@ index 2faedef..ffbc15e 100644
 +	return toolResult(GenerateAudioTool+": the provider answered in text but named no audio"+where+": "+said, true)
 +}
 +
++// isToolError says a tool result is a failure, as toolResult marks them.
++func isToolError(res map[string]any) bool {
++	v, _ := res["isError"].(bool)
++	return v
++}
++
++// mcpAudioGemini asks a Gemini-native model for audio: generateContent with
++// responseModalities AUDIO, the way the site says TTS should be called
++// (NearToken's gemini-*-tts, #41). The audio is inlineData (base64) in the
++// first candidate's parts.
++func (s *Server) mcpAudioGemini(r *http.Request, text, model string) map[string]any {
++	body, _ := json.Marshal(map[string]any{
++		"contents":         []any{map[string]any{"parts": []any{map[string]any{"text": text}}}},
++		"generationConfig": map[string]any{"responseModalities": []string{"AUDIO"}},
++	})
++	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "/v1beta/models/"+model+":generateContent", bytes.NewReader(body))
++	if err != nil {
++		return toolResult(GenerateAudioTool+" failed (gemini native: "+model+"): "+err.Error(), true)
++	}
++	req.Header.Set("Content-Type", "application/json")
++	rec := &mcpBuffer{}
++	s.gemini(rec, req)
++	if rec.code != 0 && rec.code != http.StatusOK {
++		return toolResult(GenerateAudioTool+": this model's provider has no working audio endpoint, and Gemini's generateContent refused it too (gemini native: "+model+"): "+strings.TrimSpace(rec.body.String()), true)
++	}
++	var out struct {
++		Candidates []struct {
++			Content struct {
++				Parts []struct {
++					InlineData *struct {
++						MimeType string
++						Data     string
++					}
++				}
++			}
++		}
++	}
++	if json.Unmarshal(rec.body.Bytes(), &out) != nil || len(out.Candidates) == 0 {
++		return toolResult(GenerateAudioTool+": the provider answered something this tool can't read as audio (gemini native: "+model+")", true)
++	}
++	for _, part := range out.Candidates[0].Content.Parts {
++		if part.InlineData != nil && part.InlineData.Data != "" {
++			mime := part.InlineData.MimeType
++			if mime == "" {
++				mime = mimeForFormat("")
++			}
++			return map[string]any{"content": []any{map[string]any{"type": "audio", "data": part.InlineData.Data, "mimeType": mime}}, "isError": false}
++		}
++	}
++	return toolResult(GenerateAudioTool+": the provider answered with no audio inline data (gemini native: "+model+")", true)
++}
++
 +// mimeForFormat is the audio type a format asks for.
 +func mimeForFormat(format string) string {
 +	switch strings.ToLower(strings.TrimSpace(format)) {
@@ -534,7 +592,7 @@ index 2faedef..ffbc15e 100644
  // ImageToolProps is generate_image's arguments but where to save: images
  // says how an image to draw from may be given.
  func ImageToolProps(images string) map[string]any {
-@@ -156,6 +306,19 @@ func imageMCPTools(r *http.Request) []any {
+@@ -156,6 +364,19 @@ func imageMCPTools(r *http.Request) []any {
  			"inputSchema": ro(VideoToolProps(imageMCPFrom, imageMCPFrom+"s"), true),
  			"annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
  		},
@@ -554,7 +612,7 @@ index 2faedef..ffbc15e 100644
  		map[string]any{
  			"name":  GenerationResultTool,
  			"title": "Generation result",
-@@ -247,6 +410,8 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
+@@ -247,6 +468,8 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
  			return s.imageMCPDraw(r, p.Arguments), nil
  		case GenerateVideoTool:
  			return s.imageMCPFilm(r, p.Arguments), nil
@@ -563,7 +621,7 @@ index 2faedef..ffbc15e 100644
  		case GenerationResultTool:
  			var a struct {
  				ID string `json:"id"`
-@@ -254,7 +419,7 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
+@@ -254,7 +477,7 @@ func (s *Server) imageMCPCall(r *http.Request, m mcpMessage) (any, map[string]an
  			json.Unmarshal(p.Arguments, &a)
  			return s.imageMCPResult(r, strings.TrimSpace(a.ID)), nil
  		}
