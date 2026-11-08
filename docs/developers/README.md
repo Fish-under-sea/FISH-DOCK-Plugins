@@ -83,6 +83,12 @@ activate:async context=>{
 
 完整契约（清单值 ↔ 卡面 ↔ 环境变量三者的边界、`activate()` 的正确写法、首启为什么会"看起来失败"、提交前四条自测）见 **[自启动按钮钩子](autostart-hook.md)**。本节只留结论，改动请改那份文档。
 
+## Dock 外部原生窗口 Hook（2.2.0）
+
+第三方插件显式调用 Hook 后，由 Dock 创建处于主 Dock 外部的第二个原生窗口，插件绘制其中的业务界面。**没有插件请求创建时，Dock 不创建、不绘制第二窗口，也不预建隐藏 WebView。** 外部原生窗口与设置面板内部插件页是两种独立承载模式。
+
+完整的能力声明、浏览器与 Node API、按需创建、文件拖入、关闭回收和接入验收见 **[Dock 外部原生窗口 Hook](native-window-hook.md)**。该接口随 Dock 2.2.0 发布，旧宿主不支持；当前实现仍在验收。
+
 ## 页面 SDK
 
 页面只使用宿主注入的 `window.FishDock.call(method,params)`：
