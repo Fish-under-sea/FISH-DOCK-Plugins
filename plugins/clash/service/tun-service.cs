@@ -29,6 +29,8 @@ public sealed class FishClashTunService : ServiceBase
     private DateTime lastStart = DateTime.MinValue;
     // C7：宿主已经没了。一旦认定，本次服务生命周期内不再拉起内核。
     private bool hostGone;
+    // 已经决定退休（插件包没了）：不再拉起内核，也不再重复撤自己。
+    private bool retiring;
     private readonly object gate = new object();
 
     public FishClashTunService()
@@ -119,6 +121,10 @@ public sealed class FishClashTunService : ServiceBase
             // C7：宿主不在了就自己撤——TUN 服务是 SYSTEM 托管、独立于宿主的 Job，
             // 宿主崩溃后内核还会一直把整机流量劫走。这里停内核 + 把 job.ini 置 0，
             // 等于让虚拟网卡随内核一起消失，用户下一次开 Dock 再重新接管。
+            if (retiring) return;
+            // 插件包被卸载或换了版本：service.ini 里登记的内核已经不在了，这套服务再留着
+            // 只会每次开机刷一条「内核找不到」。空闲（没在用）就整体退休，连目录一起清掉。
+            if (ShouldRetire()) { Retire(); return; }
             if (hostGone) return;
             if (!string.IsNullOrEmpty(home) && HostIsGone())
             {
@@ -148,6 +154,46 @@ public sealed class FishClashTunService : ServiceBase
             Launch(config);
         }
         catch (Exception error) { Log("watchdog error: " + error.Message); }
+    }
+
+    // 插件包没了、内核文件也就不在：service.ini 是安装时写死的绝对路径，升级换目录、
+    // 或者用户卸载插件，都会让这个路径失效。只有「确实失效」且「没在用」才退休——
+    // 正在跑 TUN 的机器不动它，免得把用户正在用的出口掐掉。
+    private bool ShouldRetire()
+    {
+        if (string.IsNullOrEmpty(kernel)) return false;
+        if (File.Exists(kernel)) return false;
+        string config; bool enabled;
+        if (ReadJob(out config, out enabled) && enabled) return false;
+        return true;
+    }
+
+    // 退休 = 停内核 + 撤服务 + 删目录。目录里有本服务自己的 exe，服务进程活着时删不掉，
+    // 所以交给一个延迟几秒的 cmd：等 SCM 把本进程停掉、文件句柄释放之后再删。
+    private void Retire()
+    {
+        retiring = true;
+        Log("kernel package is gone; retiring the tun service");
+        KillChild();
+        try { File.WriteAllText(jobPath, "enabled=0" + Environment.NewLine); lastJob = "0|"; }
+        catch (Exception error) { Log("job.ini reset failed: " + error.Message); }
+        try
+        {
+            var psi = new ProcessStartInfo("cmd.exe", "/c ping -n 4 127.0.0.1 >nul & rd /s /q \"" + baseDir + "\"")
+            { UseShellExecute = false, CreateNoWindow = true };
+            Process.Start(psi);
+        }
+        catch (Exception error) { Log("cleanup spawn failed: " + error.Message); }
+        try
+        {
+            var psi = new ProcessStartInfo("sc.exe", "delete " + ServiceId) { UseShellExecute = false, CreateNoWindow = true };
+            var remover = Process.Start(psi);
+            if (remover != null) remover.WaitForExit(5000);
+            Log("service delete requested");
+        }
+        catch (Exception error) { Log("service delete failed: " + error.Message); }
+        try { Stop(); }
+        catch (Exception error) { Log("service stop failed: " + error.Message); }
     }
 
     // C7：宿主租约（插件在 TUN 接管期间写的 <home>/host.json）。没有租约就不据此

@@ -27,7 +27,7 @@ try{
  $arguments=$r.args.Replace('{taskName}',$name)
  $action=New-ScheduledTaskAction -Execute $r.node -Argument ('"'+$r.script+'" '+$arguments) -WorkingDirectory $r.cwd
  $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
- $settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 13) -DisallowStartIfOnBatteries:$false -StopIfGoingOnBatteries:$false
+ $settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 13) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
  Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
  Start-ScheduledTask -TaskName $name
  Reply @{ok=$true;act='started';name=$name}
