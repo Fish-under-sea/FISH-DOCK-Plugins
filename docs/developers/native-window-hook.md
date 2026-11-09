@@ -1,6 +1,6 @@
 # Dock 外部原生窗口 Hook
 
-适用目标：FISH Dock 2.2.0。宿主实现目前正在验收；本文随该版本正式发布，2.1.9 及更早宿主不提供这些接口。协议仍为 v1。该能力来自 [PR #77 的后续通用 Hook 改造](https://github.com/Fish-under-sea/FISH-Dock/pull/77)。
+适用目标：FISH Dock 2.2.0 及以后。2.1.9 及更早宿主不提供这些接口。协议仍为 v1。该能力来自 [PR #77 的后续通用 Hook 改造](https://github.com/Fish-under-sea/FISH-Dock/pull/77)。原生窗口焦点、混合 DPI 与真实拖入尚未在隔离机器完成验收，见 [#84](https://github.com/Fish-under-sea/FISH-Dock/issues/84)。
 
 ## 1. 创建与绘制的分工
 
