@@ -229,3 +229,17 @@ test('pruneCache 清掉一天前的 TEMP 残留，留下正在用的',async()=>{
  await assert.rejects(fs.stat(stale),{code:'ENOENT'});
  await fs.stat(fresh);
 });
+
+// Dock#86：tmp 里也有宿主自己的记账文件（目录说明、两份事务日志），再旧也不归
+// 插件清理；删了目录说明，2.2.0 宿主换版本会在提交阶段失败。
+test('pruneCache 不动宿主写在 tmp 里的目录说明和事务日志',async()=>{
+ const root=await fs.mkdtemp(path.join(process.env.FISH_TEST_TMP||os.tmpdir(),'magpie-cache-'));
+ const old=new Date(Date.now()-3*24*60*60*1000);
+ const host=['README.md','storage-transaction.json','version-transaction.json'];
+ for(const name of host){const file=path.join(root,name);await fs.writeFile(file,'host');await fs.utimes(file,old,old)}
+ const stale=path.join(root,'node-compile-cache');await fs.mkdir(stale);await fs.utimes(stale,old,old);
+ const {pruneCache}=await import('./runtime.mjs');
+ await pruneCache(root);
+ for(const name of host)await fs.stat(path.join(root,name));
+ await assert.rejects(fs.stat(stale),{code:'ENOENT'});
+});

@@ -88,11 +88,15 @@ export function createTailLog({file,limit=1024*1024}={}){
 // TEMP/TMP 指向 <插件数据目录>/tmp（environment.mjs）：旧版把 bun 缓存在
 // tmp/magpie 里留着（#46 实测 202MB 停在同一天），强杀后的下载残片也在这里。
 // 启动前清掉超过一天的条目：正在被写的那种 mtime 都很新，不会误删。
+// 宿主写在 tmp 里的记账文件不归插件清理（Dock#86）：删了目录说明，宿主换版本
+// 会在提交阶段失败；事务日志是中断恢复的依据。
 const CACHE_GRACE=24*60*60*1000;
+const HOST_FILES=new Set(['readme.md','storage-transaction.json','version-transaction.json']);
 export async function pruneCache(cache){
  let names;try{names=await fs.readdir(cache)}catch{return}
  let removed=0;
  for(const name of names){
+  if(HOST_FILES.has(name.toLowerCase()))continue;
   const entry=path.join(cache,name);
   let info;try{info=await fs.stat(entry)}catch{continue}
   if(Date.now()-info.mtimeMs<=CACHE_GRACE)continue;
