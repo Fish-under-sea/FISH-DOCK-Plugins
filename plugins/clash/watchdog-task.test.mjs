@@ -53,8 +53,12 @@ test('C8 有租约时注册并启动任务：参数走 JSON stdin，配置值不
   assert.ok(source.includes('-RepetitionDuration (New-TimeSpan -Days 3650)'));
   assert.ok(source.includes('MultipleInstances IgnoreNew'));
   assert.ok(source.includes('-ExecutionTimeLimit (New-TimeSpan -Hours 13)'));
-  assert.ok(source.includes('-DisallowStartIfOnBatteries:$false'));
-  assert.ok(source.includes('-StopIfGoingOnBatteries:$false'));
+  // 电池策略不拦。参数名只用 Windows 真实存在的两个开关：`-DisallowStartIfOnBatteries`
+  // 与 `-StopIfGoingOnBatteries` 在 `New-ScheduledTaskSettingsSet` 里不存在，写成它们会让
+  // 整条命令在参数绑定时就抛「找不到与参数名称匹配的参数」，任务永远建不起来。
+  assert.ok(source.includes('-AllowStartIfOnBatteries'));
+  assert.ok(source.includes('-DontStopIfGoingOnBatteries'));
+  assert.equal(source.includes('DisallowStartIfOnBatteries'),false,'不存在的参数名会让 Register 前的 bind 直接失败');
   assert.ok(/-Force/.test(source));
   // 配置值（租约路径、node 路径）不得出现在 PowerShell 源码里。
   assert.equal(source.includes(leasePath),false);
