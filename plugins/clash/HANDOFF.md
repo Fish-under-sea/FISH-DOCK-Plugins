@@ -98,6 +98,20 @@
    `FISH Dock clash watchdog-<SID>`（`-Once` + 每 5 分钟重复 + `IgnoreNew` + 13 小时上限）并
    立即启动；只在系统代理被接管期间存在：`proxy.enable()` 成功才建，`restore()` 成功就注销，
    `stop()/shutdown()` 也注销。看门狗自己恢复完用 `schtasks /Delete` 删掉自己的任务。
+7. **2.3.5 修 C8 参数名**：`New-ScheduledTaskSettingsSet` 没有 `-DisallowStartIfOnBatteries` /
+   `-StopIfGoingOnBatteries`，参数绑定阶段就抛错，`Register-ScheduledTask` 从未执行——
+   2.3.4 及以前的 C8 看门狗实际一次都没建起来。改成真实存在的
+   `-AllowStartIfOnBatteries` / `-DontStopIfGoingOnBatteries`；`watchdog-task.test.mjs`
+   同时断言旧名不得出现。
+8. **2.3.5 TUN 服务自退休**：`service.ini` 登记的内核 exe 随插件包卸载/升级换目录消失后，
+   `FishClashTun` 不能再每 1.5 秒刷「内核找不到」。`Tick()` 在宿主租约判定前先问
+   `ShouldRetire()`：内核路径为空 → 不动；exe 还在 → 不动；**内核进程还活着 → 不动**
+   （删除运行中的 exe 不会结束进程，此时撤服务等于断网）；exe 不在且进程也没了 → 停内核、
+   把 `job.ini` 置 0、`sc delete`、延迟删除 `%ProgramData%\FishDock\clash-tun`。
+   判活只看进程句柄，不读 `job.ini`：插件写 `job.ini` 不是原子的，读到半截会把正在启动的
+   内核当成「没在用」。已用 C# 反射夹具验证五个分支（内核在 / 进程活 / 进程死且
+   enabled=1 / job 坏 / 无 kernel 路径），旧逻辑在「进程活」与「enabled=1 但已死」两处相反。
+   **已有 2.3.4 装过 TUN 服务的机器，要重新点一次「安装 TUN 服务」才会换成新服务 exe**。
 
 ### 重新编译 tun-service.exe（C# 5，勿用新语法）
 

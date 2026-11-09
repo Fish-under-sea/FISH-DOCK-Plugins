@@ -157,14 +157,18 @@ public sealed class FishClashTunService : ServiceBase
     }
 
     // 插件包没了、内核文件也就不在：service.ini 是安装时写死的绝对路径，升级换目录、
-    // 或者用户卸载插件，都会让这个路径失效。只有「确实失效」且「没在用」才退休——
-    // 正在跑 TUN 的机器不动它，免得把用户正在用的出口掐掉。
+    // 或者用户卸载插件，都会让这个路径失效。只有「内核确实不在了」且「进程也没在跑」
+    // 才退休——删除运行中的 exe 不会结束进程，正在接管流量的内核还在跑时撤服务等于断网。
     private bool ShouldRetire()
     {
         if (string.IsNullOrEmpty(kernel)) return false;
         if (File.Exists(kernel)) return false;
-        string config; bool enabled;
-        if (ReadJob(out config, out enabled) && enabled) return false;
+        // 判活只看进程句柄，不读 job.ini：插件写 job.ini 不是原子的，恰好读到写了一半
+        // 的窗口会把 enabled=1 读成「没在用」，把服务从正在启动的内核脚下删掉。
+        lock (gate) { if (child != null && !child.HasExited) return false; }
+        // 没有活内核，登记的 exe 也没了：这套服务不可能再工作。job.ini 写着 enabled=1
+        // 也一样（升级换目录后旧路径失效的现场），退休并置 0，别让开机后每 1.5 秒
+        // 刷一条「内核找不到」。
         return true;
     }
 
