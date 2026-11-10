@@ -99,6 +99,18 @@ if ($node -and (Test-Path $assets)) {
   if ($broken.Count) { throw "管理页脚本语法错误，拒绝打包：$($broken -join '、')" }
   Write-Host "== 0/3 管理页脚本语法检查通过"
 }
+
+# 悬空引用闸门：补丁「删了某个顶层声明、但文件还在引用它」＝重放漏搬了配套 hunk。
+# 语法检查拦不住这类问题（`node --check` 只看语法），编译也拦不住（JS 是内嵌资源），
+# 只有运行时才 `ReferenceError`。fish.31 就是这样把 `const foldNeeded = {}` 删掉、
+# 漏了改 `drawFold()`，2.3.5 点开任一供应商就炸（2026-11-10 实翻）。
+$gate = Join-Path $PSScriptRoot 'check-assets-refs.mjs'
+$patchFile = Join-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'patches') "magpie-$VersionTag.patch"
+if ($node -and (Test-Path $gate) -and (Test-Path $patchFile)) {
+  & $node $gate $Upstream $patchFile
+  if ($LASTEXITCODE -ne 0) { throw "悬空引用闸门未通过（见上）：补丁删掉的声明仍被引用，拒绝打包" }
+  Write-Host "== 0b/3 悬空引用闸门通过"
+}
 Write-Host "== 1/3 winres（图标 / DPI 清单 / 版本资源）"
   # FileVersion 保持四段数字；产品名/版权等字符串来自 winres json，便于与官方版区分。
   $json = if ($WinresJson) { $WinresJson } else { Join-Path $Upstream 'build\windows\winres.json' }

@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译：**基线 tag 由 `follow-upstream.ps1` 现场解析**（上游是 24h loop，写死必然过期），再加上 `patches/` 里序号最大的那份补丁。当前补丁链：`fish.23`（2.2.2，基线 **v0.1.3140**，与上游真追平；模型分类改用上游 `Serves`；#33 的 `neartoken:prefs` 与 usage 逐条 rows）；旧补丁留在 `patches/` 备查：`fish.16`/`fish.15` 是 v0.1.2799 那条线（2.2.1/2.2.2 前半），`fish.13` 用于 2.1.9–2.2.0，`fish.12` 用于 2.1.8，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1`–`fish.8`。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译：**基线 tag 由 `follow-upstream.ps1` 现场解析**（上游是 24h loop，写死必然过期），再加上 `patches/` 里序号最大的那份补丁。当前补丁链：**`fish.33`**（插件 2.3.6，基线 **v0.1.3596**；`fish.32` 是 2.3.6 修复版在 v0.1.3383 上的形态，`fish.31` 是 2.3.5）；旧补丁留在 `patches/` 备查：`fish.16`/`fish.15` 是 v0.1.2799 那条线（2.2.1/2.2.2 前半），`fish.13` 用于 2.1.9–2.2.0，`fish.12` 用于 2.1.8，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1`–`fish.8`。
 
 ## 为什么要自己编
 
@@ -110,8 +110,9 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
    - `internal/gui/pagebridge.js`：`read:` 那一行后面补 `call:`，注释按新文件的行文重排；
    - `internal/gui/pluginpage.go`：`pluginPage` / `pluginPanel` 结构体加了新字段（`Icon`、`Replaces`、`hosted`、`options`、`service`），把 `Calls []string` 并进去而不是覆盖整块；`pluginPageRoutes` 的签名新带 `web bool`，补丁里的 `pluginCallRoutes(mux)` 要接在它后面；
    - `internal/gui/core_budget_test.go`：预算常量一定冲突——**以上游的数为准**，因为补丁只多几字节，跑 `go test ./internal/gui/ -run TestCoreScriptBudget` 看是否仍在上游预算内，超了再按上游注释的规矩上调并写明原因；
-4. 编出新 exe，跑 `go test ./internal/relay/ ./internal/plugin/ ./internal/gui/ ./internal/provider/ -skip TestRestartSwitchedCodexAppReal -count=1`（那条 Real 用例要真实的 Codex app 与可用的 `ps`，本机与干净上游一样 panic，与环境无关）；
-5. 导出新补丁：`git -C <新目录> add -A && git -C <新目录> diff HEAD --binary > patches/magpie-<新tag>+fish.<n>.patch`，旧补丁留在目录里备查。
+4. **重放后必须跑悬空引用闸门**：`node tools\check-assets-refs.mjs <源码树> <新补丁>`。它只看一件事——补丁删掉了某个顶格声明、文件里却还在引用它，就是漏搬了配套 hunk。`git apply` 干净、`node --check` 通过、hunk 数与树哈希都对，也拦不住这一类（2.3.5 的 `foldNeeded is not defined` 就这么漏过去的）。`follow-upstream.ps1` 与 `build-magpie.ps1` 都已接上，任一不过都不出包；
+5. 编出新 exe，跑 `go test ./internal/relay/ ./internal/plugin/ ./internal/gui/ ./internal/provider/ -skip TestRestartSwitchedCodexAppReal -count=1`（那条 Real 用例要真实的 Codex app 与可用的 `ps`，本机与干净上游一样 panic，与环境无关）；
+6. 导出新补丁：`git -C <新目录> add -A && git -C <新目录> diff HEAD --binary > patches/magpie-<新tag>+fish.<n>.patch`，旧补丁留在目录里备查。
 
 **跟进节奏**：上游每个大版本跟一次，中间我们自己只发插件补丁包，不为小改动重编。
 
@@ -120,4 +121,5 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 - **Schannel 坏**：curl / `Invoke-WebRequest` / winget 对任何 HTTPS 都返回 `000`（`SEC_E_NO_CREDENTIALS 0x8009030E`）。下载一律用 Python 的 urllib 或 git。
 - **没有 make**：`make release-windows` 跑不了，`build-magpie.ps1` 里是等价的两条 `go build`。
 - **`node --test` 在受限沙箱里不可用**（spawn EPERM，禁管道 stdio）；页面测试直接 `node <file>` 跑。
+- **`internal/gui` / `internal/plugin` 有一批用例在本机恒失败**：`symlink ... A required privilege is not held`（要 SeCreateSymbolicLinkPrivilege）、`sh.exe ... couldn't create signal pipe`、并发 `rename ... Access is denied`。**这些在未打补丁的干净上游上失败集一模一样**，不要当成补丁的回归；判断方法是拿同一套 `go test` 在干净 tag 上跑一遍对比。
 - Windows 打包是 `CGO_ENABLED=0`，MSVC 用不上；`wails` 的 webview 走系统 WebView2。

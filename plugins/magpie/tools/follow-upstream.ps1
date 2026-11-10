@@ -201,6 +201,29 @@ try {
     if ($isMinor) { $minor += $c } else { $major += $c }
   }
 
+  # ── 5b. 悬空引用闸门 ─────────────────────────────────────────────────────
+  # 补丁「删了某个顶层声明、但文件还在引用它」＝重放时漏搬了配套 hunk。冲突数为 0
+  # 也拦不住这类问题：fish.31 就是这样把 `const foldNeeded = {}` 删掉、却漏了改
+  # `drawFold()` 的那一段，`node --check` 与 `git apply` 全通过，运行时才
+  # `ReferenceError`（2026-11-10，#50 之后的 magpie 2.3.5 实翻）。
+  $dangling = @()
+  $gate = Join-Path $tools 'check-assets-refs.mjs'
+  if ((Test-Path $gate) -and -not $conflicts.Count) {
+    $node = (Get-Command node -ErrorAction SilentlyContinue)?.Source
+    if ($node) {
+      $gateOut = & $node $gate $srcDir $Patch 2>&1
+      $gateCode = $LASTEXITCODE
+      if ($gateCode -ne 0) {
+        $dangling = @($gateOut | Where-Object { $_ -match '^\s+\S+:\s+\S+' })
+        Say ''
+        Say '悬空引用闸门未通过（补丁删了声明，文件还在用）：'
+        $gateOut | ForEach-Object { Say "  $_" }
+      } else {
+        Say '  悬空引用闸门通过'
+      }
+    }
+  }
+
   Say ''
   Say '── 重放结果 ─────────────────────────────────────────'
   Say ("补丁 {0}：{1} 个文件 / {2} 个 hunk" -f (Split-Path -Leaf $Patch), $totalFiles, $totalHunks)
@@ -253,6 +276,12 @@ try {
     Say ''
     Say '有冲突：先按上面的清单处理（大冲突要人工决定），再重跑本脚本确认无冲突。'
     exit 2
+  }
+  if ($dangling.Count) {
+    Say ''
+    Say '有悬空引用：补丁删掉的声明仍被引用，重放漏搬了配套 hunk。'
+    Say '先修补丁（把删声明的那一段与改用法的那一段一起搬），再重跑本脚本。'
+    exit 3
   }
   Say ''
   Say "无冲突：可以直接编译 → $versionTag（FileVersion=$fileVersion）"
