@@ -79,6 +79,8 @@ const stopEvents = window.FishDock.windows.onEvent(event => {
 | `anchorBase` | 2.2.2：`window`（缺省，2.2.1 行为）或 `capsule`（贴可见胶囊） |
 | `width: 'dock'` | 2.2.2：跟随胶囊当前宽度；配合 `maxWidth` 表达可增长上限 |
 | `zOrder` | 2.2.2：`normal`（缺省）或 `above-dock`（置顶，压在主岛之上） |
+| `hitTest` | 2.2.3：`window`（缺省，整窗接鼠标）或 `opaque`（只接 `hitRects`） |
+| `hitRects` | 2.2.3：可点区域 `[[x,y,w,h]]`（页面逻辑像素）；`hitTest:'opaque'` 时必填 |
 | `offsetX` / `offsetY` | 有限数，范围 ±20000；`screen` 下表示逻辑屏幕坐标 |
 | `transparent` | 默认 `false`；`true` 使用无原生标题栏的透明浮窗，插件自行绘制外观 |
 
@@ -190,6 +192,8 @@ await context.fileDrop.unsubscribe(sub);
 | `fileDrop.onEvent(listener)` | 返回取消监听函数 | 受控拖入事件桥 |
 | `dock.rect()` | 2.2.2：主岛几何与状态快照 | `dock.dock.rect` / `host.dock.rect` |
 | `dock.onEvent(listener)` | 2.2.2：返回取消监听函数 | 主岛几何/指针事件桥 |
+| `windows.beginDragOut(handle, paths)` | 2.2.3：把文件交给系统拖放 | `dock.windows.beginDragOut` / `host.windows.beginDragOut` |
+| `dock.openPage(pageId)` | 2.2.3：打开本插件的内部页 | `dock.dock.openPage` / `host.dock.openPage` |
 
 事件用 `event.event` 区分：
 
@@ -235,10 +239,11 @@ await context.fileDrop.unsubscribe(sub);
 
 | 版本 | 字节数 | SHA-256 |
 | --- | --- | --- |
-| 2.2.0 / 2.2.1 | 12,675 | `bf303681c790df2c581789a28126754c9382caf5b6032023eca2dfabd0b2dbab` |
+| 2.2.3（含 `dock`/`openPage`/`beginDragOut`/`hitRects`） | 14,541 | `f51558b6f4be03b957977f85eb2550283f0556e311a249c7b8f8e90870327b64` |
+| 2.2.0 / 2.2.1 / 2.2.2 | 12,675 | `bf303681c790df2c581789a28126754c9382caf5b6032023eca2dfabd0b2dbab` |
 | 2.1.9（无 `windows`/`fileDrop`） | 9,469 | `91b2eb3b86a06068ad0b89441e446bb636284c211dd685d691014ed2b70a034a` |
 
-用 `git hash-object sdk/node/plugin.mjs` 可以拿到 git blob 值做交叉核对：2.2.0/2.2.1 为 `e8399600201583b1b915b70041d01513028727d2`，2.1.9 为 `d775549d18789f8277bc5b15f5bbaa7dbc0c203b`。注意 blob 与 `files` 里的 SHA-256 是两套哈希，不能互换。
+用 `git hash-object sdk/node/plugin.mjs` 可以拿到 git blob 值做交叉核对：2.2.3 为 `bdf14d924610088a5ec7f85acbd82fae09073a6b`，2.2.0/2.2.1/2.2.2 为 `e8399600201583b1b915b70041d01513028727d2`，2.1.9 为 `d775549d18789f8277bc5b15f5bbaa7dbc0c203b`。注意 blob 与 `files` 里的 SHA-256 是两套哈希，不能互换。
 
 ## 8. 版本能力对照
 
@@ -261,6 +266,10 @@ await context.fileDrop.unsubscribe(sub);
 | E2 | 窗口焦点事件 | `windows.onEvent` 的 `focus` / `blur` |
 | E3 | 完整状态枚举 | `rect().state.view` + `stowed`/`hidden`/`fullscreen` |
 | E6 | 窗口层级 | `zOrder:'above-dock'` |
+| B3 | 把文件拖回资源管理器 | `windows.beginDragOut`（2.2.3） |
+| B4 | 透明区点击穿透 | `hitTest` + `hitRects`（2.2.3） |
+| D2 | 打开内部插件页 | `dock.openPage`（2.2.3） |
+| E4 | 滑出动画期间跟手 | 2.2.3 自动 |
 
 `anchorBase` 与 `align` **缺省都保持 2.2.1 的行为**，不写这两项时位置逐像素一致。
 
@@ -268,20 +277,34 @@ await context.fileDrop.unsubscribe(sub);
 
 | 编号 | 缺口 | 影响 |
 | --- | --- | --- |
-| B3 | 无 drag-out 接口 | 无法把窗口内的文件拖回资源管理器；只能自建原生服务 |
-| B4 | 无逐像素命中 / 点击穿透 | `transparent:true` 的透明像素仍拦截鼠标 |
 | B5 | 无 `fitContent` | 高度要插件自己算好再 `windows.update` |
-| D1/D2 | 无 `openPage(pageId)` | 外部窗口里的按钮无法请求宿主打开本插件的内部插件页 |
-| E4 | 无动画期间逐帧胶囊矩形 | 滑出是页面内 CSS `transform`；宿主只在 `stowed` 切换时推一次状态 |
 | E7 | 无跨窗口动画层 | 动画起点在窗口外会被裁剪，建议改为窗口内动画 |
 
 E5（长条宽度跟随主岛）与 C4 是同一项，已随 C4 解决。
 
-页面桥仍然只放行 `dock.open_external`、`dock.autostart`、`dock.windows.*`、`dock.fileDrop.*`、`dock.dock.*` 与 `gateway.open`。
+页面桥放行的宿主方法：`dock.open_external`、`dock.autostart`、`dock.windows.*`（含 `beginDragOut`）、`dock.fileDrop.*`、`dock.dock.*`（含 `openPage`）与 `gateway.open`。
 
-### 8.3 对上表的补充说明
+### 8.3 2.2.3 补齐的四项
 
-- **B4 现在是 B1 的替代路径**：2.2.2 已把窗口下限降到 32×32，能缩到实际大小的插件不再需要逐像素命中。只有坚持用大窗口装小内容时才会撞上 B4。
-- **E4 的实际影响有限**：滑出动画期间宿主窗口不移动，插件拿到的是 `stowed` 的状态切换而非逐帧位置。需要「跟手」的场景建议改用窗口内动画。
+| 编号 | 能力 | 用法 |
+| --- | --- | --- |
+| B3 | 把文件拖回资源管理器 | `windows.beginDragOut(handle, paths)` |
+| B4 | 透明区点击穿透 | `hitTest:'opaque'` + `hitRects` |
+| D2 | 打开内部插件页 | `dock.openPage(pageId)` |
+| E4 | 滑出动画期间跟手 | 自动；`geometry` 事件在动画期间逐帧推 |
+
+**B4**：只有 `hitRects` 覆盖的区域接住鼠标，其余穿透。`hitTest:'opaque'` 必须同时给 `hitRects`（否则拒绝——既不猜整窗可点，也不让窗口点不到）。运行中可用 `windows.update` 更新。没写这两个字段的窗口行为与之前完全一致，宿主那边一次轮询都不跑。
+
+**B3**：只接受本插件自己的窗口句柄；路径须存在、绝对、总量在限内，一次最多 512 项；同时只允许一次会话。宿主用系统 OLE 拖放交给资源管理器，立即返回，会话跑到用户松手。
+
+**D2**：在设置面板里打开本插件已登记的页，不是再开外部窗口。页面 ID 必须登记过；已停用的插件不给开；主岛不在可点时会临时升起来。
+
+**E4**：收起/唤醒的滑出是页面内 transform，宿主窗口不动。动画那约 320ms 内页面逐帧上报胶囊外框，`geometry` 事件跟着推。上报带 1 秒时效，页面崩溃或 `requestAnimationFrame` 被暂停时不会让胶囊停在某一帧上。
+
+### 8.4 对上表的补充说明
+
+- **B4 现在是 B1 的替代路径**：窗口下限已降到 32×32，能缩到实际大小的插件不需要逐像素命中；只有用大窗口装小内容时才需要。
+- **E4 只在动画期间逐帧**：静止时仍是「变化才推」，不会持续占带宽。
+
 
 宿主侧规格、SDK 与最小协议示例见 [Dock 开发说明](https://github.com/Fish-under-sea/FISH-Dock/blob/main/app/docs/plugin-windows-2.2.0.md) 和 [window-file-drop 示例](https://github.com/Fish-under-sea/FISH-Dock/tree/main/sdk/examples/window-file-drop)。发布前将本文与最终实现逐项复核。
