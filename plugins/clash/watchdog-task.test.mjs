@@ -6,9 +6,11 @@ import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {start,stop} from './watchdog-task.mjs';
+import {readFileSync} from 'node:fs';
+import {start,stop,scriptHost} from './watchdog-task.mjs';
 
 const scriptPath=fileURLToPath(new URL('./watchdog.mjs',import.meta.url));
+const launcherPath=fileURLToPath(new URL('./watchdog-launch.js',import.meta.url));
 
 function capture(answer) {
   const calls=[];
@@ -26,13 +28,16 @@ test('C8 没有租约时什么都不建：连 pwsh 都不起',async()=>{
  }finally{await rm(dir,{recursive:true,force:true})}
 });
 
-test('C8 有租约时注册并启动任务：参数走 JSON stdin，配置值不拼进源码',async()=>{
+// #50：任务动作必须是 wscript.exe，不是 node.exe。任务计划在交互式会话里启动
+// 控制台子系统程序会建一个可见窗口，node 的 windowsHide 管不到，桌面上就一直
+// 挂着那个黑窗口。
+test('#50 任务动作用 wscript 隐藏启动，不再把 node.exe 交给任务计划',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'clash-wd-start-'));
  try{
   const leasePath=join(dir,'system-proxy.json');
   await writeFile(leasePath,'{}');
   const {calls,exec}=capture({ok:true,act:'started',name:'FISH Dock clash watchdog-S-1-5-21-1'});
-  const result=await start({leasePath,mihomoPid:4242,port:7895,ownerPid:99,exec});
+  const result=await start({leasePath,mihomoPid:4242,port:7895,ownerPid:99,exec,host:'C:\\Windows\\System32\\wscript.exe'});
   assert.equal(result.ok,true);
   assert.equal(result.act,'started');
   assert.equal(calls.length,1);
@@ -40,11 +45,14 @@ test('C8 有租约时注册并启动任务：参数走 JSON stdin，配置值不
   // 任务名固定由当前用户 SID 拼出，多用户机器不会互相覆盖。
   assert.match(source,/\[System\.Security\.Principal\.WindowsIdentity\]::GetCurrent\(\)\.User\.Value/);
   assert.ok(source.includes('$name="FISH Dock clash watchdog-$sid"'));
-  // 动作：node + watchdog.mjs + 5 个参数；taskName 由 PowerShell 在运行时替换。
-  assert.equal(payload.node,process.execPath);
-  assert.equal(payload.script,scriptPath);
+  // 动作：wscript + 启动器 + node + watchdog.mjs + 工作目录 + 5 个参数；taskName 运行时替换。
+  assert.equal(payload.exec,'C:\\Windows\\System32\\wscript.exe');
   assert.equal(payload.cwd,dirname(scriptPath));
-  assert.match(payload.args,/^"99" ".*system-proxy\.json" "4242" "7895" "\{taskName\}"$/);
+  // //B：脚本自身出错也不弹 WSH 对话框，不能换成别的窗口问题。
+  assert.match(payload.args,/^\/\/B \/\/Nologo \/\/E:JScript "[^"]*watchdog-launch\.js" "[^"]*node[^"]*" "[^"]*watchdog\.mjs" "[^"]*" "99" ".*system-proxy\.json" "4242" "7895" "\{taskName\}"$/);
+  // 动作的 -Execute 取注入值；node 不再出现在 -Execute 上。
+  assert.ok(source.includes('-Execute $r.exec'));
+  assert.equal(source.includes('-Execute $r.node'),false,'任务动作不许再直接启动 node.exe');
   assert.ok(source.includes('$arguments=$r.args.Replace(\'{taskName}\',$name)'));
   // 注册 + 立即启动 + 5 分钟重复 10 年；执行上限 13 小时；电池策略不拦。
   assert.ok(source.includes('Register-ScheduledTask -TaskName $name'));
@@ -60,10 +68,55 @@ test('C8 有租约时注册并启动任务：参数走 JSON stdin，配置值不
   assert.ok(source.includes('-DontStopIfGoingOnBatteries'));
   assert.equal(source.includes('DisallowStartIfOnBatteries'),false,'不存在的参数名会让 Register 前的 bind 直接失败');
   assert.ok(/-Force/.test(source));
-  // 配置值（租约路径、node 路径）不得出现在 PowerShell 源码里。
+  // 配置值（租约路径、node 路径、启动器路径）不得出现在 PowerShell 源码里。
   assert.equal(source.includes(leasePath),false);
   assert.equal(source.includes(process.execPath),false);
+  assert.equal(source.includes(launcherPath),false);
  }finally{await rm(dir,{recursive:true,force:true})}
+});
+
+// #50：启动器本身要真的以隐藏方式拉起 node，否则换成 wscript 只是多绕一层。
+test('#50 启动器用 WScript.Shell.Run(cmd, 0, true) 隐藏启动并等 node',()=>{
+ const source=readFileSync(launcherPath,'utf8');
+ assert.ok(source.includes("new ActiveXObject('WScript.Shell')"));
+ assert.match(source,/\.Run\(cmd,\s*0,\s*true\)/,'第二个参数 0 = SW_HIDE');
+ assert.equal(/\.Run\(cmd,\s*0,\s*false\)/.test(source),false,
+  'Run 必须等 node：启动器立刻返回会让任务实例马上结束，5 分钟的重复触发就会拉起第二个看门狗，IgnoreNew 形同虚设');
+ assert.ok(source.includes('WScript.Arguments'));
+ assert.ok(source.includes('CurrentDirectory'),'工作目录要跟着任务动作走，看门狗按相对路径读不到东西');
+ // 参数顺序与 watchdog.mjs 的 argv 对齐：父 pid、租约、内核 pid、端口、任务名。
+ assert.match(source,/for \(var i = 3; i < a\.length; i\+\+\)/);
+ assert.equal(source.includes('slice('),false,'WScript.Arguments 不是数组，没有 slice/join');
+ // WSH 按 ANSI 读无 BOM 的 .js：混进 UTF-8 中文注释会把下一行吞掉（实测
+ // 「'return' statement outside of function」）。启动器必须保持纯 ASCII。
+ const bytes=readFileSync(launcherPath);
+ assert.equal(bytes.some(byte=>byte>0x7f),false,'启动器必须是纯 ASCII，否则 WSH 按 ANSI 解析会报错');
+ assert.equal(bytes[0],0x2f,'启动器不要写 BOM');
+});
+
+// #50：系统禁用 Windows Script Host 时明确失败，不退回直接启动 node.exe
+// （那会把黑窗口重新带回来），也不假装任务已经建好。
+test('#50 找不到 wscript 时如实失败，不回退到 node.exe',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'clash-wd-no-wsh-'));
+ try{
+  const leasePath=join(dir,'system-proxy.json');
+  await writeFile(leasePath,'{}');
+  let executed=false;
+  const result=await start({leasePath,exec:async()=>{executed=true;return {code:0,stdout:'{}'}},host:''});
+  assert.equal(result.ok,false);
+  assert.match(result.error,/Windows Script Host/);
+  assert.equal(executed,false,'没有启动器就不该建任务');
+ }finally{await rm(dir,{recursive:true,force:true})}
+});
+
+test('scriptHost 只在 wscript.exe 真实存在时返回路径',()=>{
+ const found=scriptHost();
+ if(process.platform==='win32'){
+  assert.match(found,/[\\/]System32[\\/]wscript\.exe$/i);
+ }else{
+  assert.equal(found,'');
+ }
+ assert.equal(scriptHost({SystemRoot:'C:\\nowhere'}),'');
 });
 
 test('C8 停止时注销任务；任务不存在也算成功',async()=>{
@@ -87,7 +140,7 @@ test('C8 执行器失败如实返回 ok:false，不假装任务已建好',async(
  try{
   const leasePath=join(dir,'system-proxy.json');
   await writeFile(leasePath,'{}');
-  const denied=await start({leasePath,exec:failed});
+  const denied=await start({leasePath,exec:failed,host:'C:\\Windows\\System32\\wscript.exe'});
   assert.equal(denied.ok,false);
   assert.match(denied.error,/Access is denied/);
  }finally{await rm(dir,{recursive:true,force:true})}

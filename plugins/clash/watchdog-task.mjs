@@ -4,14 +4,27 @@
 // CREATE_BREAKAWAY_FROM_JOB，子进程仍在宿主给插件建的 Job 里；宿主一死（或崩溃），
 // Job 关闭，插件 + mihomo + 看门狗一起消失，没人再还系统代理。
 //
+// 为什么任务动作不是 node.exe（#50）：任务计划在交互式会话里启动控制台子系统程序
+// 会新建一个可见的控制台窗口，Node 的 windowsHide 管不到；Dock 内置的 node.exe 就是
+// CONSOLE 子系统，直接把它写进任务动作会让桌面一直挂着黑窗口。改成 wscript.exe
+// （GUI 子系统，自身不开控制台）拉起 watchdog-launch.js，再由它以 SW_HIDE 启动 node。
+//
 // 任务名带当前用户 SID：多用户机器上互不覆盖，同一用户重复启用只会 -Force 覆盖自己。
 // 固定 PowerShell 源码 + JSON stdin：租约路径、node 路径、脚本路径、内核 pid 都不拼进源码。
 import {spawn} from 'node:child_process';
 import {existsSync} from 'node:fs';
-import {dirname} from 'node:path';
+import {dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const WATCHDOG_SCRIPT=fileURLToPath(new URL('./watchdog.mjs',import.meta.url));
+const WATCHDOG_LAUNCHER=fileURLToPath(new URL('./watchdog-launch.js',import.meta.url));
+
+// 任务动作用 wscript.exe：GUI 子系统，任务计划不会为它建控制台窗口。
+export function scriptHost(env=process.env){
+  const root=env.SystemRoot||env.windir||'C:\\Windows';
+  const file=join(root,'System32','wscript.exe');
+  return existsSync(file)?file:'';
+}
 
 const SOURCE=`$ErrorActionPreference='Stop'
 $r=ConvertFrom-Json ([Console]::In.ReadToEnd())
@@ -25,7 +38,7 @@ try{
   exit 0
  }
  $arguments=$r.args.Replace('{taskName}',$name)
- $action=New-ScheduledTaskAction -Execute $r.node -Argument ('"'+$r.script+'" '+$arguments) -WorkingDirectory $r.cwd
+ $action=New-ScheduledTaskAction -Execute $r.exec -Argument $arguments -WorkingDirectory $r.cwd
  $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
  $settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 13) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
  Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
@@ -66,10 +79,16 @@ function runPowerShell(source,payload){
 }
 
 // start：没有租约（没接管系统代理）就什么都不建，连 pwsh 都不起。
-export async function start({leasePath,mihomoPid=0,port=0,ownerPid=0,exec=runPowerShell}={}){
+// 系统禁用了 Windows Script Host 时明确失败——退回直接启动 node.exe 会重新出现
+// 那个黑窗口（#50），宁可不建看门狗，也不让用户桌面挂一个窗口。
+export async function start({leasePath,mihomoPid=0,port=0,ownerPid=0,exec=runPowerShell,host=scriptHost()}={}){
   if(!leasePath||!existsSync(leasePath))return {ok:true,act:'no-lease'};
-  const payload={action:'start',node:process.execPath,script:WATCHDOG_SCRIPT,
-    args:[quote(ownerPid),quote(leasePath),quote(mihomoPid),quote(port),quote('{taskName}')].join(' '),
+  if(!host)return {ok:false,error:'系统未启用 Windows Script Host（找不到 wscript.exe），看门狗无法隐藏启动'};
+  const payload={action:'start',exec:host,
+    // //B 是批处理模式：脚本自身出错时不弹「Windows Script Host」对话框，任务静默失败、
+    // 由 runtime 记日志——桌面不能被看门狗再弹一次窗（#50）。
+    args:['//B','//Nologo','//E:JScript',quote(WATCHDOG_LAUNCHER),quote(process.execPath),quote(WATCHDOG_SCRIPT),quote(dirname(WATCHDOG_SCRIPT)),
+      quote(ownerPid),quote(leasePath),quote(mihomoPid),quote(port),quote('{taskName}')].join(' '),
     cwd:dirname(WATCHDOG_SCRIPT)};
   return parseAnswer(await exec(SOURCE,payload));
 }
