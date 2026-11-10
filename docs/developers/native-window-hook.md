@@ -73,8 +73,12 @@ const stopEvents = window.FishDock.windows.onEvent(event => {
 | `key` | 本插件内复用键，小写字母、数字、`-`、`_`，最长 64 字符 |
 | `page` | 本插件 `pages[].id` |
 | `title` | 可选标题，1 至 80 字符 |
-| `width` / `height` | 逻辑像素，宽 160 至 2400，高 80 至 1600 |
+| `width` / `height` | 逻辑像素，宽 32 至 2400，高 32 至 1600 |
 | `anchor` | `dock-left`、`dock-bottom`、`screen` |
+| `align` | 2.2.2：窗口哪条边/角贴锚点，八种取值；缺省按 `anchor` 取 2.2.1 的等价对齐 |
+| `anchorBase` | 2.2.2：`window`（缺省，2.2.1 行为）或 `capsule`（贴可见胶囊） |
+| `width: 'dock'` | 2.2.2：跟随胶囊当前宽度；配合 `maxWidth` 表达可增长上限 |
+| `zOrder` | 2.2.2：`normal`（缺省）或 `above-dock`（置顶，压在主岛之上） |
 | `offsetX` / `offsetY` | 有限数，范围 ±20000；`screen` 下表示逻辑屏幕坐标 |
 | `transparent` | 默认 `false`；`true` 使用无原生标题栏的透明浮窗，插件自行绘制外观 |
 
@@ -184,6 +188,8 @@ await context.fileDrop.unsubscribe(sub);
 | `fileDrop.subscribe(options)` | 返回订阅句柄 | `dock.fileDrop.subscribe` / `host.fileDrop.subscribe` |
 | `fileDrop.unsubscribe(handle)` | 返回退订结果 | `dock.fileDrop.unsubscribe` / `host.fileDrop.unsubscribe` |
 | `fileDrop.onEvent(listener)` | 返回取消监听函数 | 受控拖入事件桥 |
+| `dock.rect()` | 2.2.2：主岛几何与状态快照 | `dock.dock.rect` / `host.dock.rect` |
+| `dock.onEvent(listener)` | 2.2.2：返回取消监听函数 | 主岛几何/指针事件桥 |
 
 事件用 `event.event` 区分：
 
@@ -192,7 +198,9 @@ await context.fileDrop.unsubscribe(sub);
 | `ready` | `handle` | 外部页面就绪 |
 | `closed` | `handle`、`reason` | 窗口已销毁 |
 | `anchorChanged` | `handle`、`x`、`y`、`width`、`height` | 锚点、位置或 DPI 发生变化，坐标为物理像素 |
-| `fileDrop` | `scope`、`handle`、`phase`、`paths` | 定向拖入，只有 `drop` 带路径 |
+| `fileDrop` | `scope`、`handle`、`phase`、`paths`、`position` | 定向拖入，只有 `drop` 带路径与落点 |
+| `dock` | 2.2.2：`type` + 载荷 | `type:'geometry'` 带 `rect`；`type:'pointer'` 带 `action: enter/leave` |
+| `focus` / `blur` | 2.2.2：`handle` | 本窗口的焦点变化（不是「点了窗口外面」） |
 
 `fileDrop` 的 `scope` 取 `dock` 或 `window`；`handle` 对 `dock` 是订阅句柄，对 `window` 是窗口句柄。`phase` 取 `enter`、`leave`、`drop`，只有 `drop` 带 `paths`。
 
@@ -232,53 +240,48 @@ await context.fileDrop.unsubscribe(sub);
 
 用 `git hash-object sdk/node/plugin.mjs` 可以拿到 git blob 值做交叉核对：2.2.0/2.2.1 为 `e8399600201583b1b915b70041d01513028727d2`，2.1.9 为 `d775549d18789f8277bc5b15f5bbaa7dbc0c203b`。注意 blob 与 `files` 里的 SHA-256 是两套哈希，不能互换。
 
-## 8. 2.2.x 已知缺口
+## 8. 版本能力对照
 
-以下能力在 2.2.1 上**尚未提供**。复刻「悬浮小球 + 暂存长条」这类形态时，这些是绕不过去的硬缺口；按缺口编号可对照上游跟踪 [issue #87](https://github.com/Fish-under-sea/FISH-Dock/issues/87)。本节只记录现状与影响，不代表已排期。
+按缺口编号对照上游跟踪 [issue #87](https://github.com/Fish-under-sea/FISH-Dock/issues/87)。
 
-### 8.1 窗口形态
+### 8.1 2.2.2 已补齐
 
-| 编号 | 缺口 | 影响 |
+以下能力在 **2.2.2 起**可用，不再列为缺口：
+
+| 编号 | 能力 | 用法 |
 | --- | --- | --- |
-| B1 | 窗口下限为 160×80 逻辑像素，无 `fitContent` | 36 px 的球做不出窗口；透明区会拦截本应落到主岛或桌面的鼠标 |
-| B2 | `anchor` 只有三个值，`offset` 是整窗偏移 | 无法表达「窗口某条边贴住某点」；对齐要靠页面内手工抵消，窗口尺寸一变就错位 |
-| B4 | `transparent:true` 不做逐像素命中 | 透明像素仍拦截鼠标；没有 `hitRect` 或点击穿透选项 |
-| B5 | 无内容驱动高度 | 只能用 `windows.update(handle,{height})` 由插件主动改，随内容变高要自己算 |
+| C1 | 读主岛几何与状态 | `dock.rect()` → `{window, capsule, state, scale}`；需声明 `dock` 能力 |
+| C2 | 订阅主岛几何/状态 | `dock.onEvent(listener)`，`type:'geometry'` |
+| C3 | 锚定窗口随胶囊重排 | 自动；改动锚点基准后由宿主重排 |
+| C4 | 宽度跟随主岛 | `width:'dock'` + `maxWidth` |
+| C5 | 主岛指针事件 | `dock.onEvent` 的 `type:'pointer'`，`action: enter/leave` |
+| B1 | 更小窗口 | 下限降到 32×32 |
+| B2 | 锚点对齐 | `align` 八种 + `anchorBase:'capsule'` |
+| E1 | 拖入落点坐标 | `drop` 载荷的 `position.screen` / `position.client` |
+| E2 | 窗口焦点事件 | `windows.onEvent` 的 `focus` / `blur` |
+| E3 | 完整状态枚举 | `rect().state.view` + `stowed`/`hidden`/`fullscreen` |
+| E6 | 窗口层级 | `zOrder:'above-dock'` |
 
-B1 与 B4 是同一个问题的两种解法：窗口能缩到实际大小，透明区问题自然消失；或保留大窗口但只命中不透明像素。做其中一个即可，不必都做。
+`anchorBase` 与 `align` **缺省都保持 2.2.1 的行为**，不写这两项时位置逐像素一致。
 
-### 8.2 主岛几何与状态
-
-| 编号 | 缺口 | 影响 |
-| --- | --- | --- |
-| C1 | 无 `dock.rect()` 一类接口 | 插件无法得知主岛位置、尺寸、收起状态 |
-| C2 | 无主岛几何/状态事件 | 无法跟随主岛变化重排 |
-| C3 | 锚定窗口不随胶囊形态变化重排 | 见 §3.2：主岛窗口矩形在胶囊变长/收起时不变，`anchorChanged` 不触发 |
-| C4 | 宽度不能绑定主岛当前宽度 | 长条无法与主岛等宽；只能取固定值 |
-| C5 | 无主岛 hover / click / 状态事件 | 无法实现「鼠标进主岛就收成小球」 |
-
-C3 容易误判：重排机制本身是有的（主岛 `Moved`/`Resized`/`ScaleFactorChanged` 会触发），但它跟踪的是主岛窗口矩形，而胶囊形态变化不改变这个矩形，所以实际不生效。
-
-### 8.3 打开内部插件页
-
-| 编号 | 缺口 | 影响 |
-| --- | --- | --- |
-| D1/D2 | 无 `openPage(pageId)` 一类入口 | 外部窗口里的按钮无法请求宿主打开本插件的内部插件页；用 `windows.open` 再开一个外部窗口不是同一个东西 |
-
-页面桥目前只放行 `dock.open_external`、`dock.autostart`、`dock.windows.*`、`dock.fileDrop.*` 与 `gateway.open`。
-
-### 8.4 拖出与交互
+### 8.2 仍然没有
 
 | 编号 | 缺口 | 影响 |
 | --- | --- | --- |
 | B3 | 无 drag-out 接口 | 无法把窗口内的文件拖回资源管理器；只能自建原生服务 |
-| E1 | `drop` 载荷无落点坐标 | 无法判断落点是否命中、无法从落点起做动画 |
-| E2 | 无失焦/点击外部事件 | 「点长条外部收起」无法实现 |
-| E3 | 无完整主岛状态枚举 | 依赖 C1/C2，且需要比 `collapsed`/`expanded` 更细的取值 |
-| E4 | 无滑动动画期间的胶囊矩形 | 收起/唤醒的滑出是页面内 CSS `transform`，宿主窗口不移动；要跟手得推胶囊矩形 |
-| E6 | 无 z-order 选项、无占位申报 | 插件无法向宿主申报占位高度，也无法指定与主岛的层级 |
-| E7 | 无跨窗口动画层 | 动画起点在窗口外会被裁剪 |
+| B4 | 无逐像素命中 / 点击穿透 | `transparent:true` 的透明像素仍拦截鼠标 |
+| B5 | 无 `fitContent` | 高度要插件自己算好再 `windows.update` |
+| D1/D2 | 无 `openPage(pageId)` | 外部窗口里的按钮无法请求宿主打开本插件的内部插件页 |
+| E4 | 无动画期间逐帧胶囊矩形 | 滑出是页面内 CSS `transform`；宿主只在 `stowed` 切换时推一次状态 |
+| E7 | 无跨窗口动画层 | 动画起点在窗口外会被裁剪，建议改为窗口内动画 |
 
-E5（长条宽度跟随主岛）与 C4 是同一项，按 C4 处理，不重复计。
+E5（长条宽度跟随主岛）与 C4 是同一项，已随 C4 解决。
+
+页面桥仍然只放行 `dock.open_external`、`dock.autostart`、`dock.windows.*`、`dock.fileDrop.*`、`dock.dock.*` 与 `gateway.open`。
+
+### 8.3 对上表的补充说明
+
+- **B4 现在是 B1 的替代路径**：2.2.2 已把窗口下限降到 32×32，能缩到实际大小的插件不再需要逐像素命中。只有坚持用大窗口装小内容时才会撞上 B4。
+- **E4 的实际影响有限**：滑出动画期间宿主窗口不移动，插件拿到的是 `stowed` 的状态切换而非逐帧位置。需要「跟手」的场景建议改用窗口内动画。
 
 宿主侧规格、SDK 与最小协议示例见 [Dock 开发说明](https://github.com/Fish-under-sea/FISH-Dock/blob/main/app/docs/plugin-windows-2.2.0.md) 和 [window-file-drop 示例](https://github.com/Fish-under-sea/FISH-Dock/tree/main/sdk/examples/window-file-drop)。发布前将本文与最终实现逐项复核。
