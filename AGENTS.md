@@ -24,10 +24,10 @@
 | 目录 | 是什么 |
 | --- | --- |
 | `catalog/` | 商店目录，`stable.json` 是插件**版本与摘要的唯一权威** |
-| `plugins/` | 三个官方插件：`magpie/`、`clash/`、`feishu/`（`ofm/` 已退役，`relay-probe/` 是页面插件） |
+| `plugins/` | 三个官方插件：`magpie/`、`clash/`、`feishu/`；OFM 与 `relay-probe/` 已退役，历史代码在 `docs/archive/` |
 | `shared/` | 插件共用运行时：`gateway.mjs`、`child.mjs`、`errors.mjs`、`dock.css` 与各自的测试 |
 | `tools/` | 构建、打包、校验、渲染脚本（`build-release.mjs`、`build-npm-packages.mjs`、`verify-release.mjs`、`crc32.mjs`、`stage-development.mjs`、`render-readme.mjs`） |
-| `docs/` | 开发者指南、维护者指南、计划、规格、发行说明、预览图（见第二节） |
+| `docs/` | 开发者指南、维护者指南、计划、规格、发行说明、预览图与退役档案（见第二节） |
 | `assets/`、`licenses/` | README 图与第三方许可 |
 
 宿主（桌面 Dock 本身）的问题与代码不在本仓，在 `Fish-under-sea/FISH-Dock`。
@@ -40,6 +40,7 @@
 | 改构建链、补丁链、上游跟随 | `docs/developers/README.md` 与 `docs/maintainers/README.md` |
 | 发版、对版本与兼容口径 | `docs/maintainers/README.md`（发行顺序那节） |
 | 看本轮改动计划 | `docs/plans/plan-*.md` |
+| 追溯 OFM 适配层历史 | `docs/archive/ofm/README.md` |
 | 写发行说明 | `docs/releases/<ver>.md`（模板照抄上一版，与 `catalog/stable.json` 同版） |
 | 设计语言与视觉 | `docs/developers/design-language.md`、`docs/developers/native-window-hook.md` |
 | 提 issue / PR | `.github/CONTRIBUTING.md` |
@@ -49,7 +50,7 @@
 
 - **插件**：摘要权威是 `catalog/stable.json` 的三字段（`sha256` / `bytes` / `url`）加 Release 的 `SHA256SUMS`；**不要**给 `.fish-plugin` 造单个 `.sha256`。
 - **目录只能由脚本写**：版本、摘要、字节数都由 `tools/build-release.mjs` 产出并经 `tools/verify-release.mjs` 校验，不要手改 `stable.json`。
-- 三插件同版发布；`ofm` 已从官方目录退役，不再补发。
+- 各插件独立发版，版本以 `catalog/stable.json` 为准，不强求同版；`ofm` 已退役，不再补发。
 - 校验 CRC 与 ZIP 一致性**必须用本仓 `tools/crc32.mjs`**，不要用 `node:zlib` 的 `crc32`（原因见第五节）。
 - 宿主侧的资源清单与 `<exe>.sha256` 属于宿主仓，本仓不重复定义。
 

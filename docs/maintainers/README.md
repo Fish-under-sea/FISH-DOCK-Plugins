@@ -1,8 +1,8 @@
 # 插件维护者指南
 
-2.0.0 把四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉，OFM 带暂停维护标注。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线上游 tag 加我们自己的补丁，当前 `v0.1.2799+fish.13`，2.1.8 起基线跟到上游 `v0.1.2799`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md)。
+2.0.0 把当时的四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉。OFM 已于 2026-10-25 暂停维护，2.3.0 起从官方目录与活动构建链退役，历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线上游 tag 加我们自己的补丁，当前 `v0.1.3596+fish.33`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md)。
 
-**当前版本**：飞书 **2.2.0**、Clash **2.2.0**、Magpie **2.2.0**（exe `v0.1.2799+fish.14`）、OFM **2.0.1**（暂停维护）。发行走 `v2.1.x` 之类的总 tag，一个 release 里放当次要发的包——不必四个一起发。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+**当前版本**（以 `catalog/stable.json` 为唯一权威）：飞书 **2.2.0**、Clash **2.3.6**、Magpie **2.3.6**（exe `v0.1.3596+fish.33`）。发行走 `v2.x.y` 之类的总 tag，一个 release 里放当次要发的包——不必三插件同版。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
 
 ## 身份表
 
@@ -12,7 +12,6 @@
 | --- | --- | --- |
 | `fish.clash` | `["Elysia395","FISH"]` | — |
 | `fish.magpie` | `["FISH","Jassdingk"]` | — |
-| `fish.ofm` | `["FISH"]` | 此插件于 10 月 25 日暂停维护 |
 | `fish.feishu` | `["WTStarMark","FISH"]` | — |
 
 目录条目里不再有 `maintainer`；宿主按数组渲染「A、B」，`note` 单独一行显示。「暂停维护」只影响展示，不改插件行为。
@@ -21,7 +20,7 @@
 
 清单 `behaviors.autostart` 与 `FISH_PLUGIN_AUTOSTART` 的约定见 [开发者指南](../developers/README.md#行为钩子)。维护者侧要点：
 
-- 开关值写在 `definitions` 的 `autostart` 字段：Clash / Magpie / OFM 为 `true`，飞书为 `false`（无本机服务，卡面显示「无需自启动」）。
+- 开关值写在 `definitions` 的 `autostart` 字段：Clash / Magpie 为 `true`，飞书为 `false`（无本机服务，卡面显示「无需自启动」）。
 - 只有「随 Dock 启动」这一次宿主传 `FISH_PLUGIN_AUTOSTART=1`；安装、启用、回滚、手动启动都不传。发布前用真实宿主核对一次首启是否只拉一次服务。
 - 自启动只有一个入口：宿主插件卡。插件页不要再放胶囊，也别调 `dock.autostart`——两处开关必然错位（2.0.1 已把插件页里的那颗删掉）。
 
@@ -29,7 +28,7 @@
 
 | 资源 | 当前开发验证来源 | 处理方式 |
 | --- | --- | --- |
-| Magpie | `yetone/magpie`，`v0.1.2799`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/magpie-v0.1.2799+fish.14.patch` 自行构建（版本标识 `v0.1.2799+fish.14` / FileVersion `0.1.2799.14`） | 独立进程；逐文件摘要记录于插件清单 |
+| Magpie | `yetone/magpie`，基线 `v0.1.3596`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/` 最新补丁自行构建（版本标识 `v0.1.3596+fish.33` / FileVersion `0.1.3596.33`） | 独立进程；逐文件摘要记录于插件清单 |
 | mihomo | v1.19.15，`mihomo-windows-amd64-compatible-v1.19.15.zip` | 校验下载后暂存可执行文件，首次按需启动 |
 | OFM | 本机明确指定的 `dsh-our-free-model` 源码目录 | 按所需运行文件暂存，保留自身管理页及渠道逻辑 |
 | Node SDK | 同版 Dock 仓的 `sdk/node/plugin.mjs` | 复制到各插件，与宿主 API 1 联调 |
@@ -40,13 +39,13 @@ Windhawk 属于 Dock 宿主。其固定下载、安装、提权和源码编译�
 
 ## 开发暂存
 
-`tools/stage-development.mjs` 只生成新的开发目录：四个发行资源根，外加 `relay-probe` 开发探针根，以及 `plugin.json`、逐文件摘要、版本 README 及 `development.json`。开发探针只用于本地加载和合成回归，不进入 `build-release` 的 ZIP、`stable.json` 或 npm 单包。它不制作 ZIP、不包含账号、不写线上索引。
+`tools/stage-development.mjs` 只生成新的开发目录：三个发行资源根，外加 `plugin.json`、逐文件摘要、版本 README 及 `development.json`。它不制作 ZIP、不包含账号、不写线上索引。
 
 ```powershell
-node tools/stage-development.mjs --out C:/work/preview-plugins --sdk ../FISH-Dock/sdk --ofm ../FISH-Dock/dsh-our-free-model --magpie C:/work/runtimes/magpie.exe --mihomo C:/work/runtimes/mihomo.exe
+node tools/stage-development.mjs --out C:/work/preview-plugins --sdk ../FISH-Dock/sdk --magpie C:/work/runtimes/magpie.exe --mihomo C:/work/runtimes/mihomo.exe
 ```
 
-用新的绝对输出目录保留上一次结果。Dock 调试版通过 `FISH_DOCK_DEV_PLUGINS` 装载，发行版忽略该变量。默认正式安装集合不预装四插件。
+用新的绝对输出目录保留上一次结果。Dock 调试版通过 `FISH_DOCK_DEV_PLUGINS` 装载，发行版忽略该变量。默认正式安装集合不预装官方插件。
 
 ## 版本与兼容
 
@@ -64,9 +63,9 @@ Magpie 原生服务版本由 Dock 插件管理。每次启动前，适配层仅�
 
 ## 回归与验收
 
-- 四插件业务回归：通知筛选、签名、配置事务、Clash 控制、系统代理租约恢复、网关端口与就绪检测。
-- 开发探针回归：`plugins/relay-probe/*.test.mjs` 全部使用合成响应，不访问网络；合成夹具覆盖原生、篡改签名被接受、无 thinking、OpenAI 形状和认证失败。
-- 真实进程：Magpie、OFM 的启动、停止、重新启动及异常退出；以独立测试数据运行。
+- 三插件业务回归：通知筛选、签名、配置事务、Clash 控制、系统代理租约恢复、网关端口与就绪检测。
+- 已退役目录回归：`docs/archive/ofm/` 只存历史代码，不在默认测试命令里运行。
+- 真实进程：Magpie 的启动、停止、重新启动及异常退出；以独立测试数据运行（`FISH_TEST_MAGPIE`）。
 - 宿主：清单与摘要准入、文件限额、命名空间、页面来源、协议边界、启停、卸载保留、更新失败回滚。
 - 桌面：真实设置页、首次配置、业务错误后继续操作、标签排序、Clash 单／双栏、Windhawk 的缺失与恢复状态。
 - 数据：跨根恢复、凭据与名册归属、README 的实际版本，以及备份恢复失败后的原资料保留。
@@ -76,16 +75,16 @@ Webhook 测试、系统代理切换、Windhawk 系统安装与应用均为实际
 ## 发行顺序
 
 1. 用户查阅开发版并确认进入打包阶段。
-2. 固定 Dock、SDK、四插件版本与所需上游资源，核对第三方归属和许可证。
+2. 固定 Dock、SDK、三插件版本与所需上游资源，核对第三方归属和许可证。
 3. 从干净资源树制作 `.fish-plugin`，按实际 ZIP 字节计算摘要，再由宿主重新检查。
 4. 在干净数据根完成安装、首次配置、升级、停用、卸载、跨根恢复及回滚验收。
 5. 上传对应 GitHub Release 资源，验证最终 HTTPS 下载地址、平台、大小与摘要。
 6. 资源实际可下载后再更新商店索引；索引失败时宿主保留已安装插件的管理能力。
-7. 桌面安装包在 Dock 仓单独制作与发布；npm 为四个插件分别生成单包，进入各输出目录使用 `npm pack --dry-run` 检查后运行 `npm publish --access public`。
+7. 桌面安装包在 Dock 仓单独制作与发布；npm 为三个插件分别生成单包，进入各输出目录使用 `npm pack --dry-run` 检查后运行 `npm publish --access public`。
 
-正式打包使用 `tools/build-release.mjs` 生成 `.fish-plugin`（`--only <key>` 只打一个，不动其他包的版本），再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-2.0.0/{feishu,clash,magpie,ofm}` 四个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。`relay-probe` 是开发探针，不在这四个发行物中。
+正式打包使用 `tools/build-release.mjs` 生成 `.fish-plugin`（`--only <key>` 只打一个，不动其他包的版本），再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-<版本>/{feishu,clash,magpie}` 三个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。
 
-两个构建工具均要求新的输出目录，不再清空已有目录；正式构建必须提供所选插件需要的运行时。构建后执行 `node tools/verify-release.mjs --dist <绝对 dist 目录> --npm <绝对 npm 输出目录>`，核对归档资源、页面依赖、清单摘要和 npm 字节一致性。此检查不访问远端下载地址，也不替代安装与实机验收。仅准备本地实验材料可使用 `tools/prepare-local-handoff.ps1`，该脚本不会上传资源或发布 npm。
+两个构建工具均要求新的输出目录，不再清空已有目录；正式构建必须提供所选插件需要的运行时。构建后执行 `node tools/verify-release.mjs --dist <绝对 dist 目录> --npm <绝对 npm 输出目录>`，核对归档资源、页面依赖、清单摘要和 npm 字节一致性。此检查不访问远端下载地址，也不替代安装与实机验收。仅准备本地实验材料可使用 `tools/build-local.ps1`（原 `prepare-local-handoff.ps1`，不含 OFM 参数），该脚本不会上传资源或发布 npm。
 
 独立补丁使用 `--version <x.y.z> --only magpie`，两个构建工具都需传入。单插件构建输出的 `stable.json` 仅含本次插件；正式商店目录须只替换相应条目，保留其他插件已发布的版本、下载地址和摘要。
 

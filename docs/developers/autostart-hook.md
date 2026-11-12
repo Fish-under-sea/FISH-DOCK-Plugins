@@ -16,7 +16,7 @@
 | `true` | 「随 Dock 启动 / 已关闭」两态胶囊 | 打开的那一次启动传 `1` |
 | `false` | 灰色小字「无需自启动」，不占按钮语义 | 永不传 |
 
-- 有本机服务的插件（Clash、Magpie、OFM）写 `true`；
+- 有本机服务的插件（Clash、Magpie）写 `true`；
 - 没有本机服务的插件（飞书）写 `false`，**并且不要去读这个环境变量**——读了也没有意义，只会让人误以为有自动行为；
 - 清单由 `tools/stage-development.mjs` 按 `definitions` 的 `autostart` 字段生成，**不要手改打包后的 `plugin.json`**，否则下次打包就被覆盖。
 

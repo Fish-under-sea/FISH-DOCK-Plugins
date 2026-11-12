@@ -1,10 +1,10 @@
 # 插件开发者指南
 
-当前协议为 v1。已发布的四个：飞书 **2.2.0**、Clash **2.2.8**、Magpie **2.2.9**（exe `v0.1.3140+fish.24`）、OFM **2.0.1**（暂停维护）；作者用数组、不再有维护者字段。`plugins/relay-probe` 是开发中的中转站行为探针（决策与调用通道都走宿主），尚未进入发行目录；两个内置件按 npm 包登记、不单独发行：`@fish-under-sea/magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `@fish-under-sea/magpie-purge`（破甲），首装与后续更新都交给 magpie 自己的更新循环，Dock 不随包分发它们的目录。两者的源码分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1。当前官方插件：飞书 **2.2.0**、Clash **2.3.6**、Magpie **2.3.6**（exe `v0.1.3596+fish.33`）；作者用数组、不再有维护者字段。OFM 已退役（2026-10-25 暂停维护，2.3.0 起移出官方目录与活动构建链），历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)，不再随目录发行。两个内置件按 npm 包登记、不单独发行：`@fish-under-sea/magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `@fish-under-sea/magpie-purge`（破甲），首装与后续更新都交给 magpie 自己的更新循环，Dock 不随包分发它们的目录。两者的源码分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
-Dock 仓维护桌面宿主、Node SDK、浏览器桥、安装更新与回滚、Windhawk、「插件」管理页和标签排序。本仓维护 `plugins/feishu`、`plugins/clash`、`plugins/magpie`、`plugins/ofm`，以及开发中的 `plugins/relay-probe`、`shared`、`tools/stage-development.mjs`、商店目录和插件文档。
+Dock 仓维护桌面宿主、Node SDK、浏览器桥、安装更新与回滚、Windhawk、「插件」管理页和标签排序。本仓维护 `plugins/feishu`、`plugins/clash`、`plugins/magpie`、`shared`、`tools/`、商店目录和插件文档。
 
 不要把业务页面重新写入 Dock 设置页，也不要把源码目录当成用户数据目录。正常发行版默认不预装这些插件；调试版通过明确的开发目录装载。
 
@@ -76,7 +76,7 @@ activate:async context=>{
 },
 ```
 
-- 有本机服务的插件（Clash、Magpie、OFM）写 `true`；没有服务的插件（飞书）写 `false`，也不要读这个变量。
+- 有本机服务的插件（Clash、Magpie）写 `true`；没有服务的插件（飞书）写 `false`，也不要读这个变量。
 - 清单由 `tools/stage-development.mjs` 生成，开关值写在 `definitions` 的 `autostart` 字段上，不要在打包后手改 `plugin.json`。
 - 自启动开关只有宿主插件卡一处：插件页里不要再放开关，也不要去调 `dock.autostart`，否则两处状态会打架。
 - `view()` 是异步的（如 Clash 要读控制器状态）时，先等它再判断，别把 Promise 当对象读 `.state`。
@@ -99,7 +99,7 @@ const view=await window.FishDock.call('weather.view');
 
 宿主用票据绑定插件 ID、活动版本与启用状态。业务页面运行在独立来源的 sandbox iframe；来源和发送窗口需要同时匹配，页面不能指定其他插件身份。停用、卸载与版本切换撤销旧票据。页面需要显示加载、空状态、错误与重试，保留键盘焦点和可访问名称。
 
-Magpie、OFM 的 `gateway.open` 是宿主提供的特定管理页入口，地址只接收当前服务的回环端口。普通插件不借用该入口。网关页面按需加载，其原生账号与用量仍由各自服务处理。
+Magpie 的 `gateway.open` 是宿主提供的特定管理页入口，地址只接收当前服务的回环端口。普通插件不借用该入口。网关页面按需加载，其原生账号与用量仍由各自服务处理。
 
 **视觉规范见 [设计语言](design-language.md)**：主题只有 `data-dock-theme` 与 `--dock-*` 两个来源（不许用 `prefers-color-scheme`）、两层 token、尺寸刻度表、控件八态、列表与弹层、emoji 必须包 16px 盒子、文案与数据口径、无障碍底线，以及一张"真踩过的反面清单"。新写页面先过那张尺寸刻度表再谈配色——2.1.3/2.1.4 里被投诉的"丑"多数出在孤值与 emoji 撑高，不是配色能力。
 
@@ -134,9 +134,9 @@ Magpie、OFM 的 `gateway.open` 是宿主提供的特定管理页入口，地址
 先按 [项目 README](../../README.md) 暂存开发目录，并用显式 Node、独立 `.fish-dock` 与调试宿主加载。
 
 ```powershell
-node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.test.mjs' 'plugins/magpie/*.test.mjs' 'plugins/ofm/*.test.mjs' 'plugins/relay-probe/*.test.mjs' 'shared/*.test.mjs' 'tools/*.test.mjs'
+node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.test.mjs' 'plugins/magpie/*.test.mjs' 'shared/*.test.mjs' 'tools/*.test.mjs'
 ```
 
-`FISH_TEST_MAGPIE` 与 `FISH_TEST_OFM` 启用真实服务验收。验证首次配置、保存失败、业务错误后的继续操作、端口占用、启动就绪、停止、连续启停、卸载保留资料，以及升级失败回滚。前端单测通过后，再用真实 WebView 核对页面加载、布局切换与键盘操作。
+`FISH_TEST_MAGPIE`、`FISH_TEST_MIHOMO` 与 `FISH_TEST_SDK` 启用真实服务验收。验证首次配置、保存失败、业务错误后的继续操作、端口占用、启动就绪、停止、连续启停、卸载保留资料，以及升级失败回滚。前端单测通过后，再用真实 WebView 核对页面加载、布局切换与键盘操作。
 
 发行制作、固定来源与商店更新顺序见 [维护者指南](../maintainers/README.md)。
