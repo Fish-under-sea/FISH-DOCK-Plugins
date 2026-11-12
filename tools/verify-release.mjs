@@ -55,7 +55,6 @@ export function verifyArchive(bytes) {
  const required={
   'fish.clash':'service/mihomo.exe',
   'fish.magpie':'service/magpie.exe',
-  'fish.ofm':'service/packages/desktop/service-host.mjs',
  }[manifest.id];
  if(required)check(files.has(required),`服务入口缺失：${required}`);
  return {id:manifest.id,version:manifest.version,files:files.size,bytes:bytes.length,sha256:hash(bytes)};
@@ -67,7 +66,7 @@ export function verifyRelease({dist,npm}) {
  }));
  const results=[];
  for(const entry of catalog.plugins){
-  check(/^fish\.(feishu|clash|magpie|ofm)$/.test(entry.id),'目录插件 ID 无效');
+  check(/^fish\.(feishu|clash|magpie)$/.test(entry.id),'目录插件 ID 无效');
   const key=entry.id.slice(5),name=`${key}.fish-plugin`,bytes=fs.readFileSync(path.join(dist,name)),result=verifyArchive(bytes);
   check(result.id===entry.id&&result.version===entry.version,'包和目录的身份或版本不一致');
   check(result.sha256===entry.sha256&&result.sha256===sums.get(name)&&result.bytes===entry.bytes,'归档与目录/摘要列表不一致');

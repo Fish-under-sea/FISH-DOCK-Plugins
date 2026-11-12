@@ -9,7 +9,6 @@ export const PLUGINS = [
   {id: 'feishu', name: '飞书通知', description: '飞书群机器人通知、事件筛选和签名测试', licenses: []},
   {id: 'clash', name: 'Clash 代理', description: 'mihomo、订阅、节点、模式和系统代理', licenses: ['mihomo.txt']},
   {id: 'magpie', name: 'Magpie 网关', description: '独立 Magpie 网关和原生管理页', licenses: ['Magpie.txt']},
-  {id: 'ofm', name: 'OFM 本地模型', description: '独立 OFM 渠道账号、模型目录和原生管理页', licenses: []},
 ].map(plugin => ({...plugin, authors: identity[plugin.id].authors, ...(identity[plugin.id].note ? {note: identity[plugin.id].note} : {})}));
 
 // 版本只有一个来源：发行目录里的 stable.json。以前这里写死 2.0.0，发 2.0.1 时

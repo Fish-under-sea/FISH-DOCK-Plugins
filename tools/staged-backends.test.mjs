@@ -8,7 +8,7 @@ import {createInterface} from 'node:readline';
 import {once} from 'node:events';
 import {stage,definitions} from './stage-development.mjs';
 
-test('真实宿主 SDK 加载四个暂存 backend，跨工作目录握手、激活、读取和停用',
+test('真实宿主 SDK 加载三个暂存 backend，跨工作目录握手、激活、读取和停用',
  {skip:!process.env.FISH_TEST_SDK,timeout:30000},async t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fish SDK 中文 空格-'));
  const staged=path.join(root,'resources');
@@ -43,7 +43,7 @@ test('真实宿主 SDK 加载四个暂存 backend，跨工作目录握手、激�
   const method=definition.key==='feishu'?'feishu.view':definition.key==='clash'?'clash.view':'gateway.view';
   const view=await request(method);
   assert.ok(view&&typeof view==='object');
-  if(['magpie','ofm'].includes(definition.key)){
+  if(definition.key==='magpie'){
    assert.ok(view.executable.startsWith(staged));
    assert.equal(view.state,'stopped');
   }

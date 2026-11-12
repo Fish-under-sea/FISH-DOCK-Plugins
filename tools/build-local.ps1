@@ -1,16 +1,16 @@
 param(
  [Parameter(Mandatory=$true)][string]$Sdk,
- [Parameter(Mandatory=$true)][string]$Ofm,
  [Parameter(Mandatory=$true)][string]$Magpie,
  [Parameter(Mandatory=$true)][string]$Mihomo,
  [Parameter(Mandatory=$true)][string]$Out,
- [string]$Version = '1.0.2'
+ [Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
+if (-not [System.IO.Path]::IsPathFullyQualified($Out)) { throw '输出目录必须是绝对路径。' }
 $target = [System.IO.Path]::GetFullPath($Out)
 if (Test-Path -LiteralPath $target) { throw '输出目录已存在，请选择新的本地实验目录。' }
-foreach ($inputPath in @($Sdk, $Ofm, $Magpie, $Mihomo)) {
+foreach ($inputPath in @($Sdk, $Magpie, $Mihomo)) {
  if (-not [System.IO.Path]::IsPathFullyQualified($inputPath)) { throw '输入路径必须是绝对路径。' }
  if (-not (Test-Path -LiteralPath $inputPath)) { throw "缺少构建输入：$inputPath" }
 }
@@ -19,7 +19,7 @@ $npm = Join-Path $target 'npm'
 New-Item -ItemType Directory -Path $target | Out-Null
 Push-Location $repo
 try {
- & node tools/build-release.mjs --out $release --sdk $Sdk --ofm $Ofm --magpie $Magpie --mihomo $Mihomo --version $Version
+ & node tools/build-release.mjs --out $release --sdk $Sdk --magpie $Magpie --mihomo $Mihomo --version $Version
  if ($LASTEXITCODE -ne 0) { throw '本地插件构建失败；保留输出用于诊断。' }
  & node tools/build-npm-packages.mjs --dist (Join-Path $release 'dist') --out $npm --version $Version
  if ($LASTEXITCODE -ne 0) { throw '本地 npm 目录构建失败。' }
@@ -32,7 +32,6 @@ try {
   version = $Version
   node = (& node --version)
   sdk = $Sdk
-  ofm = $Ofm
   magpie = @{ path = $Magpie; sha256 = (Get-FileHash -LiteralPath $Magpie -Algorithm SHA256).Hash.ToLowerInvariant() }
   mihomo = @{ path = $Mihomo; sha256 = (Get-FileHash -LiteralPath $Mihomo -Algorithm SHA256).Hash.ToLowerInvariant() }
   sdkBackendSha256 = (Get-FileHash -LiteralPath (Join-Path $Sdk 'node/plugin.mjs') -Algorithm SHA256).Hash.ToLowerInvariant()

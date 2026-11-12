@@ -16,3 +16,7 @@ plugins/magpie/.tools/
 # Clash 内置 geo 数据（GeoSite/GeoIP，约 21MB；随发行包分发，不进仓库源码）
 plugins/clash/service/GeoSite.dat
 plugins/clash/service/GeoIP.dat
+
+# 交接件属于一次性材料，长期知识写进 docs/ 下对应指南；不再入库
+/docs/handoff/
+**/*handoff*.md

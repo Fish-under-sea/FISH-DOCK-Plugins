@@ -31,9 +31,9 @@ test('按插件生成独立 npm 包，不带其他插件资源', async () => {
   const out = path.join(root, 'npm');
   fs.mkdirSync(dist, {recursive: true});
   fs.mkdirSync(path.join(source, 'licenses'), {recursive: true});
-  for (const id of ['feishu', 'clash', 'magpie', 'ofm']) fs.writeFileSync(path.join(dist, `${id}.fish-plugin`), `${id} archive`);
+  for (const id of ['feishu', 'clash', 'magpie']) fs.writeFileSync(path.join(dist, `${id}.fish-plugin`), `${id} archive`);
   // 版本只有一个来源：发行目录的 stable.json（以前这里写死 2.0.0，发 2.0.1 时包里还是旧版本）。
-  fs.writeFileSync(path.join(dist, 'stable.json'), JSON.stringify({schema: 1, plugins: ['fish.feishu', 'fish.clash', 'fish.magpie', 'fish.ofm'].map(id => ({id, version: '2.0.0'}))}));
+  fs.writeFileSync(path.join(dist, 'stable.json'), JSON.stringify({schema: 1, plugins: ['fish.feishu', 'fish.clash', 'fish.magpie'].map(id => ({id, version: '2.0.0'}))}));
   fs.writeFileSync(path.join(source, 'LICENSE'), 'MIT');
   fs.writeFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'), 'notices');
   fs.writeFileSync(path.join(source, 'licenses', 'mihomo.txt'), 'license');
@@ -59,7 +59,7 @@ test('发行目录里版本不一致时直接拒绝，不产出半个包', async
   const out = path.join(root, 'npm');
   fs.mkdirSync(dist, {recursive: true});
   fs.mkdirSync(path.join(source, 'licenses'), {recursive: true});
-  for (const id of ['feishu', 'clash', 'magpie', 'ofm']) fs.writeFileSync(path.join(dist, `${id}.fish-plugin`), `${id} archive`);
+  for (const id of ['feishu', 'clash', 'magpie']) fs.writeFileSync(path.join(dist, `${id}.fish-plugin`), `${id} archive`);
   fs.writeFileSync(path.join(source, 'LICENSE'), 'MIT');
   fs.writeFileSync(path.join(source, 'THIRD_PARTY_NOTICES.md'), 'notices');
   fs.writeFileSync(path.join(source, 'licenses', 'mihomo.txt'), 'license');

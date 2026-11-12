@@ -5,23 +5,29 @@ import {createHash} from 'node:crypto';
 import {inflateRawSync,crc32} from 'node:zlib';
 import {archive,build} from './build-release.mjs';
 import {definitions, stage} from './stage-development.mjs';
-test('发行清单不包含开发探针',()=>{
- assert.equal(definitions.some(definition=>definition.key==='relay-probe'),false);
+test('发行清单只保留当前三个官方插件',()=>{
+ assert.deepEqual(definitions.map(definition=>definition.key),['feishu','clash','magpie']);
 });
 test('stage 只输出选中的插件，并写入正确的 manifest 文件哈希',t=>{
  const base=fs.mkdtempSync(path.join(os.tmpdir(),'fish-stage-'));t.after(()=>fs.rmSync(base,{recursive:true,force:true}));
  const sdk=path.join(base,'sdk');fs.mkdirSync(path.join(sdk,'node'),{recursive:true});fs.mkdirSync(path.join(sdk,'browser'),{recursive:true});
  const sdkSource='export const sdk = true;\n';fs.writeFileSync(path.join(sdk,'node','plugin.mjs'),sdkSource);fs.writeFileSync(path.join(sdk,'browser','bridge.js'),'window.FishDock = {};\n');
- const devOut=path.join(base,'dev');stage({out:devOut,sdk,include:['relay-probe']});
- assert.equal(fs.existsSync(path.join(devOut,'feishu')),false);assert.equal(fs.existsSync(path.join(devOut,'relay-probe','plugin.json')),true);
- const manifest=JSON.parse(fs.readFileSync(path.join(devOut,'relay-probe','plugin.json'),'utf8'));
- assert.equal(manifest.id,'fish.relay-probe');assert.equal(manifest.backend.entry,'plugins/relay-probe/backend.mjs');assert.equal(manifest.pages[0].entry,'plugins/relay-probe/page.html');
+ for(const key of ['ofm','relay-probe']){
+  const rejected=path.join(base,`rejected-${key}`);
+  assert.throws(()=>stage({out:rejected,sdk,include:['feishu',key]}),/未知插件/);
+  assert.equal(fs.existsSync(rejected),false);
+  assert.throws(()=>build({out:rejected,sdk,only:key}),/未知插件/);
+ }
+ const devOut=path.join(base,'dev');stage({out:devOut,sdk,include:['feishu']});
+ assert.deepEqual(fs.readdirSync(devOut).sort(),['development.json','feishu']);
+ const manifest=JSON.parse(fs.readFileSync(path.join(devOut,'feishu','plugin.json'),'utf8'));
+ assert.equal(manifest.id,'fish.feishu');assert.equal(manifest.backend.entry,'plugins/feishu/backend.mjs');assert.equal(manifest.pages[0].entry,'plugins/feishu/page.html');
  const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
- assert.equal(manifest.files['plugins/relay-probe/probe.mjs'],hash(fs.readFileSync(new URL('../plugins/relay-probe/probe.mjs',import.meta.url))));
- assert.equal(manifest.files['plugins/relay-probe/sdk.mjs'],hash(sdkSource));
- const dev=JSON.parse(fs.readFileSync(path.join(devOut,'development.json'),'utf8'));assert.deepEqual(dev.plugins.map(plugin=>plugin.id),['fish.relay-probe']);
- const releaseOut=path.join(base,'release');stage({out:releaseOut,sdk,include:definitions.map(definition=>definition.key)});
- assert.equal(fs.existsSync(path.join(releaseOut,'relay-probe')),false);
+ assert.equal(manifest.files['plugins/feishu/backend.mjs'],hash(fs.readFileSync(new URL('../plugins/feishu/backend.mjs',import.meta.url))));
+ assert.equal(manifest.files['plugins/feishu/sdk.mjs'],hash(sdkSource));
+ const dev=JSON.parse(fs.readFileSync(path.join(devOut,'development.json'),'utf8'));assert.deepEqual(dev.plugins.map(plugin=>plugin.id),['fish.feishu']);
+ const releaseOut=path.join(base,'release');stage({out:releaseOut,sdk});
+ assert.deepEqual(fs.readdirSync(releaseOut).sort(),['clash','development.json','feishu','magpie']);
  const release=JSON.parse(fs.readFileSync(path.join(releaseOut,'development.json'),'utf8'));assert.deepEqual(release.plugins.map(plugin=>plugin.id),definitions.map(definition=>`fish.${definition.key}`));
 });
 test('单独发布 Magpie 补丁，清单和目录版本一致',()=>{
