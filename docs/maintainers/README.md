@@ -30,7 +30,6 @@
 | --- | --- | --- |
 | Magpie | `yetone/magpie`，基线 `v0.1.3596`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/` 最新补丁自行构建（版本标识 `v0.1.3596+fish.33` / FileVersion `0.1.3596.33`） | 独立进程；逐文件摘要记录于插件清单 |
 | mihomo | v1.19.15，`mihomo-windows-amd64-compatible-v1.19.15.zip` | 校验下载后暂存可执行文件，首次按需启动 |
-| OFM | 本机明确指定的 `dsh-our-free-model` 源码目录 | 按所需运行文件暂存，保留自身管理页及渠道逻辑 |
 | Node SDK | 同版 Dock 仓的 `sdk/node/plugin.mjs` | 复制到各插件，与宿主 API 1 联调 |
 
 当前验证的 mihomo ZIP SHA-256：`e9251191e459816c1aca55d495eabd50d525e83aff0cd445608d69da7e0f470c`。发行前重新核对上游版本、资源名、来源、许可证与真实摘要，切勿用开发目录的文件名替代上游证据。
@@ -42,7 +41,7 @@ Windhawk 属于 Dock 宿主。其固定下载、安装、提权和源码编译�
 `tools/stage-development.mjs` 只生成新的开发目录：三个发行资源根，外加 `plugin.json`、逐文件摘要、版本 README 及 `development.json`。它不制作 ZIP、不包含账号、不写线上索引。
 
 ```powershell
-node tools/stage-development.mjs --out C:/work/preview-plugins --sdk ../FISH-Dock/sdk --magpie C:/work/runtimes/magpie.exe --mihomo C:/work/runtimes/mihomo.exe
+node tools/stage-development.mjs --out C:/work/preview-plugins --sdk C:/work/FISH-Dock/sdk --magpie C:/work/runtimes/magpie.exe --mihomo C:/work/runtimes/mihomo.exe
 ```
 
 用新的绝对输出目录保留上一次结果。Dock 调试版通过 `FISH_DOCK_DEV_PLUGINS` 装载，发行版忽略该变量。默认正式安装集合不预装官方插件。
@@ -64,7 +63,8 @@ Magpie 原生服务版本由 Dock 插件管理。每次启动前，适配层仅�
 ## 回归与验收
 
 - 三插件业务回归：通知筛选、签名、配置事务、Clash 控制、系统代理租约恢复、网关端口与就绪检测。
-- 已退役目录回归：`docs/archive/ofm/` 只存历史代码，不在默认测试命令里运行。
+- 退役边界：`docs/archive/ofm/` 只存 OFM 历史适配层，不在默认测试命令里运行；独立开发插件 `plugins/relay-probe/` 已删除，不在此归档中。Magpie 的 npm 探针包与历史插件名迁移逻辑保留。
+- 沙箱失败：遇到 `spawn EPERM` 或浏览器命名管道拒绝时，记录具体错误并申请原命令单次授权重跑，不删断言、不将未执行成功的用例计作通过。
 - 真实进程：Magpie 的启动、停止、重新启动及异常退出；以独立测试数据运行（`FISH_TEST_MAGPIE`）。
 - 宿主：清单与摘要准入、文件限额、命名空间、页面来源、协议边界、启停、卸载保留、更新失败回滚。
 - 桌面：真实设置页、首次配置、业务错误后继续操作、标签排序、Clash 单／双栏、Windhawk 的缺失与恢复状态。

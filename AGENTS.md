@@ -24,7 +24,7 @@
 | 目录 | 是什么 |
 | --- | --- |
 | `catalog/` | 商店目录，`stable.json` 是插件**版本与摘要的唯一权威** |
-| `plugins/` | 三个官方插件：`magpie/`、`clash/`、`feishu/`；OFM 与 `relay-probe/` 已退役，历史代码在 `docs/archive/` |
+| `plugins/` | 三个官方插件：`magpie/`、`clash/`、`feishu/`；OFM 适配层归档在 `docs/archive/ofm/`，独立开发插件 `relay-probe/` 已删除，历史仅在 Git 中保留 |
 | `shared/` | 插件共用运行时：`gateway.mjs`、`child.mjs`、`errors.mjs`、`dock.css` 与各自的测试 |
 | `tools/` | 构建、打包、校验、渲染脚本（`build-release.mjs`、`build-npm-packages.mjs`、`verify-release.mjs`、`crc32.mjs`、`stage-development.mjs`、`render-readme.mjs`） |
 | `docs/` | 开发者指南、维护者指南、计划、规格、发行说明、预览图与退役档案（见第二节） |
@@ -70,13 +70,13 @@
 | `npm pack` / `npm publish` 报 `Z_DATA_ERROR: zlib: incorrect data check`；`verify-release` 报「ZIP CRC 或长度错误」 | 部分机器的 Node 24 zlib 对大 buffer 是坏的，与代理、文件本身无关（实测 36 MB 文件往返即报错，`zlib.crc32()` 同一个 Buffer 前后算出不同值；sha256 与长度全程稳定，能证明文件没坏） | ① 打包与校验统一用 `tools/crc32.mjs`；② 发 npm 换用 Node 22 便携版（`=22.23.4` 实测正常），下载 `https://registry.npmmirror.com/-/binary/node/v22.23.4/node-v22.23.4-win-x64.zip`，解压后跑它的 `npm-cli.js` |
 | `npm view` / `npm publish` 报 `EPERM ... open '<用户目录>\AppData\Local\npm-cache\...'` | npm 默认缓存目录在工作区外，被拒写 | 先设 `$env:npm_config_cache='<工作区>\.work\npm-cache'` |
 | `go` 报 `failed to initialize build cache` / `mkdir <GOPATH>: Access is denied` | Go 默认 `GOCACHE`、`GOPATH` 落在用户目录下，被拒写 | `GOPATH`、`GOCACHE`、`GOTMPDIR` 三个变量都指到工作区（见下节） |
-| `node --test` 报 `spawn EPERM` | 沙箱禁管道 stdio | 用 `node --test --test-isolation=none "<glob>"`；真子进程用例恒失败记环境不记缺陷 |
-| Chromium/Edge 无头起不来（`mojo … 拒绝访问 (0x5)`） | 沙箱禁命名管道 | `tools/render-readme.mjs` 用 `danger-full-access` 跑一次 |
+| `node --test` 报 `spawn EPERM` | 沙箱禁管道 stdio | 用 `node --test --test-isolation=none "<glob>"`；真实子进程被拒时保留断言，申请原命令单次授权重跑；未验证不能记通过 |
+| Chromium/Edge 无头起不来（`mojo … 拒绝访问 (0x5)`） | 沙箱禁命名管道 | 渲染或截图命令实际被拒后，申请原命令单次授权 |
 | `git push` 报 `TLS connect error: error:0A000126 ... unexpected eof` | git 默认 TLS 通道在部分机器不稳 | 加 `-c http.sslBackend=openssl -c http.version=HTTP/1.1`；别用 `schannel` |
 | `git push` 要凭据时 credential helper 起不来 | 沙箱禁命名管道 | 用 `gh auth token` 拼**临时 URL** 推送，用完即弃；**不写进 remote/config**，推完 `git fetch` 对齐 |
 | `gh` 报 `fatal: not a git repository` | `gh` 要在仓库目录执行 | 一律显式 `--repo <owner>/<repo>` |
 
-`node --test` 里若断言涉及子进程，优先把断言改成可直接执行的形式，不要靠 `--test-threads` 硬凑。
+测试必须保留真实协议与子进程覆盖，不为适配沙箱删改断言。只把有权限错误证据的失败归类为环境阻塞；授权重跑通过后才能计入通过数。
 
 ### Go 工具链（magpie 自编译用）
 
