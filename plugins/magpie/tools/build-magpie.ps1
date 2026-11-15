@@ -17,6 +17,9 @@ param(
   [string]$WinresJson = '',
   # 上游源码目录；留空用本目录旁的 upstream
   [string]$UpstreamRoot = '',
+  # 可显式复用本机工具链与工作区缓存，不必为构建复制整棵 Go 安装。
+  [string]$GoRoot = '',
+  [string]$CacheRoot = '',
   [string]$Out = '',
   # 落后闸门：默认开着，基线跟不上就拒绝编译（#31）。明确「这次不算发版产物」
   # 时才关掉。
@@ -58,16 +61,16 @@ if (-not $VersionTag) { throw '版本串为空：显式传 -VersionTag，或确�
 # $PSScriptRoot 是插件目录，那里没有 toolchain，不能拿它当根。
 $Upstream = if ($UpstreamRoot) { (Resolve-Path $UpstreamRoot).Path } else { Join-Path (Split-Path -Parent $PSScriptRoot) '.tools\upstream' }
 $T = if (Test-Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'toolchain\go')) { Split-Path -Parent $PSScriptRoot } else { Split-Path -Parent $Upstream }
-$Goroot = Join-Path $T 'toolchain\go'
+$Goroot = if ($GoRoot) { [IO.Path]::GetFullPath($GoRoot) } else { Join-Path $T 'toolchain\go' }
 if (-not (Test-Path (Join-Path $Goroot 'bin\go.exe'))) { throw "找不到 Go 工具链：$Goroot（用 -UpstreamRoot 指向 <构建根>\upstream-<tag>，工具链在构建根的 toolchain\go）" }
 
 $env:GOROOT = $Goroot
 $env:PATH = "$Goroot\bin;$env:PATH"
-$env:GOPATH = Join-Path $T 'go-path'
+$env:GOPATH = if ($CacheRoot) { Join-Path $CacheRoot 'gopath' } else { Join-Path $T 'go-path' }
 $env:GOMODCACHE = Join-Path $env:GOPATH 'pkg\mod'
-$env:GOCACHE = Join-Path $T 'go-cache'
+$env:GOCACHE = if ($CacheRoot) { Join-Path $CacheRoot 'cache' } else { Join-Path $T 'go-cache' }
 # 本机 %TEMP% 对受限进程不可写（mkdir Access is denied），go build 的工作目录必须落在工作区里。
-$env:GOTMPDIR = Join-Path $T 'go-tmp'
+$env:GOTMPDIR = if ($CacheRoot) { Join-Path $CacheRoot 'tmp' } else { Join-Path $T 'go-tmp' }
 New-Item -ItemType Directory -Force -Path $env:GOTMPDIR | Out-Null
 $env:TMP = $env:GOTMPDIR
 $env:TEMP = $env:GOTMPDIR

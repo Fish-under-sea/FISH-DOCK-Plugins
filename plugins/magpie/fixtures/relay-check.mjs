@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {once} from 'node:events';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 // 真实网关接合成多级 URL；静默阶段只在客户端确实收到保活后结束。
-export async function checkRelay({origin,cookie}){
+export async function checkRelay({origin,cookie,data}){
  let finish,requests=0;const seen=[];
  const up=http.createServer(async(req,res)=>{
   const chunks=[];for await(const chunk of req)chunks.push(chunk);
@@ -12,6 +14,10 @@ export async function checkRelay({origin,cookie}){
   if(req.url!=='/tenant/api/v1/chat/completions'){res.writeHead(404);res.end('{}');return}
   assert.equal(body.model,'fixture-model');
   if(!body.stream){res.setHeader('content-type','application/json');res.end(JSON.stringify({id:'fixture-probe',object:'chat.completion',choices:[{index:0,message:{role:'assistant',content:'OK'},finish_reason:'stop'}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}}));return}
+  if(JSON.stringify(body.messages||[]).includes('vault-chat-fixture')){
+   res.setHeader('content-type','text/event-stream');
+   res.end('data: '+JSON.stringify({choices:[{index:0,delta:{content:'fixture-chat-response'},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');return;
+  }
   requests++;
   res.setHeader('content-type','text/event-stream');
   res.write('data: '+JSON.stringify({id:'fixture-1',object:'chat.completion.chunk',model:'fixture-model',choices:[{index:0,delta:{role:'assistant',content:'fixture-first'},finish_reason:null}]})+'\n\n');
@@ -31,14 +37,36 @@ export async function checkRelay({origin,cookie}){
   const detection=await json('/api/provider/detect',{id:'relay-fixture',base,model:'fixture-model'});
   const chat=detection.results.find(r=>r.protocol==='chat');assert.equal(chat?.ok,true,JSON.stringify(detection));assert.equal(chat.base,base);
   const settings=await json('/api/settings');assert.ok(settings.gateway);
-  const response=await fetch(settings.gateway+'/v1/responses',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'relay-fixture/fixture-model',input:'fixture only',stream:true}),signal:AbortSignal.timeout(65000)});
-  assert.equal(response.status,200);reader=response.body.getReader();
-  const decoder=new TextDecoder();let output='',pings=0,began=false;
+  // Prove the fixture talks to this instance: a real Magpie owning the default
+  // port would answer with its own providers instead.
+  assert.equal(settings.portable,true,'isolated fixture must run portable');
+  const served=await (await fetch(settings.gateway+'/v1/models')).json();
+  const ids=(served.data||[]).map(m=>m.id);
+  assert.deepEqual(ids,['relay-fixture/fixture-model'],'gateway must serve only the fixture provider, got '+ids.slice(0,5).join(', '));
+  if(data){
+   const cfg=JSON.parse(await fs.readFile(path.join(data,'fish-obsidian-connection.json'),'utf8'));
+   const headers={authorization:`Bearer ${cfg.token}`,'content-type':'application/json'};
+   const models=await (await fetch(new URL('/models',cfg.url),{headers})).json();
+   assert.ok(models.models.some(m=>m.id==='relay-fixture/fixture-model'));
+   const chatReply=await fetch(new URL('/chat',cfg.url),{method:'POST',headers,body:JSON.stringify({model:'relay-fixture/fixture-model',messages:[{role:'user',content:'vault-chat-fixture'}]}),signal:AbortSignal.timeout(15000)});
+   assert.equal(chatReply.status,200);assert.equal(await chatReply.text(),'fixture-chat-response');
+   console.log('PASS Obsidian chat: paired desktop model list and real native gateway streaming through a local synthetic provider; no paid API');
+  }
+  const response=await fetch(settings.gateway+'/v1/responses',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'relay-fixture/fixture-model',input:'fixture only',stream:true}),signal:AbortSignal.timeout(120000)});
+  // Never await the entire successful stream just to format an assertion:
+  // the synthetic upstream ends only after this reader receives keepalives.
+  if(response.status!==200)assert.fail(`Gateway ${response.status}: ${await response.text()}`);
+  reader=response.body.getReader();
+  const decoder=new TextDecoder();let output='',pings=0,firstAt=-1,finished=false;
   while(true){
    const {done,value}=await reader.read();if(done)break;
-   const text=decoder.decode(value,{stream:true});output+=text;
-   if(began){pings+=(text.match(/^data:.*"type"\s*:\s*"response\.in_progress"/gm)||[]).length;if(pings>=2)finish()}
-   if(output.includes('fixture-first'))began=true;
+   output+=decoder.decode(value,{stream:true});
+   if(firstAt<0&&output.includes('fixture-first'))firstAt=output.indexOf('fixture-first')+'fixture-first'.length;
+   if(firstAt>=0){
+    // Count across chunk boundaries, excluding the initial in_progress event.
+    pings=(output.slice(firstAt).match(/^data:.*"type"\s*:\s*"response\.in_progress"/gm)||[]).length;
+    if(pings>=2&&!finished){finished=true;finish()}
+   }
   }
   assert.ok(pings>=2,'协议转换后的静默流必须独立向客户端保活');
   assert.match(output,/fixture-last/);assert.match(output,/response.completed/);assert.doesNotMatch(output,/response.failed/);

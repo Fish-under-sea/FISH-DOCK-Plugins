@@ -1,0 +1,9 @@
+{
+  "id": "fish-magpie-memory",
+  "name": "Magpie 共享记忆",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "在插件化 Magpie 的独立知识库内对话、检索记忆并整理笔记。模型与路由由本机 Magpie 管理。",
+  "author": "FISH",
+  "isDesktopOnly": true
+}

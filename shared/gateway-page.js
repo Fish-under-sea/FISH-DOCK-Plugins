@@ -39,5 +39,20 @@ $('form').addEventListener('submit', event => { event.preventDefault(); void run
 $('form').addEventListener('input', () => { dirty = true; });
 for (const action of ['start', 'stop', 'open']) $(action).onclick = () => run(`gateway.${action}`);
 $('settings').onclick = () => { const expanded = $('configuration').hidden; $('configuration').hidden = !expanded; $('settings').setAttribute('aria-expanded', String(expanded)); };
-$('refresh').onclick = () => { opened = ''; void run('gateway.view'); };
+$('refresh').onclick = () => { opened = ''; void run('gateway.view'); void knowledgeView(); };
+async function knowledgeView(){
+ if(!$('knowledge'))return;
+ try{
+  const value=await FishDock.call('knowledge.view');
+  $('knowledge').hidden=false;$('knowledge-path').textContent=value.root;
+  $('knowledge-status').textContent=!value.initialized?'启动 Magpie 后准备独立知识库；旧目录不会被删除':value.imported?'知识内容已导入插件数据，新库不再依赖旧 Documents 目录':'独立知识库已创建，尚未导入旧知识内容';
+  $('knowledge-open').disabled=!value.initialized||!value.obsidian?.installed;
+  if(!value.obsidian?.installed)$('knowledge-status').textContent+='。未检测到 Obsidian，Magpie 侧记忆仍可使用';
+ }catch(error){$('knowledge-status').textContent=error.message}
+}
+if($('knowledge')){
+ $('knowledge-refresh').onclick=()=>knowledgeView();
+ $('knowledge-open').onclick=async()=>{try{await FishDock.call('knowledge.open');$('knowledge-status').textContent='已请求打开新库；若插件未加载，请在 Obsidian 社区插件中允许并重载 Magpie 共享记忆'}catch(error){$('knowledge-status').textContent=error.message}};
+ void knowledgeView();
+}
 void run('gateway.view');

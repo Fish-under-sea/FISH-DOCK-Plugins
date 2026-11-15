@@ -57,6 +57,13 @@ export function verifyArchive(bytes) {
   'fish.magpie':'service/magpie.exe',
  }[manifest.id];
  if(required)check(files.has(required),`服务入口缺失：${required}`);
+ if(manifest.id==='fish.magpie'){
+  const base='plugins/magpie/obsidian-plugin/';
+  for(const name of ['manifest.json','main.js','styles.css'])check(files.has(base+name),`Obsidian 插件入口缺失：${name}`);
+  const obsidian=JSON.parse(files.get(base+'manifest.json').toString('utf8'));
+  check(obsidian.id==='fish-magpie-memory'&&obsidian.isDesktopOnly===true&&/^\d+\.\d+\.\d+$/.test(obsidian.version),'Obsidian 插件清单无效');
+  for(const name of files.keys())if(name.startsWith(base))check(['manifest.json','main.js','styles.css'].includes(name.slice(base.length)),'Obsidian 发行资源不在白名单');
+ }
  return {id:manifest.id,version:manifest.version,files:files.size,bytes:bytes.length,sha256:hash(bytes)};
 }
 export function verifyRelease({dist,npm}) {

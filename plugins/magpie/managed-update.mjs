@@ -46,6 +46,11 @@ export function managedUpdateScript(source){
   /^[ \t]*row\(t\("What's new"\)[^\n]*\r?\n/m,
  ];
  for(const pattern of dropRows)source=source.replace(pattern,'');
+ // Remove only already-built update controls, immediately before the ordinary
+ // CLI/config rows. Never slice a broad source interval between comments.
+ const aboutAnchor='  renderCLI(row(t("Command line")';
+ if(source.includes(aboutAnchor))source=source.replace(aboutAnchor,
+  `  about.querySelectorAll('.update-pill-row,.update-auto-row,.update-every-row,.update-channel-row,.update-download-row,.update-restart-row,#updateSourceRow').forEach(row=>row.remove());\n${aboutAnchor}`);
  // 兜底：即使上游把这段搬了家，那个入口也点不出东西（函数声明可以重新赋值）。
  source+=`\n;(function(){try{openWhatsNew=function(){};}catch(e){}})();\n`;
  return source;

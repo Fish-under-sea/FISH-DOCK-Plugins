@@ -38,7 +38,11 @@ export function stage({out,sdk,magpie,mihomo,only,include}={}){
    // 插件目录允许子目录（例如 Clash 的 service/tun-service.exe）；构建期 .cs 源码不进包。
    // 以点开头的目录是本地构建缓存（magpie 的 .tools 里有 Go 工具链与模块缓存，上万文件
    // 且含链接），不进包，否则 copyDir 会撞上非普通文件而中止。
-   if(item.isDirectory()&&!item.name.startsWith('.'))copyDir(source,target);
+   if(key==='magpie'&&item.name==='obsidian-plugin'&&item.isDirectory()){
+    // Desktop Obsidian release files only. No npm dependencies, pairing data,
+    // dev fixtures or user vaults may hitch a ride in the Dock archive.
+    for(const name of ['manifest.json','main.js','styles.css'])copy(path.join(source,name),path.join(target,name));
+   }else if(item.isDirectory()&&!item.name.startsWith('.'))copyDir(source,target);
    else if(item.isFile()&&!item.name.includes('.test.')&&item.name!=='stage.mjs'&&!item.name.endsWith('.cs'))copy(source,target);
   }
   // Magpie 的内置插件（签到&探针、破甲）不随包分发目录：它们以 npm spec 写进

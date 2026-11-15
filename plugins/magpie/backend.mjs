@@ -1,4 +1,7 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import {defaultSourceVault,vaultPaths,importRecord} from './knowledge-vault.mjs';
+import {detectObsidian,openObsidianVault,registerObsidianVault} from './obsidian.mjs';
 import {fileURLToPath} from 'node:url';
 import {createPlugin} from './sdk.mjs';
 import {createGateway} from '../../shared/gateway.mjs';
@@ -26,7 +29,7 @@ function launchGateway(port){
 }
 const plugin=createPlugin({id:'fish.magpie',activate:async context=>{
  pluginContext=context;
- const runtime=createRuntime(context);
+ const runtime=createRuntime(context,{sourceVault:defaultSourceVault(),connectObsidian:true});
  // gateway 会把启动异常换成人话（原始 code 就丢了），这里留一份给失败日志和重试判定。
  const tracked={async start(options){try{return await runtime.start(options)}catch(error){lastFailure=error;throw error}}};
  service=createGateway({context,runtime:tracked,kind:'magpie',defaultExecutable:defaultExecutable});await service.load();
@@ -36,6 +39,21 @@ const plugin=createPlugin({id:'fish.magpie',activate:async context=>{
  const autostartView=service.view();
  if(process.env.FISH_PLUGIN_AUTOSTART==='1'&&autostartView.state==='stopped')void launchGateway(autostartView.port);
 },deactivate:async()=>{await service?.stop()},commands:{
+ 'knowledge.view':async()=>{
+  const data=path.join(pluginContext.dataDirectory,'credentials','magpie-runtime','data'),{root}=vaultPaths(data);
+  const initialized=await exists(path.join(root,importRecord));
+  return {root,initialized,obsidian:await detectObsidian(),...(initialized?{imported:JSON.parse(await fs.readFile(path.join(root,importRecord),'utf8')).imported}:{})};
+ },
+ 'knowledge.connect':async()=>{
+  const {root}=vaultPaths(path.join(pluginContext.dataDirectory,'credentials','magpie-runtime','data'));
+  if(!await exists(path.join(root,importRecord)))throw Error('请先启动 Magpie，完成知识库准备');
+  return registerObsidianVault(root);
+ },
+ 'knowledge.open':async()=>{
+  const {root}=vaultPaths(path.join(pluginContext.dataDirectory,'credentials','magpie-runtime','data'));
+  if(!await exists(path.join(root,importRecord)))throw Error('请先启动 Magpie，完成知识库准备');
+  return openObsidianVault(root);
+ },
  'gateway.view':()=>service.view(),'gateway.save':params=>service.save(params),
  'gateway.start':()=>{void launchGateway();return service.view()},'gateway.stop':()=>{void service.stop();return service.view()}
 },onError:()=>{void service?.stop().finally(()=>{process.exitCode=1})}});

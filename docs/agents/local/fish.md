@@ -7,9 +7,9 @@
 
 | 项 | 值 |
 | --- | --- |
-| 本仓路径 | `D:\Fish-code\DSH-NEXT\插件\插件维护\FISH-Dock-1109\FISH-Dock-Plugins` |
-| 同级仓库（宿主仓）路径 | `D:\Fish-code\DSH-NEXT\插件\插件维护\FISH-Dock-1109\FISH-Dock` |
-| 一次性产物目录 | 同级 `.work\` |
+| 本仓路径 | `D:\Fish-code\CC\FISH-DOCK-Plugins`（2026-11-16 核实） |
+| 宿主 SDK | 旧宿主仓路径已不存在；本轮使用 `Fish-under-sea/FISH-Dock@0626a19dddf13eae3d2610686b22d7921fae29a2` 的 SDK（隔离暂存于本仓 `.work/`） |
+| 一次性产物目录 | 本仓 `.work\`；工具链使用 `-GoRoot`，缓存使用 `-CacheRoot` 显式指定 |
 | 可复用脚本索引 | `D:\Fish-code\DSH\可复用脚本与经验\README.md` |
 
 ## 二、工具链

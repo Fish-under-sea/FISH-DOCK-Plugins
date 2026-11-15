@@ -9,6 +9,7 @@ import {createRuntime} from '../runtime.mjs';
 import {freePort} from '../embed-proxy.mjs';
 import {preparePortableRuntime} from '../portable-runtime.mjs';
 import {checkRelay} from './relay-check.mjs';
+import {checkVault} from './vault-check.mjs';
 
 const root=process.env.FISH_TEST_ROOT;
 assert.ok(root&&process.env.HOME===root&&process.env.USERPROFILE===root);
@@ -24,23 +25,35 @@ await fs.writeFile(path.join(fixture,'package.json'),JSON.stringify({name:'magpi
 await fs.writeFile(path.join(fixture,'page/index.html'),'<!doctype html><meta charset="utf-8"><title>Usage glance</title><script src="_magpie/bridge.js"></script><script defer src="app.js"></script><h1>Usage glance</h1><p id="calls">Loading</p>');
 await fs.writeFile(path.join(fixture,'page/app.js'),`(async()=>{await magpie.ready;const s=await magpie.read('usage:summary',{period:'today'});document.querySelector('#calls').textContent=s.calls+' calls';})()`);
 await fs.writeFile(path.join(portable.data,'plugins.json'),JSON.stringify({plugins:[{spec:fixture,options:{fixture:true}}]}));
-const runtime=createRuntime(context),port=await freePort();let instance,browser;
+const runtime=createRuntime(context),port=await freePort();
+// Never pick a gateway port a real Magpie may already own on this computer.
+let gatewayPort=await freePort();while(gatewayPort===port)gatewayPort=await freePort();
+let instance,browser;
 async function login(){
  const entry=await fetch(instance.url,{redirect:'manual'});assert.equal(entry.status,303);
  assert.match(entry.headers.get('set-cookie'),/SameSite=None; Secure; Partitioned/);
  return entry.headers.get('set-cookie').split(';')[0];
 }
 try{
- instance=await runtime.start({executable:process.env.FISH_TEST_MAGPIE,port});
+ instance=await runtime.start({executable:process.env.FISH_TEST_MAGPIE,port,gatewayPort});
  const cookie=await login(),origin=new URL(instance.url).origin;
- assert.equal((await fetch(origin+'/api/plugin-pages')).status,401);
+ // Native authentication and the Dock cookie-injecting proxy are different
+ // boundaries: test both, not a stale 401 expectation on the trusted proxy.
+ assert.equal((await fetch(`http://127.0.0.1:${instance.upstreamPort}/api/plugin-pages`)).status,401);
+ assert.equal((await fetch(origin+'/api/plugin-pages')).status,200);
  const pages=await (await fetch(origin+'/api/plugin-pages',{headers:{cookie}})).json();
  assert.equal(pages.length,1);const entry=pages[0];
  assert.match(entry.url,/^\/_magpie\/plugin\/[0-9a-f]{32}\/index.html$/);
  const page=await fetch(origin+entry.url);assert.equal(page.status,200);
  const csp=page.headers.get('content-security-policy');
- assert.match(csp,/frame-ancestors 'self' http:\/\/tauri.localhost/);
- assert.match(csp,/connect-src 'none'/);assert.match(csp,/sandbox allow-scripts/);
+ // Fish pages can nest sandboxed parts with opaque origins: an ancestor
+ // directive would block those parts. Access is a per-run token capability.
+ assert.ok(!csp.includes('frame-ancestors'));
+ const ownPrefix=entry.url.slice(0,entry.url.lastIndexOf('/')+1);
+ const connect=csp.split(';').find(row=>row.trim().startsWith('connect-src')).trim().split(/\s+/).slice(1);
+ assert.ok(connect.length>0);
+ for(const allowed of connect){const u=new URL(allowed);assert.equal(u.hostname,'127.0.0.1');assert.equal(u.pathname,ownPrefix)}
+ assert.match(csp,/sandbox allow-scripts/);
  for(const relative of ['app.js','_magpie/bridge.js'])assert.equal((await fetch(new URL(relative,origin+entry.url))).status,200);
  const result=await fetch(origin+'/api/plugin-pages/read',{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({spec:entry.spec,read:'usage:summary',params:{period:'today'}})});
  assert.equal(result.status,200);assert.equal((await result.json()).calls,0);
@@ -48,10 +61,10 @@ try{
  assert.equal(forbidden.status,403);
  const framed=await fetch(origin+'/api/plugin-pages/read',{method:'POST',headers:{cookie,origin:'null','content-type':'application/json'},body:'{}'});
  assert.equal(framed.status,403);
- console.log('PASS native: token files + relative bridge/app 200; unauthenticated API 401; allowed read 0 calls; undeclared/framed read 403');
+ console.log('PASS native: token files + relative bridge/app 200; native unauthenticated API 401; Dock proxy supplies cookie; same-token assets only; allowed read 0 calls; undeclared/framed read 403');
  const scriptResponse=await fetch(origin+'/app.js',{headers:{cookie}});assert.equal(scriptResponse.status,200);
  const script=await scriptResponse.text();new Script(script);assert.match(script,/版本由 FISH Dock 插件管理/);
- assert.ok(!script.includes('row(t("Automatic updates")'));
+ assert.ok(script.includes("about.querySelectorAll('.update-pill-row,.update-auto-row"),'更新控件由定点 DOM 处理移除，普通配置行不切掉');
  const update=await (await fetch(origin+'/api/update/check',{method:'POST',headers:{cookie}})).json();assert.equal(update.managed,true);
 
  if(process.env.FISH_TEST_PLAYWRIGHT){
@@ -71,7 +84,7 @@ try{
     if(u.hostname!=='127.0.0.1')return route.abort();
     if(baseline&&u.pathname.startsWith('/_magpie/plugin/')){
      const response=await route.fetch(),headers=response.headers();
-     if(headers['content-security-policy'])headers['content-security-policy']=headers['content-security-policy'].replace("frame-ancestors 'self' http://tauri.localhost","frame-ancestors 'self'");
+     if(headers['content-security-policy'])headers['content-security-policy'] += "; frame-ancestors 'self'";
      return route.fulfill({response,headers});
     }
     return route.continue();
@@ -110,14 +123,21 @@ try{
   await bc.grantPermissions(['local-network-access'],{origin:'http://untrusted.localhost'});
   tab.on('console',m=>{if(m.text().includes('frame-ancestors'))blocked=true});
   await bc.route('http://untrusted.localhost/**',route=>route.fulfill({contentType:'text/html',body:`<iframe src="${origin+entry.url}"></iframe>`}));
-  await tab.goto('http://untrusted.localhost/');await tab.waitForTimeout(500);assert.ok(blocked);await bc.close();
-  console.log('PASS browser: original CSP rejects Dock nesting; scoped fix renders 0 calls; network/storage/parent access still blocked; unrelated origin rejected');
+  await tab.goto('http://untrusted.localhost/');
+  await tab.frameLocator('iframe').locator('#calls').filter({hasText:'0 calls'}).waitFor({state:'attached',timeout:15000});
+  // A holder of the token can embed the capability, but its opaque sandbox
+  // still cannot read the embedding page or the authenticated management API.
+  const child=tab.frames().find(f=>f.url().includes('/_magpie/plugin/'));
+  assert.deepEqual(await child.evaluate(async()=>{let network=false,parentAccess=false;try{await fetch('/api/state');network=true}catch{}try{void parent.document;parentAccess=true}catch{}return {network,parentAccess}}),{network:false,parentAccess:false});
+  await bc.close();
+  console.log('PASS browser: adding self-only ancestors rejects Dock nesting; token-scoped pages render 0 calls; external network/storage/parent access remain blocked even in another embedding page');
  }else console.log('SKIP browser: set FISH_TEST_PLAYWRIGHT to the installed playwright module');
 
- await checkRelay({origin,cookie});
+ await checkVault({data:portable.data,origin,cookie,gatewayPort:instance.gatewayPort});
+ await checkRelay({origin,cookie,data:portable.data});
  await instance.stop();assert.equal(instance.alive(),false);
  await assert.rejects(fetch(origin+'/',{signal:AbortSignal.timeout(1000)}));
- instance=await runtime.start({executable:process.env.FISH_TEST_MAGPIE,port});
+ instance=await runtime.start({executable:process.env.FISH_TEST_MAGPIE,port,gatewayPort});
  const newCookie=await login();
  assert.equal((await fetch(origin+entry.url)).status,404);
  const next=await (await fetch(origin+'/api/plugin-pages',{headers:{cookie:newCookie}})).json();

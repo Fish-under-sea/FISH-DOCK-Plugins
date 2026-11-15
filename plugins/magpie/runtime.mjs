@@ -6,6 +6,9 @@ import {embedProxy,freePort} from './embed-proxy.mjs';
 import {available,startChild} from '../../shared/child.mjs';
 import {magpieEnvironment} from './environment.mjs';
 import {preparePortableRuntime} from './portable-runtime.mjs';
+import {prepareKnowledgeVault,deployObsidianPlugin} from './knowledge-vault.mjs';
+import {registerObsidianVault} from './obsidian.mjs';
+import {startObsidianBridge} from './obsidian-bridge.mjs';
 import {gatewayAddr,gatewayHost,gatewayPortCandidates,readMagpiePrefs} from './network.mjs';
 import {registerBuiltinPlugins,normalizePageTitles} from './page-seed.mjs';
 import {ensurePreinstallState,preinstallEnabled,seedPreinstalled} from './preinstall.mjs';
@@ -151,7 +154,7 @@ async function gatewayPortFor({configured,prefs,port,upstreamPort}){
  }
  return {port:0,fellBack:false};
 }
-export function createRuntime(context){
+export function createRuntime(context,{sourceVault='',connectObsidian=false}={}){
  return {async start({executable,port,gatewayPort,signal,onPhase=()=>{}}){
   // 阶段名只用于失败记录与页面进度，内部记住最后一个是哪一段。
   let phase=null;const track=value=>{phase=value;onPhase(value)};
@@ -178,11 +181,18 @@ export function createRuntime(context){
  const proxy=await embedProxy({port,upstreamPort,key});
 	// #30：listeningPort / fellBack 要留到 return 那一行用，声明必须在 try 外面——
 	// 之前写在 try 里，启动成功时 return 反而抛 ReferenceError，插件永远报服务异常。
-	let portable,child,listeningPort=0,fellBack=false;
+	let portable,child,bridge,knowledge,listeningPort=0,fellBack=false;
    try{
     signal?.throwIfAborted();
     // web --addr 仅设置管理页；模型网关需独立地址。
     portable=await preparePortableRuntime(executable,credentials,{signal,onPhase:track});
+    try{
+     knowledge=await prepareKnowledgeVault({data:portable.data,sourceVault,signal,onPhase:()=>track('prepare-data')});
+     await deployObsidianPlugin(knowledge.root);
+    }catch(error){if(error.name==='AbortError')throw error;throw Object.assign(serviceError('DATA_MIGRATION_FAILED'),{cause:error})}
+    // A missing or busy Obsidian never prevents the model gateway from starting.
+    // Register without opening a window; the user opens the new vault explicitly.
+    if(connectObsidian)try{knowledge.obsidian=await registerObsidianVault(knowledge.root)}catch(error){knowledge.obsidian={registered:false,reason:error.message}}
     // 共享时绑全网卡：MAGPIE_ADDR 一旦钉住回环，Magpie 自己不会放开绑定，局域网
     // 共享开关就不生效（internal/gateway/lan.go 的 pinnedHost / LANURLs）。
     const prefs=await readMagpiePrefs(portable.data);
@@ -228,14 +238,17 @@ export function createRuntime(context){
      });
     }catch(error){throw spawnFailure(error)}
     signal?.throwIfAborted();
+    bridge=await startObsidianBridge({data:portable.data,upstreamPort,key});
+    signal?.throwIfAborted();
    }catch(error){
+    if(bridge)try{await bridge.stop()}catch{}
     // 启动失败要把已占住的端口和已拉起的子进程一起还回去，不留半套。
     try{await proxy.stop()}catch{}
     if(child)try{await child.stop()}catch{}
     throw error;
    }
    // #30：把实际监听的网关端口回给上层，它写回配置后下次启动就能复用同一个端口。
-   return {alive:child.alive,url,gatewayPort:listeningPort,gatewayPortFellBack:fellBack,runtime:{executable:portable.executable,sha256:portable.sha256},async stop(){try{await proxy.stop()}finally{await child.stop()}}};
+   return {alive:child.alive,url,upstreamPort,gatewayPort:listeningPort,gatewayPortFellBack:fellBack,runtime:{executable:portable.executable,sha256:portable.sha256,knowledge},async stop(){try{await bridge?.stop()}finally{try{await proxy.stop()}finally{await child.stop()}}}};
   }catch(error){
    if(error?.name!=='AbortError')await recordGatewayError(context.dataDirectory,{error,phase,port});
    throw error;

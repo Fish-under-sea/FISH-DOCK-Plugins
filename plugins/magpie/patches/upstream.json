@@ -1,22 +1,22 @@
 {
   "schema": 1,
   "upstream": "yetone/magpie",
-  "baseTag": "v0.1.3596",
-  "baseSha": "7e09f31f6399eb33cd08aa3d152b94cf71c89a25",
-  "fetchedAt": "2026-11-10T21:23:17.2176658+08:00",
-  "patch": "magpie-v0.1.3596+fish.33.patch",
-  "versionTag": "v0.1.3596+fish.33",
-  "fileVersion": "0.1.3596.33",
+  "baseTag": "v0.1.4262",
+  "baseSha": "30de93e9e9d5bf6a013b1773010700d8eaa707f0",
+  "fetchedAt": "2026-11-15T16:12:01.337Z",
+  "patch": "magpie-v0.1.4262+fish.34.patch",
+  "versionTag": "v0.1.4262+fish.34",
+  "fileVersion": "0.1.4262.34",
   "product": "magpie fish",
   "result": "clean",
   "counts": {
-    "files": 158,
-    "hunks": 261,
-    "appliedFiles": 158,
-    "appliedHunks": 261,
+    "files": 174,
+    "hunks": 295,
+    "appliedFiles": 174,
+    "appliedHunks": 295,
     "conflictFiles": 0,
     "conflictHunks": 0
   },
   "conflicts": [],
-  "note13": "fish.33（插件 2.3.6 的最终补丁）：把 fish.32 从 v0.1.3383 重放到上游 v0.1.3596（213 个 tag），158 文件 / 261 hunk。30 个冲突逐条消化：app.js 7 处（passUserAgent 默认改真值语义、draftOf 与保存体带 hiddenAudios/hiddenEmbeddings、编辑器补语音/向量/其他模型三节、更新页打开走宿主受控入口、prefsKeep 带 speechModel/embedModel）、routing/client.js 3 处（imagesSaid 三态进草稿与保存体）、pagebridge.js 2 处（magpie.call 通道）、pluginpages.js 1 处（call 分支）、pluginpage.go 1 处（pluginCallRoutes 接线）、plugin/page.go 1 处（PageCalls 与 callsKeeping，用上游的 lazyre）、providers.go（providerJSON 补 MarksServesKinds）、settingsapi.go（模型与超时键）、settings_keep_test.go、gateway.go 2 处（MaterialsMCPPath 路由与 apis 清单）、readonly/key_slots 测试、own_mcp.go（GenerateAudioTool）、bun.go（registry 覆盖）、registry.go（sync/atomic）、provider/group.go（Images 指针深拷）、两个 i18n（新词条按键补齐，已有键不动）、core_budget_test.go（预算按实测 1,318,466 / 1,543,404 上调）。Cline 的上游提示文案保留上游版本，不回退。"
+  "note": "Fish.33 rebased onto pinned v0.1.4262; native shared vault, memory relocation and scoped note search; paired desktop Obsidian routes; media settings moved to a lazy script with no core budget raise. Rejected-hunk diagnostics excluded."
 }

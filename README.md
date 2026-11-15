@@ -12,7 +12,7 @@
 </picture>
 
 <p>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.3.6"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：2.3.6（Clash 与 Magpie）" width="23%"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.3.6"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-zh-dark.png"><img src="assets/readme/config-stat-version-zh-light.png" alt="VERSION：2.3.7（Magpie）；Clash 2.3.6" width="23%"></picture></a>
   <a href="#plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-desktop-zh-dark.png"><img src="assets/readme/config-stat-desktop-zh-light.png" alt="PLUGINS：三个独立插件" width="23%"></picture></a>
   <a href="#packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-mail-zh-dark.png"><img src="assets/readme/config-stat-mail-zh-light.png" alt="PACKAGES：三个 npm 单包" width="23%"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-Dock"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-channels-zh-dark.png"><img src="assets/readme/config-stat-channels-zh-light.png" alt="HOST API：1，兼容 FISH Dock 2.0.0+" width="23%"></picture></a>
@@ -35,7 +35,14 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-当前发行：Clash **2.3.6**、Magpie **2.3.6**（见 [2.3.6 发行说明](docs/releases/2.3.6.md)），飞书停在 **2.2.0**。要求 **FISH Dock ≥ 2.0.0**。
+当前发行：Magpie **2.3.7**（见 [2.3.7 发行说明](docs/releases/2.3.7.md)），Clash **2.3.6**、飞书 **2.2.0**。要求 **FISH Dock ≥ 2.0.0**。
+
+**Magpie 2.3.7：跟进上游与独立共享知识库**
+
+- 原生基线升级到 `v0.1.4262+fish.34`，保留现有网关、模型分类、签到/探针、Purge 与素材 MCP。
+- 插件持久数据下自动建立 `knowledge/github-capability-vault`，首次复制现有知识内容并逐文件核验；之后不依赖旧 Documents 库，也不会自动删除旧库。
+- 原生短记忆与长知识笔记分层保存，Magpie、记忆 MCP 和 Obsidian 读取同一份文件。
+- 随包提供 Obsidian 桌面专用插件，支持选模型对话、检索、整理选文及另存笔记/待审核记忆；使用独立的本机配对接口，供应商密钥不进入知识库。首次使用需在 Obsidian 允许社区插件，必要时重载应用。
 
 **2.2.1 改了什么（仅 Magpie）**
 
@@ -135,7 +142,7 @@
 
 > ⚠️ **2.0.0 是 breaking 版本**：插件清单新增 `behaviors` 字段，FISH Dock 1.2.3 及更早的宿主用 `deny_unknown_fields` 解析，会以「plugin.json 格式无效或含未知字段」直接拒装。**旧宿主请先把 Dock 升到 2.0.0**，再安装这些插件。
 
-> ⚠️ npm 上 `@fish-under-sea/fish-dock-plugin-clash@1.1.0` 为误发版本（基于旧基线，缺少 1.0.4 的多订阅修复），请勿使用；当前 Clash 与 Magpie 单包是 `2.3.6`、飞书是 `2.2.0`，OFM 停在 `2.0.1`（已退役）。
+> ⚠️ npm 上 `@fish-under-sea/fish-dock-plugin-clash@1.1.0` 为误发版本（基于旧基线，缺少 1.0.4 的多订阅修复），请勿使用；当前 Magpie 单包是 `2.3.7`、Clash 是 `2.3.6`、飞书是 `2.2.0`，OFM 停在 `2.0.1`（已退役）。
 
 <h2 id="plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-features-dark.png"><img src="assets/readme/section-features-light.png" alt="PLUGINS · 三个插件" width="100%"></picture></h2>
 
