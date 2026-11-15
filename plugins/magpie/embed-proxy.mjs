@@ -1,6 +1,9 @@
 import http from 'node:http';
+import os from 'node:os';
+import {spawn} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {managedUpdates,managedUpdateScript} from './managed-update.mjs';
+import {REVEAL_ROUTES,targetOf,sameOrigin,openInExplorer,pickedDir} from './reveal.mjs';
 import {serviceError} from '../../shared/errors.mjs';
 // 原生 code 一律转成适配层错误码：文案与 shared/child.mjs 的 available() 同源，
 // 原生错误挂在 cause 上留证，不让 EADDRINUSE 之类漏成兜底话术。
@@ -34,9 +37,52 @@ export function pluginPagePolicy(requestPath,policy){
  return policy.replace(/(^|;)(\s*frame-ancestors\s+)'self'(\s*)(?=;|$)/gi,
   "$1$2'self' http://tauri.localhost$3");
 }
-// 仅适配插件持有的回环服务，模型流不缓存、不重试。
-export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120,240]}){
+// P1 兜底：宿主 dialogs 能力缺席时，spawn 一个 STA 的 PowerShell FolderBrowserDialog。
+// -STA 必须；对话框没有 owner，可能出现在 Dock 窗口后面。用户取消时无输出 → 视为取消。
+// 返回选中路径或 null。任何 spawn 失败/超时/无输出都按取消处理，不抛给页面。
+export function defaultFallbackChoice({title='选择备份文件夹',timeoutMs=300000}={}){
+ return new Promise(resolve=>{
+  let done=false;
+  const finish=value=>{if(done)return;done=true;resolve(value)};
+  const script=`Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = ${JSON.stringify(title)}; if ($d.ShowDialog() -eq 'OK') { [Console]::Out.Write($d.SelectedPath) }`;
+  let child;
+  try{child=spawn('pwsh',['-NoProfile','-STA','-Command',script],{windowsHide:true,stdio:['ignore','pipe','ignore']})}
+  catch{return finish(null)}
+  let out='';
+  const timer=setTimeout(()=>{try{child.kill()}catch{}finish(null)},timeoutMs);
+  child.stdout?.on('data',chunk=>{out+=chunk});
+  child.on('error',()=>{clearTimeout(timer);finish(null)});
+  child.on('close',()=>{clearTimeout(timer);const trimmed=out.trim();finish(trimmed||null)});
+ });
+}
+
+// openFolder：揭示（reveal）接力用的 opener（默认 openInExplorer；测试注入记录器）。
+// chooseFolder：宿主 dialogs 能力（P1），返回 {dir: string|null}；缺席时用 fallbackChoice 兜底。
+// fallbackChoice：STA PowerShell FolderBrowserDialog 兜底（默认见 defaultFallbackChoice），
+// 返回选中路径或 null（取消）。
+// home：~ 展开用的用户目录（默认 os.homedir()）。
+export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120,240],
+ openFolder=openInExplorer,chooseFolder=null,fallbackChoice=defaultFallbackChoice,home=os.homedir()}){
  const sockets=new Set();
+ const revealEnabled=String(process.env.FISH_MAGPIE_REVEAL??'')!=='0';
+ // 揭示接力的两条入口：7 条 reveal 路由，以及 library/browser/setup 的响应后处理。
+ const isRevealRoute=pathname=>REVEAL_ROUTES.has(pathname);
+ const isBrowserSetup=pathname=>pathname==='/api/library/browser/setup';
+ const isChoose=pathname=>pathname==='/api/autobackup/choose';
+ // 缓冲一次上游响应（只对白名单路由用，上限 64 KiB），返回 {status,headers,text}。
+ const bufferUpstream=(req,headers,body,limit=64*1024)=>new Promise(resolve=>{
+  const upstream=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.url,method:req.method,headers},reply=>{
+   const chunks=[];let size=0;
+   reply.on('data',chunk=>{size+=chunk.length;if(size<=limit)chunks.push(chunk)});
+   reply.on('end',()=>resolve({status:reply.statusCode,headers:{...reply.headers},text:Buffer.concat(chunks).toString('utf8')}));
+   reply.on('error',()=>resolve({status:502,headers:{},text:''}));
+  });
+  upstream.on('error',()=>resolve({status:502,headers:{},text:''}));
+  // 有正文就发正文；没有正文时，真实请求才 pipe，合成请求（P1 的跟进 GET）直接 end。
+  if(body!==undefined&&body!==null)upstream.end(body);
+  else if(typeof req.pipe==='function')req.pipe(upstream);
+  else upstream.end();
+ });
  // Dock 把管理页装在跨站 iframe 里（宿主是 tauri://），浏览器不会把 magpie 那条
  // SameSite=None/Partitioned 的鉴权 cookie 带回来：HTML 能出来，boot.js / app.css
  // 全 401，用户看到的就是「界面全错、内容空白、字体回退」。这里由代理在转发时
@@ -68,6 +114,76 @@ export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120
   }
   const script=pathname==='/app.js';
   if(script){headers['accept-encoding']='identity';delete headers['if-none-match'];delete headers['if-modified-since']}
+  // ---- handoff P0/P1：在转发之前接住「打开文件夹 / 选文件夹」 ----
+  // 同源是本机页面上才成立（远端 LAN/隧道页即使能直连也要拒）；不同源直接 403，
+  // 连上游都不碰——这是「Explorer relay 不绕过上游路径/同源/令牌校验」的入口。
+  const revealPath=req.method==='POST'&&revealEnabled&&(isRevealRoute(pathname)||isBrowserSetup(pathname));
+  const choosePath=req.method==='POST'&&isChoose(pathname);
+  if(revealPath||choosePath){
+   if(!sameOrigin(req,port)){req.resume();res.writeHead(403,{'content-type':'text/plain'});res.end('forbidden');return}
+  }
+  if(revealPath){
+   headers['accept-encoding']='identity';
+   const upstreamBody=await bufferUpstream(req,headers,body);
+   // 7 条 reveal 路由：仅当上游 400 且正文是「can't open folders: it is …」时接力。
+   if(isRevealRoute(pathname)){
+    let target=null;
+    if(upstreamBody.status===400){
+     try{target=targetOf(JSON.parse(upstreamBody.text||'{}').error,home)}catch{target=null}
+    }
+    if(target){
+     try{await openFolder(target);res.writeHead(204).end();return}catch{}
+    }
+    // 不满足（路径过期/被删/spawn 失败/文案不匹配）：原样透传上游响应，用户至少能看到原文。
+    res.writeHead(upstreamBody.status,upstreamBody.headers);res.end(upstreamBody.text);return;
+   }
+   // library/browser/setup：200 且 JSON 同时有 dir 与非空 revealError 时打开目录、删 revealError、重算 length。
+   if(isBrowserSetup(pathname)&&upstreamBody.status===200){
+    try{
+     const data=JSON.parse(upstreamBody.text);
+     if(data&&typeof data.dir==='string'&&data.dir&&data.revealError){
+      await openFolder(data.dir).catch(()=>{});
+      delete data.revealError;
+      const out=Buffer.from(JSON.stringify(data));
+      const clean={...upstreamBody.headers};delete clean['transfer-encoding'];delete clean['content-encoding'];
+      clean['content-length']=String(out.length);clean['content-type']='application/json';
+      res.writeHead(200,clean);res.end(out);return;
+     }
+    }catch{}
+   }
+   res.writeHead(upstreamBody.status,upstreamBody.headers);res.end(upstreamBody.text);return;
+  }
+  if(choosePath){
+   // 选目录：优先宿主 dialogs 能力（能力探测在 runtime 侧做，这里只负责调），
+   // 缺席时用 STA PowerShell 兜底；取消回当前 autobackup 视图、选中 POST set 原样返回。
+   let dir=null,done=false;
+   try{
+    if(typeof chooseFolder==='function'){
+     const result=await chooseFolder({title:'选择备份文件夹',parent:'main'});
+     dir=pickedDir(result);done=true;
+    }
+   }catch{done=false}
+   if(!done&&typeof fallbackChoice==='function'){
+    try{dir=await fallbackChoice();done=true}catch{done=false}
+   }
+   if(done){
+    const followup=async(pathName,payload)=>{
+     const data=payload?Buffer.from(JSON.stringify(payload)):null;
+     const h={...headers,'accept-encoding':'identity'};
+     // 跟进请求换方法、换正文：清掉原请求的正文头，避免上游按旧长度等数据。
+     delete h['content-length'];delete h['content-type'];delete h['transfer-encoding'];
+     if(data){h['content-type']='application/json';h['content-length']=String(data.length)}
+     const reply=await bufferUpstream({url:pathName,method:data?'POST':'GET'},h,data);
+     res.writeHead(reply.status,reply.headers);res.end(reply.text);
+    };
+    if(dir)await followup('/api/autobackup/set',{dir});
+    else await followup('/api/autobackup',null);
+    return;
+   }
+   // 兜底与能力都没成：透传上游的 400 原文（用户仍看得到 magpie 的话）。
+   const reply=await bufferUpstream(req,headers,body);
+   res.writeHead(reply.status,reply.headers);res.end(reply.text);return;
+  }
   const upstream=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.url,method:req.method,headers},reply=>{
    const headers={...reply.headers};if(headers['set-cookie'])headers['set-cookie']=headers['set-cookie'].map(cookie);
    if(headers['content-security-policy'])headers['content-security-policy']=pluginPagePolicy(req.url,headers['content-security-policy']);

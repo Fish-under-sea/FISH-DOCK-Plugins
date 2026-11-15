@@ -7,10 +7,12 @@ const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 // 发行与开发暂存共用当前插件清单，不注册退役插件。
 // autostart 是 #22 的清单行为钩子：宿主只在「随 Dock 启动」这一次传
 // FISH_PLUGIN_AUTOSTART=1；没有本机服务的插件写 false，卡面显示「无需自启动」。
+// 2.3.4 handoff P1：magpie 声明 `dialogs`（宿主 2.3.4 起提供），用来在网页模式里
+// 选备份目录。老宿主不认这个能力会拒装，所以能力探测与 PowerShell 兜底都在插件侧。
 export const definitions=[
  {key:'feishu',name:'飞书通知',directory:'.fishplugin-feishu',capabilities:['storage','events','network'],autostart:false},
  {key:'clash',name:'Clash 代理',directory:'.fishplugin-clash',capabilities:['storage','network','services','system-proxy'],autostart:true},
- {key:'magpie',name:'Magpie 网关',directory:'.fishplugin-magpie',capabilities:['storage','network','services'],autostart:true},
+ {key:'magpie',name:'Magpie 网关',directory:'.fishplugin-magpie',capabilities:['storage','network','services','dialogs'],autostart:true},
 ];
 // 身份表：作者是数组，不再有 maintainer。
 // build-release 与 catalog/stable.json 都从这里取，避免两处各写一份。
