@@ -31,8 +31,31 @@
 - `windows`：申请和管理本插件的外部窗口。
 - `file-drop`：订阅文件拖入并接收路径；不需要拖入就不声明、不订阅。
 - `storage`：独立的持久化能力；开窗本身不要求存储权限。
+- `dialogs`：弹宿主的原生文件夹选择框（`context.dialogs.chooseFolder`，宿主 2.3.4 起）。只有**后端**能调，页面侧不提供；不声明就调会得到能力错误。声明它会要求宿主 ≥ 2.3.4，旧宿主会拒装——本仓 magpie 自 2.3.7 起声明它，并为旧宿主保留 PowerShell 兜底。
 
 Node 后端使用 2.2.0 随附的 [Node SDK](https://github.com/Fish-under-sea/FISH-Dock/blob/main/sdk/node/plugin.mjs)，按既有方式放入插件资源并登记摘要。浏览器页面使用宿主注入的 `window.FishDock`，不直接调用 Tauri 管理命令，也不手动指定插件 owner。
+
+### 2.1 `dialogs.chooseFolder`（2.3.4）
+
+后端在 `activate(context)` 里用 `context.dialogs.chooseFolder(options)` 弹宿主的原生文件夹框：
+
+```javascript
+const { dir } = await context.dialogs.chooseFolder({ title: '选择备份文件夹' });
+if (dir) await context.storage.write('config', 'backup-dir.json', JSON.stringify({ dir }));
+// 用户取消：dir === null，不抛错。
+```
+
+| 项 | 值 |
+| --- | --- |
+| 参数 | `{ title?: string, parent?: 'main' }`；未知字段、`title` 非字符串 / 空串 / 超过 80 字 / 含控制字符、`parent` 不是 `'main'`，本地拒绝且不发请求 |
+| 返回 | `Promise<{ dir: string \| null }>`；取消是 `dir: null`，不是错误 |
+| 路径 | 原样返回 Windows 文件系统路径；不折叠 `~`、不做大小写或分隔符规范化 |
+| 超时 | **不设 SDK 超时**（用户选出文件夹常常超过 5 秒）；会话关闭时 Promise 才 reject |
+| 错误 | 能力缺失、`DIALOG_BUSY`（已有一个框开着）、`DIALOG_OPERATION_FAILED`、`DIALOG_UNSUPPORTED`（非 Windows） |
+
+**页面侧（`window.FishDock`）没有 `dialogs`**：对话框是后端能力，页面里只能通过插件后端的命令间接使用。宿主一次只允许一个对话框：第二个并发调用得到 `DIALOG_BUSY`，不排队。日志只记 `shown/chosen/cancelled`，不记完整路径。
+
+**能力探测**：老宿主没有这个 API。要用它的插件应先探测 `typeof context.dialogs?.chooseFolder === 'function'`，缺席时自备兜底（magpie 用 STA 的 PowerShell `FolderBrowserDialog`）。
 
 ## 3. 浏览器页面按需申请
 

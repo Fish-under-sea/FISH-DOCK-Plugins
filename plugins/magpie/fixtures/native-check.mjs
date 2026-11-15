@@ -9,10 +9,14 @@ import {createRuntime} from '../runtime.mjs';
 import {freePort} from '../embed-proxy.mjs';
 import {preparePortableRuntime} from '../portable-runtime.mjs';
 import {checkRelay} from './relay-check.mjs';
+import {REVEAL_REFUSED} from '../reveal.mjs';
 
 const root=process.env.FISH_TEST_ROOT;
 assert.ok(root&&process.env.HOME===root&&process.env.USERPROFILE===root);
-const values=new Map(),context={dataDirectory:root,secrets:{read:async(c,n)=>values.get(`${c}/${n}`),write:async(c,n,v)=>values.set(`${c}/${n}`,v)}};
+const values=new Map();
+// 交接 §7.2：把 opener 换成记录器，断言 reveal 接力与同源拒绝（不真开资源管理器）。
+const opened=[];
+const context={dataDirectory:root,openFolder:async target=>{opened.push(target)},secrets:{read:async(c,n)=>values.get(`${c}/${n}`),write:async(c,n,v)=>values.set(`${c}/${n}`,v)}};
 // Native background catalog/news requests are refused locally, never forwarded.
 const deny=http.createServer((req,res)=>{res.writeHead(502);res.end()});
 deny.on('connect',(req,socket)=>socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'));
@@ -34,6 +38,24 @@ try{
  instance=await runtime.start({executable:process.env.FISH_TEST_MAGPIE,port});
  const cookie=await login(),origin=new URL(instance.url).origin;
  assert.equal((await fetch(origin+'/api/plugin-pages')).status,401);
+ // 交接 §7.2：reveal 接力（真二进制）——库目录得到 204、记录器收到库目录；
+ // 越权路径仍是上游 400 纯文本、记录器为空；跨站 Origin 403、记录器为空。
+ {
+  const libPath=path.join(portable.data,'library');
+  const api=(p,body,headers={})=>fetch(origin+p,{method:'POST',headers:{cookie,...headers,'content-type':'application/json'},body:JSON.stringify(body??{})});
+  const before=opened.length;
+  const lib=await api('/api/library/reveal',{path:libPath});
+  assert.equal(lib.status,204,'库目录 reveal 应为 204');
+  assert.ok(opened.slice(before).some(p=>path.normalize(p)===path.normalize(libPath)),'记录器收到库目录');
+  const escape=await api('/api/library/reveal',{path:'C:\\Windows\\System32'});
+  assert.equal(escape.status,400,'越权路径仍是上游 400');
+  assert.match(await escape.text(),/not a path the library shows/);
+  const crossBefore=opened.length;
+  const cross=await api('/api/library/reveal',{path:libPath},{origin:'https://evil.example','sec-fetch-site':'cross-site'});
+  assert.equal(cross.status,403,'跨站 Origin 必须 403');
+  assert.equal(opened.length,crossBefore,'跨站请求不该开文件夹');
+  console.log('PASS reveal: library 204 + opener got dir; escape path 400 passthrough; cross-site 403 with no opener');
+ }
  const pages=await (await fetch(origin+'/api/plugin-pages',{headers:{cookie}})).json();
  assert.equal(pages.length,1);const entry=pages[0];
  assert.match(entry.url,/^\/_magpie\/plugin\/[0-9a-f]{32}\/index.html$/);
@@ -102,6 +124,18 @@ try{
      assert.equal(await outer.locator('#about > .row').first().locator('button').count(),0);
      assert.equal(await outer.locator('.whatsnew-row').count(),0);
       assert.equal(await outer.locator('#update').isVisible(),false);
+      // 交接 §7.3：Library 的「Library folder」按钮点了不该出现红字（#status 不带 err 类），
+      // 且记录器收到 data/library。UI 结构随上游漂移时这一步可能找不到按钮，如实跳过
+      // 不算失败（真机人工三条在交接 §7.4，本 fixture 只覆盖能自动化的那条）。
+      const libBtn=outer.getByText('Library folder',{exact:false}).first();
+      if(await libBtn.count()){
+       const before=opened.length;
+       await libBtn.dispatchEvent('click',{timeout:10000});
+       await tab.waitForTimeout(800);
+       const status=outer.locator('#status');
+       if(await status.count())assert.ok(!(await status.getAttribute('class')||'').includes('err'),'#status 不该带 err 类');
+       assert.ok(opened.length>before,'Library folder 点击后记录器收到路径');
+      }else console.log('SKIP UI reveal: 本版页面没有「Library folder」按钮，改由真机人工验证');
    }
    if(evidence)try{await tab.screenshot({path:path.join(evidence,baseline?'before.png':'after.png'),timeout:5000})}catch{console.log('SKIP screenshot: headless compositor timeout')}
    await bc.close();
