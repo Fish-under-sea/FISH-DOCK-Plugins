@@ -10,4 +10,8 @@
 .fish-magpie .fish-answer{white-space:pre-wrap;user-select:text}
 .fish-magpie .fish-hit{display:block;text-align:left;width:100%;height:auto;white-space:normal;margin-bottom:8px;padding:8px;line-height:1.6}
 .fish-magpie .fish-status{min-height:1.6em;color:var(--text-muted);overflow-wrap:anywhere}
+.fish-magpie .fish-label{color:var(--text-muted);font-size:var(--font-ui-smaller);white-space:nowrap}
+.fish-magpie .fish-run{max-height:180px;overflow-y:auto;border-block:1px solid var(--background-modifier-border);padding:8px 0;color:var(--text-muted);font-size:var(--font-ui-smaller);line-height:1.6}
+.fish-magpie .fish-run:empty{display:none}
+.fish-magpie .fish-runline{overflow-wrap:anywhere;white-space:pre-wrap}
 .fish-magpie button:focus-visible,.fish-magpie textarea:focus-visible,.fish-magpie select:focus-visible{outline:2px solid var(--interactive-accent);outline-offset:2px}
