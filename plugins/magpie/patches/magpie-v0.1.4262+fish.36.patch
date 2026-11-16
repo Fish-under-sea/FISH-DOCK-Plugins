@@ -2771,7 +2771,7 @@ index d2a21d4..c2ede02 100644
 +  if (el.textContent !== css) el.textContent = css;
 +}
 diff --git a/internal/gui/assets/appearance.js b/internal/gui/assets/appearance.js
-index 7fd0c30..9e6bf5e 100644
+index 7fd0c30..1718585 100644
 --- a/internal/gui/assets/appearance.js
 +++ b/internal/gui/assets/appearance.js
 @@ -21,6 +21,7 @@ window.lookPaint = async function () {
@@ -2782,7 +2782,7 @@ index 7fd0c30..9e6bf5e 100644
    $("#colorblindSegs").title = t("Colorblind-safe chart colors, and each allowance window's line in a dash of its own");
    $("#colorblindSegs").replaceChildren(segsOO(s.colorblind, (v) => savePrefs({ ...keep, colorblind: v })));
    $("#reduceMotionSegs").title = t("Animations stand still, as with the system's Reduce Motion, so magpie keeps the computer less busy");
-@@ -29,8 +30,111 @@ window.drawLook = function (s, keep) {
+@@ -29,8 +30,112 @@ window.drawLook = function (s, keep) {
    $("#birdSegs").replaceChildren(segsOO(!s.noBird, (v) => savePrefs({ ...keep, noBird: !v })));
    drawAccent(s, keep);
    drawWallpaper(s);
@@ -2853,7 +2853,8 @@ index 7fd0c30..9e6bf5e 100644
 +  box.replaceChildren(...GLASS_REGION_NAMES().map(([region, name, hint]) => {
 +    const row = el("div", "row pref");
 +    const who = el("div", "who");
-+    who.append(el("div", "name", name), el("div", "sub", hint));
++    who.append(el("div", "name", name));
++    who.title = hint;
 +    const values = el("div", "fish-glass-values");
 +    // The pair as it is on screen: the sliders' own copy, so dragging one
 +    // does not wait on the server to say what the other one is.
@@ -2894,7 +2895,7 @@ index 7fd0c30..9e6bf5e 100644
  function drawAccent(s, keep) {
    const box = $("#accentPick");
    if (!box) return;
-@@ -108,3 +212,155 @@ function drawWallpaper(s) {
+@@ -108,3 +213,168 @@ function drawWallpaper(s) {
    remove.onclick = () => send({ remove: true });
    box.replaceChildren(thumb, choose, remove, file);
  }
@@ -3016,20 +3017,27 @@ index 7fd0c30..9e6bf5e 100644
 +  const box = $("#fontColorPick");
 +  if (!box) return;
 +  const frag = document.createDocumentFragment();
-+  const head = el("div", "fc-head");
-+  const toggle = el("button", "text" + (s.fontColorsDarkOn ? " primary" : ""), t("Separate for dark"));
-+  toggle.type = "button";
-+  toggle.setAttribute("aria-pressed", String(!!s.fontColorsDarkOn));
-+  toggle.onclick = () => { closeFontPicker(); savePrefs({ ...keep, fontColorsDarkOn: !s.fontColorsDarkOn, fontColorsDark: s.fontColorsDark || {} }); };
-+  head.append(toggle);
-+  frag.append(head);
-+  const groups = [[t("Light"), s.fontColors || {}, "fontColors"]];
++  // 与液态玻璃同样的行式布局：左边名称，右边控件横排
++  const toggleRow = el("div", "row pref");
++  const twho = el("div", "who");
++  twho.append(el("div", "name", t("Separate for dark")));
++  const toggle = segsOO(!!s.fontColorsDarkOn, (v) => { closeFontPicker(); savePrefs({ ...keep, fontColorsDarkOn: v, fontColorsDark: s.fontColorsDark || {} }); });
++  toggleRow.append(twho, toggle);
++  frag.append(toggleRow);
++
++  const groups = [[null, s.fontColors || {}, "fontColors"]];
 +  if (s.fontColorsDarkOn) groups.push([t("Dark"), s.fontColorsDark || {}, "fontColorsDark"]);
 +  for (const [gname, map, field] of groups) {
-+    if (s.fontColorsDarkOn) frag.append(el("div", "fc-group", gname));
++    if (gname) {
++      const head = el("div", "row pref fc-split");
++      head.append(el("div", "who fc-split-name", gname));
++      frag.append(head);
++    }
 +    for (const [role, label] of FONT_ROLES()) {
-+      const row = el("div", "fc-row");
-+      row.append(el("span", "fc-name", label));
++      const row = el("div", "row pref");
++      const who = el("div", "who");
++      who.append(el("div", "name", label));
++      const actions = el("div", "fc-actions");
 +      const sw = el("button", "fc-swatch");
 +      sw.type = "button";
 +      sw.setAttribute("aria-label", label + " · " + t("Pick a colour"));
@@ -3040,11 +3048,17 @@ index 7fd0c30..9e6bf5e 100644
 +      sw.onclick = () => openFontPicker(sw, map[role] || "#888888", (out) => {
 +        const next = { ...map };
 +        if (out) next[role] = out; else delete next[role];
-+        sw.dataset.color = out; sw.style.setProperty("--fc", out || "transparent"); sw.classList.toggle("empty", !out);
++        sw.dataset.color = out; sw.style.setProperty("--fc", out || "transparent");
++        sw.classList.toggle("empty", !out);
 +        hex.textContent = out || t("Follows theme");
 +        savePrefs({ ...keep, [field]: next });
 +      });
-+      row.append(sw, hex);
++      const clear = el("button", "text", t("Clear"));
++      clear.type = "button";
++      clear.disabled = !map[role];
++      clear.onclick = () => { const next = { ...map }; delete next[role]; closeFontPicker(); savePrefs({ ...keep, [field]: next }); };
++      actions.append(sw, hex, clear);
++      row.append(who, actions);
 +      frag.append(row);
 +    }
 +  }
@@ -3053,10 +3067,10 @@ index 7fd0c30..9e6bf5e 100644
 \ No newline at end of file
 diff --git a/internal/gui/assets/fish-glass.css b/internal/gui/assets/fish-glass.css
 new file mode 100644
-index 0000000..379e909
+index 0000000..539c651
 --- /dev/null
 +++ b/internal/gui/assets/fish-glass.css
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,184 @@
 +/* Liquid glass: a surface treatment, not a replacement theme. No geometry,
 +   type or global palette changes; lists, inputs and document bodies keep
 +   their ground.
@@ -3195,14 +3209,14 @@ index 0000000..379e909
 +   Two sliders per region, right-aligned like the rest of Settings' values.
 +   The number is tabular so it does not jitter as the thumb moves. */
 +.set-sub-head { margin-top: 12px; }
-+.fish-glass-values { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 14px; }
-+.fish-glass-slider { display: inline-flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; }
-+.fish-glass-slider > span { color: var(--fg-2); font-size: 12px; }
-+.fish-glass-range { width: 128px; accent-color: var(--accent); }
++.fish-glass-values { flex: 1 1 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 26px; }
++.fish-glass-slider { display: inline-flex; align-items: center; gap: 10px; margin: 0; white-space: nowrap; }
++.fish-glass-slider > span { color: var(--muted); font-size: 12.5px; min-width: 3.4em; }
++.fish-glass-range { width: min(240px, 26vw); height: 18px; accent-color: var(--accent); }
 +.fish-glass-out { min-width: 3.2em; text-align: right; font-size: 12px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
 +@media (max-width: 720px) {
 +  .fish-glass-values { justify-content: flex-start; }
-+  .fish-glass-range { width: 96px; }
++  .fish-glass-range { width: min(180px, 30vw); }
 +}
 +
 +
@@ -3213,7 +3227,11 @@ index 0000000..379e909
 +
 +/* ── Settings › Appearance › Font color 面板 ───────────────────────────────
 +   独立的多级面板：每级一个取色器 + 十六进制 + 清除；“深色单独设置”时多一组。 */
-+.font-color-panel { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; min-width: 260px; }
++.font-color-panel { display: block; min-width: 0; }
++.fc-actions { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; justify-content: flex-end; }
++.fc-hex { min-width: 8.5em; font: 11.5px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); text-align: right; }
++.fc-split { min-height: 30px; }
++.fc-split-name { font-size: 11.5px; color: var(--muted); }
 +.fc-head { display: flex; justify-content: flex-end; }
 +.fc-group { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
 +.fc-row { display: flex; align-items: center; gap: 10px; min-height: 30px; }
@@ -3584,7 +3602,7 @@ index 61f3721..7d5bd42 100644
 +
 +
 diff --git a/internal/gui/assets/index.html b/internal/gui/assets/index.html
-index 297a949..b2223b5 100644
+index 297a949..692114b 100644
 --- a/internal/gui/assets/index.html
 +++ b/internal/gui/assets/index.html
 @@ -34,6 +34,7 @@
@@ -3657,7 +3675,7 @@ index 297a949..b2223b5 100644
        <div class="row pref app-only">
          <div class="who"><div class="name" data-t>Click the tray icon to</div></div>
          <div id="traySegs"></div>
-@@ -285,6 +247,70 @@
+@@ -285,6 +247,65 @@
        </div>
      </div>
    </section>
@@ -3710,12 +3728,7 @@ index 297a949..b2223b5 100644
 +      </div>
 +    </div>
 +    <div class="row-head set-sub-head"><div class="who"><div class="name" data-t>Font color</div></div></div>
-+    <div class="list prefs">
-+      <div class="row pref" id="fontColorRow">
-+        <div class="who"><div class="sub" data-t>Text colours per level; empty follows the theme</div></div>
-+        <div id="fontColorPick" class="font-color-panel"></div>
-+      </div>
-+    </div>
++    <div class="list prefs"><div id="fontColorPick" class="font-color-panel"></div></div>
 +    <div class="row-head set-sub-head"><div class="who"><div class="name" data-t>Liquid glass</div></div></div>
 +    <div class="list prefs">
 +      <div class="row pref" id="fishGlassRow">
@@ -3728,7 +3741,7 @@ index 297a949..b2223b5 100644
    <section class="set-page" id="setPage-usage" role="tabpanel" aria-labelledby="setTab-usage">
      <div class="list prefs">
        <div class="row pref app-only" id="trayUsageRow">
-@@ -656,3 +682,4 @@
+@@ -656,3 +677,4 @@
  <script src="start.js"></script>
  </body>
  </html>
