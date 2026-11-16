@@ -1,6 +1,19 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译：**基线 tag 由 `follow-upstream.ps1` 现场解析**（上游是 24h loop，写死必然过期），再加上 `patches/` 里序号最大的那份补丁。当前补丁链：**`fish.36`**（插件 2.4.0，基线 **v0.1.4262**：设置 › 外观独立分页、液态玻璃按区域调节并随主题下发给插件页、知识库链接改由适配层直接拉起、`fishvault` 链接空格改 `%20`；`fish.35` 是 2.3.8/2.3.9 的形态；`fish.34` 是插件 2.3.7；`fish.33` 是插件 2.3.6 在 v0.1.3596 上的形态；`fish.32` 是 2.3.6 修复版在 v0.1.3383 上的形态，`fish.31` 是 2.3.5）；旧补丁留在 `patches/` 备查：`fish.16`/`fish.15` 是 v0.1.2799 那条线（2.2.1/2.2.2 前半），`fish.13` 用于 2.1.9–2.2.0，`fish.12` 用于 2.1.8，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1`–`fish.8`。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译：**基线 tag 由 `follow-upstream.ps1` 现场解析**（上游是 24h loop，写死必然过期），再加上 `patches/` 里序号最大的那份补丁。当前补丁链：**`fish.37`**（插件 2.4.0，基线 **v0.1.4262**：在 `fish.36` 的外观形态之上并入记忆「Agent 化」的 M-A/M-B/M-C——`internal/memagent` 的注册表与两个内置预设、执行器工具循环、沙箱白名单与 scratch 20MB GC、`/api/memory/agents` 路由；`fish.36` 是设置 › 外观独立分页、液态玻璃按区域调节并随主题下发给插件页、知识库链接改由适配层直接拉起、`fishvault` 链接空格改 `%20`；`fish.35` 是 2.3.8/2.3.9 的形态；`fish.34` 是插件 2.3.7；`fish.33` 是插件 2.3.6 在 v0.1.3596 上的形态；`fish.32` 是 2.3.6 修复版在 v0.1.3383 上的形态，`fish.31` 是 2.3.5）；旧补丁留在 `patches/` 备查：`fish.16`/`fish.15` 是 v0.1.2799 那条线（2.2.1/2.2.2 前半），`fish.13` 用于 2.1.9–2.2.0，`fish.12` 用于 2.1.8，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1`–`fish.8`。
+
+## 2.4.0 / fish.37：记忆 Agent 化（内置）
+
+`fish.37` 在 `fish.36` 的外观形态之上并入记忆「Agent 化」的 M-A / M-B / M-C，全部内置在 magpie 里，不拆插件：
+
+- `internal/memagent`：`memory-agents.json` 的原子读写（lastgood + filelock + 校验，坏文件不读成空）、`memory-curator`（learn|organize）与 `dreamer`（dream）两个内置预设及 `Restore`、按角色派发（`Dispatch`，用 Agent 自己的 model/effort，角色不符即拒绝）、工具循环（记忆四工具 + vault 白名单三工具 + scratch 两工具 + Agent `mcp.json` 里的 MCP）与步数/时间上限、结果与进度落 `memory-agent-runs.json`。
+- 沙箱与缓存：`os.OpenRoot` 限定 vault，读 `wiki/ inspirations/ memories/`、写 `inspirations/ _digests/ candidates/ dreams/ logs/`，拒绝对路径、`..`、符号链接与 junction；scratch 每 run 一目录、结束即删，超 20MB 按最旧整目录回收到 ≤20MB，且只对 `cache/memory-agent/work` 生效。
+- GUI：`/api/memory/agents`（GET 列表/按 `role=` 过滤 + POST 新增/update/remove/default/restore），启动时 `memagent.Ensure()` 首次写出两个预设。
+- 子系统说明在源码树 `docs/subsystems/memagent.md` 与 `docs/subsystems/memory.md`（「Memory agents」一节）；设计定稿见本仓 [记忆 Agent 化设计](../../../docs/specs/2026-11-16-magpie-memory-agent-design.md)。
+
+**基线口径（重要）**：`fish.37` 与 `fish.36` 同基线 **v0.1.4262**。发版当时的落后闸门结论是「差 69 个 tag」（11-15 16:12 抓的基线，11-16 22:53 再看上游已到 `v0.1.4331`），因此本次构建按 `-SkipFreshness` 出包，理由是 2.4.0 的 Release 内容与 `fish.37` 的语义都锁定在这条基线上；**追平上游是另一次「上游升级」动作**（见下文那节的 1–6 步），不在本次发版里。
+
+局部验收（本次合并后实测）：`go build ./...` 通过；`go vet ./internal/gui ./internal/settings ./internal/settingsapi ./internal/fishvault ./internal/memagent` 无输出；`go test ./internal/memagent ./internal/memory ./internal/settingsapi ./internal/fishvault -count=1` 全绿（memagent 142 通过 / 1 跳过）；`go test ./internal/gui -run 'TestMemoryAgent|TestFishGlass|TestAccent|TestWallpaper|TestLook'` 全绿；`node --test internal/gui/tests/fish-glass.test.cjs` 5/5；资产脚本 `node --check` 无错；`check-assets-refs.mjs` 悬空引用闸门 OK。`internal/gui -run TestPluginPage` 的 19 条失败在**纯净上游 v0.1.4262**、重放补丁后的树、合并树上名单与条数完全一致，属本机沙箱（要真实子进程与插件宿主）环境问题，不是本次引入。
 
 ## 2.3.7：共享知识库与 Obsidian
 

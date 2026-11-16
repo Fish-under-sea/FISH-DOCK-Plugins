@@ -1,8 +1,8 @@
 # 插件维护者指南
 
-2.0.0 把当时的四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉。OFM 已于 2026-10-25 暂停维护，2.3.0 起从官方目录与活动构建链退役，历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线上游 tag 加我们自己的补丁，当前 `v0.1.4262+fish.36`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md)。
+2.0.0 把当时的四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉。OFM 已于 2026-10-25 暂停维护，2.3.0 起从官方目录与活动构建链退役，历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线上游 tag 加我们自己的补丁，当前 `v0.1.4262+fish.37`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md)。
 
-**当前版本**（以 `catalog/stable.json` 为唯一权威）：飞书 **2.2.0**、Clash **2.4.0**、Magpie **2.4.0**（宿主 ≥2.3.4；液态玻璃 2.4.0 起改为按区域精细调节）（exe `v0.1.4262+fish.36`）。发行走 `v2.x.y` 之类的总 tag，一个 release 里放当次要发的包——不必三插件同版。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+**当前版本**（以 `catalog/stable.json` 为唯一权威）：飞书 **2.2.0**、Clash **2.4.0**、Magpie **2.4.0**（宿主 ≥2.3.4；液态玻璃 2.4.0 起改为按区域精细调节）（exe `v0.1.4262+fish.37`，原生服务内置记忆 Agent 的注册表、执行器与沙箱）。发行走 `v2.x.y` 之类的总 tag，一个 release 里放当次要发的包——不必三插件同版。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
 
 ## 身份表
 
@@ -28,7 +28,7 @@
 
 | 资源 | 当前开发验证来源 | 处理方式 |
 | --- | --- | --- |
-| Magpie | `yetone/magpie`，基线 `v0.1.4262`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/` 最新补丁自行构建（版本标识 `v0.1.4262+fish.35` / FileVersion `0.1.4262.35`） | 独立进程；逐文件摘要记录于插件清单 |
+| Magpie | `yetone/magpie`，基线 `v0.1.4262`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/` 最新补丁自行构建（版本标识 `v0.1.4262+fish.37` / FileVersion `0.1.4262.37`） | 独立进程；逐文件摘要记录于插件清单 |
 | mihomo | v1.19.15，`mihomo-windows-amd64-compatible-v1.19.15.zip` | 校验下载后暂存可执行文件，首次按需启动 |
 | Node SDK | 同版 Dock 仓的 `sdk/node/plugin.mjs` | 复制到各插件，与宿主 API 1 联调 |
 
