@@ -1,11 +1,27 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import {createHash} from 'node:crypto';
 import {inflateRawSync} from 'node:zlib';
+import {spawnSync} from 'node:child_process';
 import {crc32} from './crc32.mjs';
 import {fileURLToPath} from 'node:url';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const check=(condition,message)=>{if(!condition)throw Error(message)};
+// 摘要只能证明包没被改动，证明不了包内的 ES 模块能解析。2.3.8 的 SDK 快照把
+// 控制字符范围写成了 caret 记法（/[^@-^_\u007f-^_]/），CRC、长度和清单摘要全部通过，
+// 但宿主一加载 sdk.mjs 就 SyntaxError，握手阶段直接退出。所以归档校验必须补一道
+// 语法门：把每个 .mjs 落到临时目录后跑 node --check，用 stdio:'ignore' 避免管道。
+function checkModuleSyntax(name,source){
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fish-verify-'));
+ try{
+  const file=path.join(dir,path.posix.basename(name));
+  fs.writeFileSync(file,source);
+  const result=spawnSync(process.execPath,['--check',file],{stdio:'ignore',timeout:30000});
+  check(!result.error,`模块语法校验无法执行：${name}（${result.error?.code??'未知错误'}）`);
+  check(result.status===0,`模块语法错误：${name}（node --check 退出码 ${result.status}）`);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+}
 
 // Read standard non-ZIP64 archives produced by this repository without extracting.
 export function readArchive(bytes) {
@@ -40,6 +56,8 @@ export function verifyArchive(bytes) {
   check(name!=='plugin.json'&&files.has(name),`清单资源缺失：${name}`);
   check(hash(files.get(name))===digest,`资源摘要错误：${name}`);
  }
+ // 插件由宿主按 node 模块加载，语法坏掉等于装不上：这一步必须在发版前拦住。
+ for(const [name,content]of files)if(name.endsWith('.mjs'))checkModuleSyntax(name,content);
  for(const entry of [manifest.backend?.entry,...(manifest.pages||[]).map(page=>page.entry)])check(typeof entry==='string'&&files.has(entry),`插件入口缺失：${entry}`);
  // Validate each local HTML resource reference against the actual packed files.
  for(const page of manifest.pages||[]){
