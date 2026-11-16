@@ -2771,7 +2771,7 @@ index d2a21d4..c2ede02 100644
 +  if (el.textContent !== css) el.textContent = css;
 +}
 diff --git a/internal/gui/assets/appearance.js b/internal/gui/assets/appearance.js
-index 7fd0c30..d6002e7 100644
+index 7fd0c30..9e6bf5e 100644
 --- a/internal/gui/assets/appearance.js
 +++ b/internal/gui/assets/appearance.js
 @@ -21,6 +21,7 @@ window.lookPaint = async function () {
@@ -2894,19 +2894,124 @@ index 7fd0c30..d6002e7 100644
  function drawAccent(s, keep) {
    const box = $("#accentPick");
    if (!box) return;
-@@ -108,3 +212,46 @@ function drawWallpaper(s) {
+@@ -108,3 +212,155 @@ function drawWallpaper(s) {
    remove.onclick = () => send({ remove: true });
    box.replaceChildren(thumb, choose, remove, file);
  }
 +
-+// 字体颜色：独立的多级面板（正文/次要/弱化/极小），可“深色单独设置”。
-+// 每一级都是 --fg / --fg-2 / --muted / --faint 的一个覆盖，空 = 跟随主题。
++// 字体颜色：独立卡片里的多级面板（正文/次要/弱化/极小），可“深色单独设置”。
++// 每级一个色块按钮，点开一个可拖动的自定义取色器（不用系统弹窗，点了不会立刻消失）。
 +const FONT_ROLES = () => [
 +  ["main", t("Body")],
 +  ["secondary", t("Secondary text")],
 +  ["muted", t("Muted notes")],
 +  ["faint", t("Tiny notes")],
 +];
++
++// —— 颜色换算 ——
++function hexToRgb(hex) {
++  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
++  if (!m) return [128, 128, 128];
++  const n = parseInt(m[1], 16);
++  return [n >> 16 & 255, n >> 8 & 255, n & 255];
++}
++const rgbHex = (r, g, b) => "#" + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
++function rgbToHsv(r, g, b) {
++  r /= 255; g /= 255; b /= 255;
++  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
++  let h = 0;
++  if (d) {
++    if (mx === r) h = ((g - b) / d) % 6;
++    else if (mx === g) h = (b - r) / d + 2;
++    else h = (r - g) / d + 4;
++    h *= 60; if (h < 0) h += 360;
++  }
++  return [h, mx ? d / mx : 0, mx];
++}
++function hsvToRgb(h, s, v) {
++  const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c;
++  let r = 0, g = 0, b = 0;
++  if (h < 60) [r, g, b] = [c, x, 0]; else if (h < 120) [r, g, b] = [x, c, 0];
++  else if (h < 180) [r, g, b] = [0, c, x]; else if (h < 240) [r, g, b] = [0, x, c];
++  else if (h < 300) [r, g, b] = [x, 0, c]; else [r, g, b] = [c, 0, x];
++  return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
++}
++
++// 可拖动取色器：HSV 方块 + 色相条 + 十六进制输入；只有“关闭”才收起。
++let fontPicker = null;
++function closeFontPicker() {
++  if (fontPicker) { fontPicker.el.remove(); fontPicker = null; }
++}
++function openFontPicker(anchor, hex, apply) {
++  closeFontPicker();
++  let [h, s, v] = rgbToHsv(...hexToRgb(hex));
++  const el = document.createElement("div");
++  el.className = "fc-picker";
++  el.innerHTML = '<div class="fc-picker-bar"><span class="fc-picker-title"></span><button type="button" class="fc-picker-close" aria-label="' + t("Close") + '">✕</button></div>'
++    + '<div class="fc-sv"><div class="fc-sv-white"></div><div class="fc-sv-black"></div><span class="fc-sv-thumb"></span></div>'
++    + '<div class="fc-hue"><span class="fc-hue-thumb"></span></div>'
++    + '<div class="fc-picker-foot"><button type="button" class="fc-clear"></button><input class="fc-hex-input" spellcheck="false" maxlength="7"></div>';
++  el.querySelector(".fc-picker-title").textContent = t("Pick a colour");
++  document.body.appendChild(el);
++  const rect = anchor.getBoundingClientRect();
++  const left = Math.min(innerWidth - 240, Math.max(8, rect.left - 40));
++  const top = Math.max(8, Math.min(innerHeight - 300, rect.bottom + 8));
++  el.style.left = left + "px"; el.style.top = top + "px";
++
++  const sv = el.querySelector(".fc-sv"), svThumb = el.querySelector(".fc-sv-thumb");
++  const hue = el.querySelector(".fc-hue"), hueThumb = el.querySelector(".fc-hue-thumb");
++  const hexIn = el.querySelector(".fc-hex-input");
++  const paint = () => {
++    sv.style.background = "hsl(" + h + ",100%,50%)";
++    svThumb.style.left = (s * 100) + "%"; svThumb.style.top = ((1 - v) * 100) + "%";
++    hueThumb.style.left = (h / 360 * 100) + "%";
++    const [r, g, b] = hsvToRgb(h, s, v);
++    const out = rgbHex(r, g, b);
++    if (document.activeElement !== hexIn) hexIn.value = out;
++    el.style.setProperty("--fc-preview", out);
++    apply(out);
++  };
++  const dragSV = (e) => {
++    const r = sv.getBoundingClientRect();
++    s = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
++    v = 1 - Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
++    paint();
++  };
++  const dragHue = (e) => {
++    const r = hue.getBoundingClientRect();
++    h = 360 * Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
++    paint();
++  };
++  const hold = (node, fn) => {
++    node.addEventListener("pointerdown", (e) => {
++      e.preventDefault(); node.setPointerCapture(e.pointerId); fn(e);
++      const mv = (ev) => fn(ev);
++      const up = () => { node.removeEventListener("pointermove", mv); node.removeEventListener("pointerup", up); };
++      node.addEventListener("pointermove", mv); node.addEventListener("pointerup", up);
++    });
++  };
++  hold(sv, dragSV); hold(hue, dragHue);
++  hexIn.addEventListener("input", () => {
++    if (!/^#[0-9a-f]{6}$/i.test(hexIn.value)) return;
++    [h, s, v] = rgbToHsv(...hexToRgb(hexIn.value)); paint();
++  });
++  el.querySelector(".fc-clear").textContent = t("Clear");
++  el.querySelector(".fc-clear").onclick = () => { apply(""); closeFontPicker(); };
++  el.querySelector(".fc-picker-close").onclick = closeFontPicker;
++  // 拖动标题栏移动整个面板
++  const bar = el.querySelector(".fc-picker-bar");
++  bar.addEventListener("pointerdown", (e) => {
++    if (e.target.closest("button")) return;
++    const sx = e.clientX - el.offsetLeft, sy = e.clientY - el.offsetTop;
++    const mv = (ev) => { el.style.left = (ev.clientX - sx) + "px"; el.style.top = (ev.clientY - sy) + "px"; };
++    const up = () => { bar.removeEventListener("pointermove", mv); bar.removeEventListener("pointerup", up); };
++    bar.setPointerCapture(e.pointerId);
++    bar.addEventListener("pointermove", mv); bar.addEventListener("pointerup", up);
++  });
++  paint();
++  fontPicker = { el };
++}
++
 +function drawFontColors(s, keep) {
 +  const box = $("#fontColorPick");
 +  if (!box) return;
@@ -2915,7 +3020,7 @@ index 7fd0c30..d6002e7 100644
 +  const toggle = el("button", "text" + (s.fontColorsDarkOn ? " primary" : ""), t("Separate for dark"));
 +  toggle.type = "button";
 +  toggle.setAttribute("aria-pressed", String(!!s.fontColorsDarkOn));
-+  toggle.onclick = () => savePrefs({ ...keep, fontColorsDarkOn: !s.fontColorsDarkOn, fontColorsDark: s.fontColorsDark || {} });
++  toggle.onclick = () => { closeFontPicker(); savePrefs({ ...keep, fontColorsDarkOn: !s.fontColorsDarkOn, fontColorsDark: s.fontColorsDark || {} }); };
 +  head.append(toggle);
 +  frag.append(head);
 +  const groups = [[t("Light"), s.fontColors || {}, "fontColors"]];
@@ -2925,28 +3030,33 @@ index 7fd0c30..d6002e7 100644
 +    for (const [role, label] of FONT_ROLES()) {
 +      const row = el("div", "fc-row");
 +      row.append(el("span", "fc-name", label));
-+      const input = el("input");
-+      input.type = "color";
-+      input.value = /^#[0-9a-f]{6}$/i.test(map[role] || "") ? map[role] : "#888888";
-+      input.setAttribute("aria-label", label);
++      const sw = el("button", "fc-swatch");
++      sw.type = "button";
++      sw.setAttribute("aria-label", label + " · " + t("Pick a colour"));
++      sw.dataset.color = map[role] || "";
++      sw.style.setProperty("--fc", map[role] || "transparent");
++      sw.classList.toggle("empty", !map[role]);
 +      const hex = el("code", "fc-hex", map[role] || t("Follows theme"));
-+      input.oninput = () => savePrefs({ ...keep, [field]: { ...map, [role]: input.value } });
-+      const clear = el("button", "text", t("Clear"));
-+      clear.type = "button";
-+      clear.disabled = !map[role];
-+      clear.onclick = () => { const next = { ...map }; delete next[role]; savePrefs({ ...keep, [field]: next }); };
-+      row.append(input, hex, clear);
++      sw.onclick = () => openFontPicker(sw, map[role] || "#888888", (out) => {
++        const next = { ...map };
++        if (out) next[role] = out; else delete next[role];
++        sw.dataset.color = out; sw.style.setProperty("--fc", out || "transparent"); sw.classList.toggle("empty", !out);
++        hex.textContent = out || t("Follows theme");
++        savePrefs({ ...keep, [field]: next });
++      });
++      row.append(sw, hex);
 +      frag.append(row);
 +    }
 +  }
 +  box.replaceChildren(frag);
 +}
+\ No newline at end of file
 diff --git a/internal/gui/assets/fish-glass.css b/internal/gui/assets/fish-glass.css
 new file mode 100644
-index 0000000..3bffaed
+index 0000000..379e909
 --- /dev/null
 +++ b/internal/gui/assets/fish-glass.css
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,180 @@
 +/* Liquid glass: a surface treatment, not a replacement theme. No geometry,
 +   type or global palette changes; lists, inputs and document bodies keep
 +   their ground.
@@ -3111,6 +3221,23 @@ index 0000000..3bffaed
 +.fc-row input[type="color"] { width: 34px; height: 24px; padding: 0; border: 1px solid var(--line); border-radius: 14px; background: transparent; }
 +.fc-row .fc-hex { flex: 1 1 auto; font: 11.5px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
 +.fc-row button { flex: none; }
++
++/* ── 字体颜色：色块与可拖动取色器 ─────────────────────────────────────── */
++.fc-swatch { width: 34px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--fc, transparent); cursor: pointer; }
++.fc-swatch.empty { background: repeating-conic-gradient(var(--line-2) 0 25%, transparent 0 50%) 50% / 10px 10px; }
++.fc-picker { position: fixed; z-index: 80; width: 220px; padding: 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); box-shadow: 0 18px 50px rgba(0, 0, 0, .45); user-select: none; }
++.fc-picker-bar { display: flex; align-items: center; justify-content: space-between; cursor: move; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
++.fc-picker-close { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 4px; }
++.fc-sv { position: relative; height: 120px; border-radius: 10px; overflow: hidden; touch-action: none; }
++.fc-sv-white { position: absolute; inset: 0; background: linear-gradient(to right, #fff, rgba(255, 255, 255, 0)); }
++.fc-sv-black { position: absolute; inset: 0; background: linear-gradient(to top, #000, rgba(0, 0, 0, 0)); }
++.fc-sv-thumb { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 999px; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .45); pointer-events: none; }
++.fc-hue { position: relative; height: 14px; margin-top: 8px; border-radius: 999px; touch-action: none; background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00); }
++.fc-hue-thumb { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 999px; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .45); pointer-events: none; }
++.fc-picker-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
++.fc-hex-input { flex: 1 1 auto; height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--fg); font: 12px ui-monospace, monospace; }
++.fc-clear { flex: none; }
+\ No newline at end of file
 diff --git a/internal/gui/assets/fishmedia.js b/internal/gui/assets/fishmedia.js
 new file mode 100644
 index 0000000..aa1576f
@@ -3222,7 +3349,7 @@ index 0000000..aa1576f
 +  }
 +};
 diff --git a/internal/gui/assets/i18n.js b/internal/gui/assets/i18n.js
-index 61f3721..95712fe 100644
+index 61f3721..7d5bd42 100644
 --- a/internal/gui/assets/i18n.js
 +++ b/internal/gui/assets/i18n.js
 @@ -1755,6 +1755,8 @@ const I18N = {
@@ -3268,13 +3395,15 @@ index 61f3721..95712fe 100644
      "Settings → Models → Images lists the ticked ones. Agents don't chat with these, so they aren't among its models.": "设置 → 模型 → 图像 只列出已勾选的。Agent 不与它们对话，故不在模型列表中。",
      "Video models": "视频模型",
      "Only the ticked ones are offered when making a video. Agents don't chat with these, so they aren't among its models.": "生成视频时只提供已勾选的。Agent 不与它们对话，故不在模型列表中。",
-@@ -4029,6 +4058,35 @@ const I18N = {
+@@ -4029,6 +4058,37 @@ const I18N = {
      "{name} (fixed)": "固定使用 {name}",
      "Unavailable app ({id})": "应用不可用（{id}）",
      "Appearance": "外观",
 +    "Liquid glass": "液态玻璃",
 +    "See-through": "全透",
 +    "Font color": "字体颜色",
++    "Pick a colour": "选择颜色",
++    "Close": "关闭",
 +    "Text colours per level; empty follows the theme": "按层级设置文字颜色；留空跟随主题",
 +    "Body": "正文",
 +    "Secondary text": "次要文字",
@@ -3304,7 +3433,7 @@ index 61f3721..95712fe 100644
      "Colorblind mode": "色盲模式",
      "Accent color": "强调色",
      "Background image": "背景图片",
-@@ -7078,6 +7136,8 @@ const I18N = {
+@@ -7078,6 +7138,8 @@ const I18N = {
      "Off: kept with its key, and never asked": "關閉：保留它和它的金鑰，但不再呼叫",
      "On: asked in its turn": "開啟：依順序輪到時呼叫",
      "Image recognition MCP server": "識圖 MCP 伺服器",
@@ -3313,13 +3442,15 @@ index 61f3721..95712fe 100644
      "Agents can add image recognition as an MCP server (Streamable HTTP) with one analyze_image tool, which reads an image with the Image recognition model from a file path, a URL or a data URL. From another computer, send a gateway key as Authorization: Bearer <key> and the image as a URL or data URL.": "智慧體可以把識圖新增為 MCP 伺服器（Streamable HTTP），提供一個 analyze_image 工具：用識圖模型讀取檔案路徑、URL 或 data URL 中的圖片。從其他電腦存取時，請以 Authorization: Bearer <key> 傳送閘道金鑰，圖片以 URL 或 data URL 傳入。",
      "The other is asked when it fails": "失敗時再用另一種",
      "Models that search by themselves": "自帶聯網搜尋的模型",
-@@ -9328,6 +9388,35 @@ const I18N = {
+@@ -9328,6 +9390,37 @@ const I18N = {
      "{name} (fixed)": "固定使用 {name}",
      "Unavailable app ({id})": "應用不可用（{id}）",
      "Appearance": "外觀",
 +    "Liquid glass": "液態玻璃",
 +    "See-through": "全透",
 +    "Font color": "字体颜色",
++    "Pick a colour": "选择颜色",
++    "Close": "关闭",
 +    "Text colours per level; empty follows the theme": "按层级设置文字颜色；留空跟随主题",
 +    "Body": "正文",
 +    "Secondary text": "次要文字",
@@ -3349,7 +3480,7 @@ index 61f3721..95712fe 100644
      "Colorblind mode": "色盲模式",
      "Accent color": "強調色",
      "Background image": "背景圖片",
-@@ -12370,6 +12459,8 @@ const I18N = {
+@@ -12370,6 +12463,8 @@ const I18N = {
      "Off: kept with its key, and never asked": "オフ：キーごと残し、呼び出さない",
      "On: asked in its turn": "オン：順番が来たら呼び出す",
      "Image recognition MCP server": "画像認識 MCP サーバー",
@@ -3358,13 +3489,15 @@ index 61f3721..95712fe 100644
      "Agents can add image recognition as an MCP server (Streamable HTTP) with one analyze_image tool, which reads an image with the Image recognition model from a file path, a URL or a data URL. From another computer, send a gateway key as Authorization: Bearer <key> and the image as a URL or data URL.": "エージェントは、画像認識を analyze_image ツール 1 つを持つ MCP サーバー（Streamable HTTP）として追加できます。画像認識のモデルで、ファイルパス、URL、data URL の画像を読み取ります。別のコンピューターからは、ゲートウェイキーを Authorization: Bearer <key> として送り、画像は URL か data URL で渡してください。",
      "The other is asked when it fails": "失敗したときはもう一方を使います",
      "Models that search by themselves": "自分でウェブ検索するモデル",
-@@ -14642,6 +14733,35 @@ const I18N = {
+@@ -14642,6 +14737,37 @@ const I18N = {
      "{name} (fixed)": "{name}（固定）",
      "Unavailable app ({id})": "利用できないアプリ（{id}）",
      "Appearance": "外観",
 +    "Liquid glass": "リキッドガラス",
 +    "See-through": "全透過",
 +    "Font color": "文字色",
++    "Pick a colour": "色を選ぶ",
++    "Close": "閉じる",
 +    "Text colours per level; empty follows the theme": "階層ごとに文字色を設定。空ならテーマに従います",
 +    "Body": "本文",
 +    "Secondary text": "補助テキスト",
@@ -3394,7 +3527,7 @@ index 61f3721..95712fe 100644
      "Colorblind mode": "色覚サポート",
      "Accent color": "アクセントカラー",
      "Background image": "背景画像",
-@@ -17693,6 +17813,8 @@ const I18N = {
+@@ -17693,6 +17819,8 @@ const I18N = {
      "Off: kept with its key, and never asked": "Aus: mit Schlüssel behalten, aber nie gefragt",
      "On: asked in its turn": "An: wird der Reihe nach gefragt",
      "Image recognition MCP server": "Bilderkennung als MCP-Server",
@@ -3403,13 +3536,15 @@ index 61f3721..95712fe 100644
      "Agents can add image recognition as an MCP server (Streamable HTTP) with one analyze_image tool, which reads an image with the Image recognition model from a file path, a URL or a data URL. From another computer, send a gateway key as Authorization: Bearer <key> and the image as a URL or data URL.": "Agenten können die Bilderkennung als MCP-Server (Streamable HTTP) mit einem analyze_image-Tool hinzufügen, das ein Bild aus einem Dateipfad, einer URL oder einer Data-URL mit dem Modell der Bilderkennung liest. Von einem anderen Computer aus einen Gateway-Schlüssel als Authorization: Bearer <key> senden und das Bild als URL oder Data-URL übergeben.",
      "The other is asked when it fails": "Scheitert es, wird das andere gefragt",
      "Models that search by themselves": "Modelle, die selbst suchen",
-@@ -19965,6 +20087,35 @@ const I18N = {
+@@ -19965,6 +20093,37 @@ const I18N = {
      "{name} (fixed)": "{name} (fest)",
      "Unavailable app ({id})": "Nicht verfügbare App ({id})",
      "Appearance": "Darstellung",
 +    "Liquid glass": "Flüssigglas",
 +    "See-through": "Glasklar",
 +    "Font color": "Textfarbe",
++    "Pick a colour": "Farbe wählen",
++    "Close": "Schließen",
 +    "Text colours per level; empty follows the theme": "Textfarben je Ebene; leer folgt dem Thema",
 +    "Body": "Fließtext",
 +    "Secondary text": "Sekundärtext",
@@ -3439,7 +3574,7 @@ index 61f3721..95712fe 100644
      "Colorblind mode": "Farbenblind-Modus",
      "Accent color": "Akzentfarbe",
      "Background image": "Hintergrundbild",
-@@ -21573,3 +21724,8 @@ function translateStatic() {
+@@ -21573,3 +21732,8 @@ function translateStatic() {
    // they ran under the magpie and the window's buttons (kiwiflysky on X)
    window.fitTop?.();
  }
@@ -3449,7 +3584,7 @@ index 61f3721..95712fe 100644
 +
 +
 diff --git a/internal/gui/assets/index.html b/internal/gui/assets/index.html
-index 297a949..9ef7321 100644
+index 297a949..b2223b5 100644
 --- a/internal/gui/assets/index.html
 +++ b/internal/gui/assets/index.html
 @@ -34,6 +34,7 @@
@@ -3522,7 +3657,7 @@ index 297a949..9ef7321 100644
        <div class="row pref app-only">
          <div class="who"><div class="name" data-t>Click the tray icon to</div></div>
          <div id="traySegs"></div>
-@@ -285,6 +247,67 @@
+@@ -285,6 +247,70 @@
        </div>
      </div>
    </section>
@@ -3573,8 +3708,11 @@ index 297a949..9ef7321 100644
 +          <div class="font-preview">Aa 0123 · 中文</div>
 +        </div>
 +      </div>
++    </div>
++    <div class="row-head set-sub-head"><div class="who"><div class="name" data-t>Font color</div></div></div>
++    <div class="list prefs">
 +      <div class="row pref" id="fontColorRow">
-+        <div class="who"><div class="name" data-t>Font color</div><div class="sub" data-t>Text colours per level; empty follows the theme</div></div>
++        <div class="who"><div class="sub" data-t>Text colours per level; empty follows the theme</div></div>
 +        <div id="fontColorPick" class="font-color-panel"></div>
 +      </div>
 +    </div>
@@ -3590,7 +3728,7 @@ index 297a949..9ef7321 100644
    <section class="set-page" id="setPage-usage" role="tabpanel" aria-labelledby="setTab-usage">
      <div class="list prefs">
        <div class="row pref app-only" id="trayUsageRow">
-@@ -656,3 +679,4 @@
+@@ -656,3 +682,4 @@
  <script src="start.js"></script>
  </body>
  </html>
