@@ -2,8 +2,8 @@
  'use strict';
  const root=document.querySelector('#app');
  const popoverRoot=document.querySelector('#popover-root')||document.body||root;
- // 页签 + 启停/刷新共用顶部一行（#headbar）。内核设置是独立页签。
- const SECTIONS=[['overview','概览'],['providers','订阅'],['settings','内核设置']];
+ // 页签 + 启停/刷新共用顶部一行（#headbar）。内核设置与外观是独立页签。
+ const SECTIONS=[['overview','概览'],['providers','订阅'],['settings','内核设置'],['appearance','外观']];
  const MODES=[['rule','规则','按规则分流：国内直连，其余走代理'],['global','全局','所有流量都走代理'],
   ['direct','直连','全部不走代理，等价于关闭分流']];
  const TUN_STACKS=['mixed','gvisor','system'];
@@ -83,6 +83,8 @@
   SUBSCRIPTION_NO_CACHE:'请先更新已启用订阅，获取可用缓存',
   // 运行中换订阅：热重载失败时插件自己会重启一次内核；两次都失败才回滚启用集。
   SUBSCRIPTION_SWITCH_FAILED:'订阅切换没能生效：已回滚到原启用集；请刷新后重试，反复失败请打开插件日志查看原始错误码',
+  APPEARANCE_WALLPAPER_INVALID:'背景图片不受支持或超出上限：请选 2 MB 以内的 PNG、JPEG、GIF 或 WebP 图片',
+  APPEARANCE_SAVE_FAILED:'外观设置保存失败：请检查插件资料目录的可用空间与写入权限后重试',
   DETAIL_SECTION_INVALID:'详情类别无效',
   PLUGIN_STOPPING:'插件正在停用',
   TUN_UNSUPPORTED:'当前环境不支持 TUN 服务模式',
@@ -615,6 +617,146 @@
    </fieldset>
    <div class="save-bar">${button('save-config','保存内核配置','',locked()||ops.has('save'))}</div></form>`;
  }
+ // ── 外观：背景图片 + 分区域液态玻璃 ──
+ // look 与 view 分开：外观是界面偏好，不是内核状态，所以它不随 clash.view 的轮询回传，
+ // 内核没起来时也能调；轮询只改 data-live 节点，不会重绘这里，滑块拖动期间不会被拉回。
+ // 三个区域与 appearance.mjs 的 GLASS_REGIONS 同源；不透明度 100% + 模糊 0 就是原来的实底，
+ // 所以「关闭」不需要额外开关，也不需要给页面加 on/off 属性。
+ const GLASS_PRESETS={off:'关闭',light:'轻透',balanced:'均衡',clear:'全透',custom:'自定义'};
+ const GLASS_REGIONS=[['main','卡片','概览卡、订阅卡、TUN 框与确认条'],['overlay','浮层','下拉列表与撤销条'],['control','控件','按钮、输入框与下拉']]
+ let look=null,lookErr='',lookSeq=0;
+ async function loadLook(){
+  const seq=++lookSeq;
+  try{const next=await FishDock.call('clash.appearance');if(seq!==lookSeq)return;look=next;lookErr='';applyLook();if(section==='appearance')draw()}
+  catch(e){if(seq!==lookSeq)return;lookErr=reason(e);if(section==='appearance')draw()}
+ }
+ // applyLook 只写 CSS 变量：不重建 DOM，所以拖动滑块时是连续的画面，不是一帧一帧重绘。
+ function applyLook(){
+  const a=look;if(!a)return;
+  const style=document.documentElement.style;
+  style.setProperty('--g-veil',`${a.veil}%`);
+  style.setProperty('--g-wall',a.wallpaper?`url("${a.wallpaper}")`:'none');
+  document.body.toggleAttribute('data-has-wall',!!a.wallpaper);
+  for(const [id] of GLASS_REGIONS){
+   style.setProperty(`--g-${id}-fill`,`${a.glass[id].fill}%`);
+   style.setProperty(`--g-${id}-blur`,`${a.glass[id].blur}px`);
+  }
+ }
+ function paintLookPresets(){
+  const a=look;if(!a)return;
+  for(const b of root.querySelectorAll('[data-action="look-preset"]')){
+   const id=b.dataset.preset,on=a.glass.preset===id;
+   b.setAttribute('aria-pressed',String(on));
+   if(id==='custom')b.disabled=a.glass.preset!=='custom';
+  }
+ }
+ function lookRange(key,region,value,min,max,unit,label){
+  const out=unit==='%'?`${value}%`:`${value}px`;
+  return `<label class="look-slider"><span>${label}</span>
+   <input class="look-range" type="range" min="${min}" max="${max}" step="1" value="${value}"
+    data-look="${key}"${region?` data-region="${region}"`:''} aria-label="${label}">
+   <output class="look-out" data-look-out="${key}">${out}</output></label>`;
+ }
+ function appearanceSection(){
+  const a=look;
+  if(!a)return `<h2>外观</h2>${lookErr
+   ?`<p class="banner bad" role="alert">${esc(lookErr)} ${button('look-retry','重试读取')}</p>`
+   :'<p class="muted" role="status">正在读取外观设置…</p>'}`;
+  const active=a.glass.preset;
+  const presets=Object.entries(GLASS_PRESETS).map(([id,label])=>
+   `<button type="button" data-action="look-preset" data-preset="${id}" aria-pressed="${active===id}"${id==='custom'&&active!=='custom'?' disabled title="拖动下面的滑块即成为自定义"':''}>${label}</button>`).join('');
+  const regions=GLASS_REGIONS.map(([id,label,hint])=>{
+   const r=a.glass[id];
+   return `<div class="look-region" data-region="${id}">
+    <div class="look-region-head"><strong>${label}</strong><span class="muted small">${hint}</span></div>
+    ${lookRange(`${id}-fill`,id,r.fill,0,100,'%','不透明度')}
+    ${lookRange(`${id}-blur`,id,r.blur,0,40,'px','模糊')}
+   </div>`;
+  }).join('');
+  const wall=a.wallpaper?`<img class="look-thumb" src="${a.wallpaper}" alt="当前背景图片">`:'<span class="muted small">未设置</span>';
+  return `<h2>外观</h2>
+  <p class="muted">只影响 Clash 面板自己的画面，不写进内核配置，内核运行中也能改。</p>
+  ${lookErr?`<p class="banner bad" role="alert">${esc(lookErr)}</p>`:''}
+  <div class="look-grid">
+   <section class="look-card"><h3>背景图片</h3>
+    <p class="muted small">铺在整张页面之后；换成玻璃后，卡片之间的空隙才看得见它。上限 2 MB，存在插件资料目录里。</p>
+    <div class="look-wall-row">${wall}
+     <button type="button" data-action="look-wall-pick">${a.wallpaper?'更换图片':'选择图片'}</button>
+     ${a.wallpaper?button('look-wall-remove','移除'):''}
+     <input type="file" id="look-wall-file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+    </div>
+    ${lookRange('veil',null,a.veil,0,95,'%','底图遮挡')}
+    <p class="muted small">遮挡越高，壁纸越淡、文字越清楚；0 是完全不遮。</p>
+   </section>
+   <section class="look-card"><h3>液态玻璃</h3>
+    <p class="muted small">按区域单独调：不透明度 100% 且模糊 0 就是原来的实底。不支持背景模糊的环境会自动回到实底。</p>
+    <div class="segmented look-presets" role="group" aria-label="液态玻璃预设">${presets}</div>
+    ${regions}
+   </section>
+  </div>
+  <div class="card look-demo"><h3>示例卡片（卡片区域）</h3>
+   <p class="muted small">拖动上面「卡片」的不透明度与模糊，这张卡会跟着变；上面的设置卡保持实底，方便看清数字。</p>
+  </div>`;
+ }
+ // 落盘：把当前滑块的值一次性提交。只重画预设按钮，不重画整页，
+ // 否则松手那一刻滑块会被重建、焦点与手感都断掉。
+ async function commitLook(change){
+  if(!look)return false;
+  const seq=++lookSeq;
+  try{
+   const next=await FishDock.call('clash.appearanceSave',change);
+   // 竞态：后发的提交已经发出时，先发的旧响应一律作废，
+   // 否则界面/通知会被旧值盖回去（连点预设、快拖滑块时必现）。
+   if(seq!==lookSeq)return false;
+   look=next;lookErr='';applyLook();paintLookPresets();
+   return true;
+  }catch(e){if(seq===lookSeq){lookErr=reason(e);draw()}return false}
+ }
+ async function setWallpaper(body){
+  const seq=++lookSeq;
+  try{
+   const next=await FishDock.call('clash.appearanceWallpaper',body);
+   if(seq!==lookSeq)return false;
+   look=next;lookErr='';applyLook();draw();
+   say(body.remove?'背景图片已移除':'背景图片已更新','ok');
+   return true;
+  }catch(e){lookErr=reason(e);draw();return false}
+ }
+ function readWallpaperFile(file){
+  if(!file)return false;
+  if(file.size>2*1024*1024){lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw();return false}
+  const reader=new FileReader();
+  reader.onerror=()=>{lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw()};
+  reader.onload=()=>{void setWallpaper({data:String(reader.result||'')})};
+  reader.readAsDataURL(file);
+  return true;
+ }
+ function bindLook(){
+  const file=root.querySelector('#look-wall-file');
+  if(file)file.onchange=()=>{if(readWallpaperFile(file.files?.[0]))file.value=''};
+  for(const input of root.querySelectorAll('[data-look]')){
+   const key=input.dataset.look,region=input.dataset.region;
+   const out=root.querySelector(`[data-look-out="${key}"]`);
+   input.oninput=()=>{
+    const v=Number(input.value),style=document.documentElement.style;
+    if(key==='veil')style.setProperty('--g-veil',`${v}%`);
+    else if(key.endsWith('-fill'))style.setProperty(`--g-${region}-fill`,`${v}%`);
+    else style.setProperty(`--g-${region}-blur`,`${v}px`);
+    if(out)out.textContent=key.endsWith('-blur')?`${v}px`:`${v}%`;
+   };
+   input.onchange=()=>{
+    const change={};
+    for(const sl of root.querySelectorAll('[data-look]')){
+     const k=sl.dataset.look,r=sl.dataset.region,v=Number(sl.value);
+     if(k==='veil')change.veil=v;
+     else{change.glass=change.glass||{};const id=k.replace(/-(fill|blur)$/,'');
+      change.glass[id]=change.glass[id]||{...look.glass[id]};
+      change.glass[id][k.endsWith('-fill')?'fill':'blur']=v;}
+    }
+    void commitLook(change);
+   };
+  }
+ }
  // H8 错误可重试：横幅带「重试」按钮，重放上一次 method+params。
  function feedbackBlock(){
   const parts=[];
@@ -657,14 +799,14 @@
   if(!view){root.innerHTML=`<h1>Clash</h1><p role="status">${anyOp()?'正在读取内核状态…':esc(error||'尚未读取状态')}</p>${button('view','重试')}`;bind();return}
   if(!groups().some(g=>g.name===group))group=autoGroup()?.name??'';
   const nav=SECTIONS.map(([key,label])=>button(`section-${key}`,label,`aria-pressed="${section===key}"`,false)).join('');
-  const body=section==='overview'?overviewSection():section==='providers'?providersSection():settingsSection();
+  const body=section==='overview'?overviewSection():section==='providers'?providersSection():section==='appearance'?appearanceSection():settingsSection();
   const toggle=button(view.running||view.operation==='starting'||updating()?'stop':'start',
    view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',
    ops.has('kernel')||view.operation==='stopping');
   root.innerHTML=`<header><div><h1>Clash</h1><span class="muted" data-live="state">${view.running?'内核运行中':'内核已停止'}${view.version?' · 内核 '+esc(view.version):''}${view.pluginVersion?' · 插件 v'+esc(view.pluginVersion):''}</span></div></header>
    ${feedbackBlock()}
    <div class="toolbar headbar" id="headbar" aria-label="页面分区与内核操作">${nav}${toggle}${button('view','刷新')}</div>
-   <section class="pane${section==='overview'?' plain':''}${section==='settings'?' settings':''}" id="pane" aria-live="off">${body}</section>${snackbarBlock()}`;
+   <section class="pane${section==='overview'?' plain':''}${section==='settings'||section==='appearance'?' settings':''}" id="pane" aria-live="off">${body}</section>${snackbarBlock()}`;
   bind();
   const form=root.querySelector('#config');
   if(form){
@@ -675,6 +817,7 @@
   const sf=root.querySelector('#subscription-form');
   if(sf){sf.oninput=()=>{const d=new FormData(sf);draft={...draft,name:d.get('name'),url:d.get('url')};fieldErrors={}};bindSave(sf,saveSubscription)}
   bindCombos();
+  if(section==='appearance')bindLook();
   if(focus){const next=root.querySelector(`#${focus}`);next?.focus?.();if(caret&&next?.setSelectionRange)next.setSelectionRange(...caret)}
   const paneNow=root.querySelector('#pane');if(paneNow&&keepTop)paneNow.scrollTop=keepTop;
   lastStructSig=structSig();
@@ -886,6 +1029,24 @@
    if(a==='tun-install-yes'){confirmTun='';return run('installTunService')}
    if(a==='tun-uninstall-yes'){confirmTun='';return run('uninstallTunService')}
    if(a==='tun-refresh')return run('tunService');
+   // 外观：预设即刻落盘并整页重画（按钮与滑块都要跟着坐标走）；滑块只在松手时落盘。
+   if(a==='look-preset'){
+    const name=b.dataset.preset;
+    if(name==='custom')return false;
+    const seq=++lookSeq;
+    void (async()=>{
+     try{
+      const next=await FishDock.call('clash.appearanceSave',{glass:{preset:name}});
+      if(seq!==lookSeq)return;
+      look=next;lookErr='';applyLook();draw();
+      // 不弹通知：预设高亮与滑块数值本身就是即时反馈，再说话只会滞后和说谎。
+     }catch(e){lookErr=reason(e);draw()}
+    })();
+    return true;
+   }
+   if(a==='look-wall-pick'){root.querySelector('#look-wall-file')?.click?.();return false}
+   if(a==='look-wall-remove')return void setWallpaper({remove:true});
+   if(a==='look-retry'){void loadLook();return false}
    if(a==='start'||a==='stop')return run(a,{}, {key:'kernel'});
    if(a==='view')return run('view');
    return false;
@@ -917,5 +1078,12 @@
  if(typeof globalThis!=='undefined'&&typeof globalThis.__CLASH_TEST_HOOKS__==='function')
   globalThis.__CLASH_TEST_HOOKS__({moveActive,resolveActive,filterItems,typeAheadNext,nodeDelayView,keyRoute,splitIcon,run});
 
+ // 外观与视图并行读取：它不依赖内核，读失败也不该让页面停在这里。
+ void loadLook();
  run('view');
 })();
+
+
+
+
+

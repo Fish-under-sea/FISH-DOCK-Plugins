@@ -68,6 +68,9 @@ export const errorMessages = Object.freeze({
  TUN_KERNEL_MISMATCH: '已安装的 TUN 服务绑定了另一个内核，请重新安装服务',
  RESPONSE_TOO_LARGE: 'mihomo 响应超过限制',
  GEO_DATA_TOO_LARGE: 'geo 数据超过限制',
+ // ── Clash 外观（背景图片与液态玻璃）：外观只是界面偏好，坏配置一律回落到不透明默认，不拦启动 ──
+ APPEARANCE_WALLPAPER_INVALID: '背景图片不受支持或超出上限：请选 2 MB 以内的 PNG、JPEG、GIF 或 WebP 图片',
+ APPEARANCE_SAVE_FAILED: '外观设置保存失败：请检查插件资料目录的可用空间与写入权限后重试',
  // ── 原生系统码：保留原始语义，便于对日志 ──
  EADDRINUSE: '端口已被本机其他程序占用（EADDRINUSE）：请关闭占用该端口的程序，或改用其他端口后重试',
  EACCES: '没有访问权限（EACCES）：请确认目标目录归当前用户所有，或以管理员权限重新安装插件',

@@ -258,3 +258,146 @@ button,input,select,summary,a,.combo-trigger,.lb-option{touch-action:manipulatio
 
 /* 读屏只播读数区；结构区不重复播报 */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* ── 外观：背景图片 + 分区域液态玻璃 ──
+   坐标只有两组数字：fill（不透明度 %，100 = 实底）与 blur（模糊 px，0 = 不模糊）。
+   「关闭」就是 fill=100/blur=0，所以这里没有 on/off 属性，也不需要为开关写第二套规则；
+   预设、滑块与降级全部共用同一组变量，JS 只负责写这几个值。
+   区域划分与 plugins/clash/appearance.mjs 的 GLASS_REGIONS 一致：
+   main 卡片 / overlay 浮层 / control 按钮与输入框。
+   只有卡片和按钮胶囊有底：顶栏、页签条、区块分隔都不涂底，壁纸直接透出来。 */
+:root{
+ --g-main-fill:100%;--g-main-blur:0px;
+ --g-overlay-fill:100%;--g-overlay-blur:0px;
+ --g-control-fill:100%;--g-control-blur:0px;
+ --g-veil:84%;--g-wall:none;
+ /* 薄霜：任何玻璃面都带的一层极淡高光。fill=0 时只剩模糊与这层霜，
+    面板仍看得出是玻璃，而不是整块消失。随主题前景色，深浅色都成立。 */
+ /* Liquid Glass 的材质参数（高光边/柔光/内阴影）。固定用白色系：
+    深色主题下是亮边，浅色主题下是更柔的亮边，都成立。 */
+ --lg-rim-line:rgba(255,255,255,.72);
+ --lg-rim-line-2:rgba(255,255,255,.12);
+ --lg-rim-soft:rgba(255,255,255,.20);
+ --lg-rim-shade:rgba(0,0,0,.26);
+ --lg-sheen-a:rgba(255,255,255,.20);
+ --lg-sheen-b:rgba(160,205,255,.12);
+}
+#app,#pane{background:transparent}
+/* 壁纸铺在 body 自身（与 Magpie 的 lookCSS 同一手法）：不新建堆叠层，
+   弹层、卡片、内滚区都不受影响。遮挡是主题底色的一层，所以文字对比不变。 */
+body[data-has-wall]{
+ background-image:
+  linear-gradient(color-mix(in srgb,var(--dock-bg) var(--g-veil),transparent),color-mix(in srgb,var(--dock-bg) var(--g-veil),transparent)),
+  var(--g-wall);
+ background-size:cover;background-position:center;background-repeat:no-repeat;background-attachment:fixed;
+}
+/* 外观页自身的版式：两块卡并排，窄了落成单列。 */
+.look-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;align-items:stretch;align-content:start;margin:12px 0}
+.look-card{background:var(--layer-1);border:1px solid var(--line-hair);border-radius:14px;box-shadow:inset 0 1px 0 var(--hi);padding:16px;min-width:0;display:flex;flex-direction:column}
+/* 左卡（背景图片）通常比右卡矮：把最后那句说明压到卡底，两卡等高时不至于空一截。 */
+.look-card>p.muted:last-child{margin-top:auto}
+.look-card h3{margin:0 0 8px;font-size:13px}
+/* 外观页自己的设置卡保持实底（.look-card 不在玻璃组里），下面这张示例卡走 .card 的玻璃，用来对照效果。 */
+.look-demo{margin-top:12px}
+.look-demo h3{margin:0 0 8px;font-size:13px}
+.look-wall-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
+.look-thumb{width:96px;height:56px;object-fit:cover;border-radius:14px;border:1px solid var(--line-hair);background:var(--layer-2)}
+.look-presets{margin:8px 0 4px}
+.look-region{margin:12px 0 0;padding-top:8px;border-top:1px solid var(--line-hair)}
+.look-region-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.look-slider{display:flex;align-items:center;gap:8px;min-height:28px;margin:4px 0;font-size:12.5px}
+.look-slider>span{flex:0 0 5em;color:var(--dock-muted);font-size:12px}
+.look-slider>input[type=range]{
+ flex:1 1 auto;min-width:80px;width:auto;min-height:0;height:18px;padding:0;margin:0;
+ border:0;background:transparent;accent-color:var(--dock-accent);cursor:pointer;
+}
+.look-slider>input[type=range]:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px;border-radius:14px}
+.look-out{flex:0 0 3.5em;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--dock-muted)}
+
+/* 玻璃本体：Apple Liquid Glass 观感（折射/高光边/内釉），不引依赖。
+   底色仍由区域变量控制（fill/blur），另加三样东西让它像玻璃而不是灰色方块：
+   1) backdrop 里加 saturate/brightness，透过去的东西更像被玻璃“折射”过；
+   2) ::before 两层柔光（左上冷光、右下壳光），模拟入射光在曲面上的散射；
+   3) ::after 用渐变描出 1px 的高光边（mask 挖空中间），这是最像 iOS 的一层。
+   fill=0 时底色全透，但高光边、柔光与模糊仍在，所以不会是“什么都没有”。 */
+@supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) and (background: color-mix(in srgb, red, transparent)){
+ .card,.subscription,.tun-box,.empty-card,.confirm-bar,.look-card,
+ .listbox,.snackbar{
+  position:relative;
+  background:color-mix(in srgb,var(--layer-1) var(--g-main-fill),transparent);
+  -webkit-backdrop-filter:blur(var(--g-main-blur)) saturate(200%) brightness(1.14);
+  backdrop-filter:blur(var(--g-main-blur)) saturate(200%) brightness(1.14);
+  box-shadow:
+   inset 0 1px 0 var(--lg-rim-line),
+   inset 0 -1px 0 var(--lg-rim-shade),
+   0 10px 30px rgba(0,0,0,.22);
+ }
+ .listbox,.snackbar{
+  background:color-mix(in srgb,var(--layer-1) var(--g-overlay-fill),transparent);
+  -webkit-backdrop-filter:blur(var(--g-overlay-blur)) saturate(200%) brightness(1.14);
+  backdrop-filter:blur(var(--g-overlay-blur)) saturate(200%) brightness(1.14);
+ }
+ .card::before,.subscription::before,.tun-box::before,.empty-card::before,
+ .confirm-bar::before,.look-card::before,.listbox::before,.snackbar::before{
+  content:"";position:absolute;inset:0;border-radius:14px;pointer-events:none;
+  background:
+   radial-gradient(130% 85% at 18% -10%, var(--lg-sheen-a), transparent 62%),
+   radial-gradient(90% 70% at 105% 110%, var(--lg-sheen-b), transparent 68%);
+ }
+ .card::after,.subscription::after,.tun-box::after,.empty-card::after,
+ .confirm-bar::after,.look-card::after,.listbox::after,.snackbar::after{
+  content:"";position:absolute;inset:0;border-radius:14px;padding:1px;pointer-events:none;
+  background:linear-gradient(145deg, var(--lg-rim-line), transparent 38%, transparent 62%, var(--lg-rim-line-2));
+  -webkit-mask:linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);
+  -webkit-mask-composite:xor;mask:linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);mask-composite:exclude;
+  opacity:.75;
+ }
+ /* 控件：按钮、输入框、下拉，以及分组胶囊 .segmented 的容器本身。
+    只给“折射+高光边”，不加柔光（小方块上柔光会脏）。 */
+ .segmented,button:not(.segmented button),input:not([type=checkbox]):not([type=range]),select,textarea,.combo-trigger{
+  position:relative;
+  background:color-mix(in srgb,var(--layer-1) var(--g-control-fill),transparent);
+  -webkit-backdrop-filter:blur(var(--g-control-blur)) saturate(190%) brightness(1.12);
+  backdrop-filter:blur(var(--g-control-blur)) saturate(190%) brightness(1.12);
+  box-shadow:inset 0 1px 0 var(--lg-rim-line), inset 0 -1px 0 var(--lg-rim-shade);
+ }
+ /* 选中/激活态也是玻璃的一部分：用半透的强调色，而不是一整块不透明色，
+    否则它会把下面的壁纸整块盖住，看着像“贴了个色块”。 */
+ .lb-option[aria-selected=true]{background:color-mix(in srgb,var(--dock-accent) 22%,transparent);box-shadow:inset 2px 0 0 var(--dock-accent)}
+ .lb-option[data-active=true]{background:color-mix(in srgb,var(--dock-accent) 11%,transparent)}
+ .headbar button[aria-pressed=true],.segmented button[aria-pressed=true]{background:color-mix(in srgb,var(--dock-accent) 18%,transparent);border-color:color-mix(in srgb,var(--dock-accent) 34%,transparent)}
+ .tag.on{background:color-mix(in srgb,var(--c-ok) 20%,transparent)}
+ /* 玻璃面上焦点圈照旧可见：半透明底最容易把它吃掉。 */
+ .card :focus-visible,.subscription :focus-visible,.tun-box :focus-visible,
+ header :focus-visible,.listbox :focus-visible{
+  outline:2px solid var(--dock-accent);outline-offset:2px;
+ }
+}
+/* 减少透明 / 高对比度：退回实底并关掉模糊，不为「玻璃」牺牲可读性。
+   放在玻璃规则之后，确保覆盖成立。 */
+@media(prefers-reduced-transparency:reduce),(forced-colors:active){
+ .card,.subscription,.tun-box,.empty-card,.confirm-bar,.look-card{background:var(--layer-1);-webkit-backdrop-filter:none;backdrop-filter:none}
+ .card::before,.card::after,.subscription::before,.subscription::after,.tun-box::before,.tun-box::after,.empty-card::before,.empty-card::after,.confirm-bar::before,.confirm-bar::after,.look-card::before,.look-card::after,.listbox::before,.listbox::after,.snackbar::before,.snackbar::after{content:none}
+ .segmented{background:var(--layer-1);-webkit-backdrop-filter:none;backdrop-filter:none}
+ .listbox,.snackbar{background:var(--layer-1);-webkit-backdrop-filter:none;backdrop-filter:none}
+ button:not(.segmented button),input:not([type=checkbox]):not([type=range]),select,textarea,.combo-trigger{background:var(--layer-1);-webkit-backdrop-filter:none;backdrop-filter:none}
+ body[data-has-wall]{background-image:none}
+}
+@media(forced-colors:active){
+ .look-card{border:1px solid CanvasText;box-shadow:none;background:Canvas}
+ .look-thumb{border:1px solid CanvasText}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

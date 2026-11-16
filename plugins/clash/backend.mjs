@@ -4,6 +4,7 @@ import {createPlugin} from './sdk.mjs';
 import {createClash} from './service.mjs';
 import {createRuntime} from './runtime.mjs';
 import {createTun} from './tun.mjs';
+import {readAppearance,savePatch,saveWallpaper} from './appearance-store.mjs';
 let service;
 // 页面版本跟随包内清单：打包时 build-release 把 plugin.json 的 version 写成发行版本，
 // 页面读到的就是同一个号，不再单独维护一个「页面版本」。
@@ -67,6 +68,11 @@ createPlugin({id:'fish.clash',activate:async context=>{
 },deactivate:async()=>{if(service)await service.shutdown();service=null},commands:{
  ...Object.fromEntries(['view','save','tunSwitch','subscriptionSave','subscriptionToggle','subscriptionRemove','select','mode','reload','proxy','details','nodeTest',
   'tunService','installTunService','uninstallTunService','ipInfo','siteTest'].map(name=>[`clash.${name}`,params=>service[name](params)])),
+ // 外观（背景图片与液态玻璃）不进 service 的视图模型：它是界面偏好，
+ // 与内核状态无关，所以不随 clash.view 轮询回传，也不会因为内核没起而不可用。
+ 'clash.appearance':()=>readAppearance(context.storage),
+ 'clash.appearanceSave':params=>savePatch(context.storage,params),
+ 'clash.appearanceWallpaper':params=>saveWallpaper(context.storage,params),
  'clash.start':()=>{void service.start().catch(()=>{});return service.view({controller:false})},
  'clash.stop':()=>{void service.stop().catch(()=>{});return service.view({controller:false})}
 },onError:()=>{void service?.shutdown().catch(()=>{})}});
