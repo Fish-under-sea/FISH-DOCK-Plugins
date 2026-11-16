@@ -1,0 +1,38 @@
+diff --git a/internal/gui/assets/fish-glass.css b/internal/gui/assets/fish-glass.css
+index fb0672c..680610a 100644
+--- a/internal/gui/assets/fish-glass.css
++++ b/internal/gui/assets/fish-glass.css
+@@ -50,7 +50,6 @@
+      fill=0 时底色全透，但柔光、高光边与模糊还在，所以不会是“什么都没有”。 */
+   /* the window's edge */
+   :root[data-fish-glass] body :is(.sidebar, header.top) {
+-    position: relative;
+     background: color-mix(in srgb, var(--card) var(--fish-glass-sidebar-fill), transparent);
+     -webkit-backdrop-filter: blur(var(--fish-glass-sidebar-blur)) saturate(200%) brightness(1.14);
+     backdrop-filter: blur(var(--fish-glass-sidebar-blur)) saturate(200%) brightness(1.14);
+@@ -67,11 +66,11 @@
+   /* buttons, fields and dropdowns: their own ground, thinnable if asked.
+      The segmented control (.segs .opt) is left out: its selected state reads by
+      its fill, and a see-through segment blurs that reading. */
++  /* 控件只上底色与高光边，不做定位也不做模糊：下拉触发器一旦变成包含块
++     （position 或 backdrop-filter 都会），挂在它下面的 fixed 弹出层就会跟着
++     小方块定位 —— 用户看到的是「所有下拉框位置都被改了」。 */
+   :root[data-fish-glass] body :is(.proto.pick, .sess-pick, .set-field, .segs, input:not([type=checkbox]):not([type=range]), textarea, select) {
+-    position: relative;
+     background: color-mix(in srgb, var(--card) var(--fish-glass-control-fill), transparent);
+-    -webkit-backdrop-filter: blur(var(--fish-glass-control-blur)) saturate(190%) brightness(1.12);
+-    backdrop-filter: blur(var(--fish-glass-control-blur)) saturate(190%) brightness(1.12);
+     box-shadow: inset 0 1px 0 var(--lg-rim-line), inset 0 -1px 0 var(--lg-rim-shade);
+   }
+   /* 选中态随玻璃半透：不是实色块，而是强调色的半透，能透出后面的壁纸 */
+@@ -79,10 +78,7 @@
+   :root[data-fish-glass] body :is(.nav button.on, .row.sel, .sub.sel) { background: color-mix(in srgb, var(--sel) 55%, transparent); }
+   /* menus, sheets and confirmations */
+   :root[data-fish-glass] body :is(.pop, .modal .dialog, .action-confirm) {
+-    position: relative;
+     background: color-mix(in srgb, var(--card) var(--fish-glass-overlay-fill), transparent);
+-    -webkit-backdrop-filter: blur(var(--fish-glass-overlay-blur)) saturate(200%) brightness(1.14);
+-    backdrop-filter: blur(var(--fish-glass-overlay-blur)) saturate(200%) brightness(1.14);
+     box-shadow: inset 0 1px 0 var(--lg-rim-line), inset 0 -1px 0 var(--lg-rim-shade), 0 18px 50px rgba(0, 0, 0, .28);
+   }
+   /* 柔光：左上冷光 + 右下壳光（只给大面，小控件上会显脏） */
