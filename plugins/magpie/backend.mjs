@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {defaultSourceVault,vaultPaths,importRecord} from './knowledge-vault.mjs';
+import {readKnowledgeHint,dismissKnowledgeHint} from './knowledge-hint.mjs';
 import {detectObsidian,openObsidianVault,registerObsidianVault} from './obsidian.mjs';
 import {fileURLToPath} from 'node:url';
 import {createPlugin} from './sdk.mjs';
@@ -42,8 +43,9 @@ const plugin=createPlugin({id:'fish.magpie',activate:async context=>{
  'knowledge.view':async()=>{
   const data=path.join(pluginContext.dataDirectory,'credentials','magpie-runtime','data'),{root}=vaultPaths(data);
   const initialized=await exists(path.join(root,importRecord));
-  return {root,initialized,obsidian:await detectObsidian(),...(initialized?{imported:JSON.parse(await fs.readFile(path.join(root,importRecord),'utf8')).imported}:{})};
+  return {root,initialized,...await readKnowledgeHint(pluginContext.storage),obsidian:await detectObsidian(),...(initialized?{imported:JSON.parse(await fs.readFile(path.join(root,importRecord),'utf8')).imported}:{})};
  },
+ 'knowledge.dismiss':()=>dismissKnowledgeHint(pluginContext.storage),
  'knowledge.connect':async()=>{
   const {root}=vaultPaths(path.join(pluginContext.dataDirectory,'credentials','magpie-runtime','data'));
   if(!await exists(path.join(root,importRecord)))throw Error('请先启动 Magpie，完成知识库准备');

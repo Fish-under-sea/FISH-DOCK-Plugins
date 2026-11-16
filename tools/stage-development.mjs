@@ -10,7 +10,7 @@ const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 export const definitions=[
  {key:'feishu',name:'飞书通知',directory:'.fishplugin-feishu',capabilities:['storage','events','network'],autostart:false},
  {key:'clash',name:'Clash 代理',directory:'.fishplugin-clash',capabilities:['storage','network','services','system-proxy'],autostart:true},
- {key:'magpie',name:'Magpie 网关',directory:'.fishplugin-magpie',capabilities:['storage','network','services'],autostart:true},
+ {key:'magpie',name:'Magpie 网关',directory:'.fishplugin-magpie',capabilities:['storage','network','services','dialogs'],autostart:true},
 ];
 // 身份表：作者是数组，不再有 maintainer。
 // build-release 与 catalog/stable.json 都从这里取，避免两处各写一份。

@@ -1,4 +1,7 @@
 import http from 'node:http';
+import os from 'node:os';
+import {spawn} from 'node:child_process';
+import {REVEAL_ROUTES,targetOf,localTarget,sameOrigin,openInExplorer,pickedDir} from './reveal.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {managedUpdates,managedUpdateScript} from './managed-update.mjs';
 import {serviceError} from '../../shared/errors.mjs';
@@ -34,9 +37,48 @@ export function pluginPagePolicy(requestPath,policy){
  return policy.replace(/(^|;)(\s*frame-ancestors\s+)'self'(\s*)(?=;|$)/gi,
   "$1$2'self' http://tauri.localhost$3");
 }
-// 仅适配插件持有的回环服务，模型流不缓存、不重试。
-export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120,240]}){
- const sockets=new Set();
+// Legacy hosts without dialogs can still use a cancellable STA picker.
+export function defaultFallbackChoice({title='选择备份文件夹',timeoutMs=300000,signal}={}){
+ return new Promise((resolve,reject)=>{
+  if(signal?.aborted){reject(signal.reason);return}
+  const quoted="'"+title.replaceAll("'","''")+"'";
+  const script=`Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = ${quoted}; try { if ($d.ShowDialog() -eq 'OK') { [Console]::Out.Write($d.SelectedPath) } } finally { $d.Dispose() }`;
+  let child,timer,done=false,out='';
+  const finish=(error,value)=>{if(done)return;done=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);error?reject(error):resolve(value)};
+  const abort=()=>{try{child?.kill()}catch{}finish(signal.reason)};
+  try{child=spawn('powershell.exe',['-NoProfile','-STA','-Command',script],{windowsHide:true,stdio:['ignore','pipe','ignore']})}catch(error){finish(error);return}
+  signal?.addEventListener('abort',abort,{once:true});
+  timer=setTimeout(()=>{try{child.kill()}catch{}finish(Error('Folder picker timed out'))},timeoutMs);
+  child.stdout.on('data',chunk=>{out+=chunk;if(Buffer.byteLength(out)>32768){child.kill();finish(Error('Folder picker output too large'))}});
+  child.once('error',error=>finish(error));
+  child.once('close',code=>code===0?finish(null,out.trim()||null):finish(Error('Folder picker failed')));
+ });
+}
+function cancellable(work,signal){
+ signal.throwIfAborted();
+ return new Promise((resolve,reject)=>{
+  const abort=()=>reject(signal.reason);
+  signal.addEventListener('abort',abort,{once:true});
+  Promise.resolve().then(()=>{signal.throwIfAborted();return work()}).then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));
+ });
+}
+function requestBody(req,limit,signal){
+ return new Promise((resolve,reject)=>{
+  const chunks=[];let size=0;
+  const clean=()=>{req.off('data',data);req.off('end',end);req.off('error',fail);signal.removeEventListener('abort',abort)};
+  const fail=error=>{clean();reject(error)};
+  const abort=()=>fail(signal.reason);
+  const data=chunk=>{size+=chunk.length;if(size>limit){fail(Object.assign(Error('Request too large'),{status:413}));req.resume()}else chunks.push(chunk)};
+  const end=()=>{clean();resolve(Buffer.concat(chunks))};
+  req.on('data',data);req.once('end',end);req.once('error',fail);signal.addEventListener('abort',abort,{once:true});
+ });
+}
+// Only the handoff routes are buffered. Model streams remain untouched.
+export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120,240],signal,
+ openFolder=(target,options)=>openInExplorer(target,spawn,process.platform,options),chooseFolder=null,
+ fallbackChoice=defaultFallbackChoice,home=os.homedir()}){
+ const sockets=new Set(),lifetime=new AbortController();
+ const revealEnabled=String(process.env.FISH_MAGPIE_REVEAL??'')!=='0';
  // Dock 把管理页装在跨站 iframe 里（宿主是 tauri://），浏览器不会把 magpie 那条
  // SameSite=None/Partitioned 的鉴权 cookie 带回来：HTML 能出来，boot.js / app.css
  // 全 401，用户看到的就是「界面全错、内容空白、字体回退」。这里由代理在转发时
@@ -56,6 +98,77 @@ export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120
    res.end(JSON.stringify({managed:true,state:'managed',releases:[],message:'版本由 FISH Dock 插件管理'}));return;
   }
   const headers={...req.headers};let body;
+  const revealPath=revealEnabled&&(REVEAL_ROUTES.has(pathname)||pathname==='/api/library/browser/setup');
+  const choosePath=revealEnabled&&pathname==='/api/autobackup/choose';
+  if(revealPath||choosePath){
+   if(req.method!=='POST'){req.resume();res.writeHead(405,{allow:'POST'});res.end();return}
+   if(!req.url.startsWith('/')||req.url.startsWith('//')||!sameOrigin(req,port)){req.resume();res.writeHead(403);res.end('forbidden');return}
+   const controller=new AbortController(),cancel=()=>controller.abort();
+   const active=AbortSignal.any([controller.signal,lifetime.signal,...(signal?[signal]:[])]);
+   req.once('aborted',cancel);res.once('close',cancel);
+   const send=reply=>{if(!reply||active.aborted)return;res.writeHead(reply.status,reply.headers);res.end(reply.body)};
+   // Responses over 64 KiB bypass interpretation and stream verbatim; never truncate them.
+   const buffered=(url,method,payload)=>new Promise((resolve,reject)=>{
+    active.throwIfAborted();
+    const h={...headers,'accept-encoding':'identity'};
+    if(authCookie)h.cookie=withAuth(h.cookie);
+    delete h['content-length'];delete h['transfer-encoding'];
+    if(payload!==undefined)h['content-length']=String(payload.length);else delete h['content-type'];
+    const upstream=http.request({hostname:'127.0.0.1',port:upstreamPort,path:url,method,headers:h,signal:active},reply=>{
+     const responseHeaders={...reply.headers};
+     if(responseHeaders['set-cookie'])responseHeaders['set-cookie']=responseHeaders['set-cookie'].map(cookie);
+     const chunks=[];let size=0,streaming=false;
+     reply.on('data',chunk=>{
+      size+=chunk.length;
+      if(streaming)return;
+      if(size>64*1024){streaming=true;res.writeHead(reply.statusCode,responseHeaders);for(const part of chunks)res.write(part);res.write(chunk);reply.pipe(res);resolve(null)}
+      else chunks.push(chunk);
+     });
+     reply.once('end',()=>{if(!streaming)resolve({status:reply.statusCode,headers:responseHeaders,body:Buffer.concat(chunks)})});
+     reply.once('error',error=>{if(streaming)res.destroy();reject(error)});
+    });
+    upstream.once('error',reject);upstream.end(payload);
+   });
+   try{
+    active.throwIfAborted();
+    body=await requestBody(req,64*1024,active);
+    active.throwIfAborted();
+    if(choosePath){
+     let dir;
+     // Do not mask SDK errors (busy/permission failures) with a second dialog.
+     if(typeof chooseFolder==='function')dir=pickedDir(await cancellable(()=>chooseFolder({title:'选择备份文件夹',parent:'main'}),active));
+     else dir=await cancellable(()=>fallbackChoice({signal:active}),active);
+     active.throwIfAborted();
+     if(dir!==null){dir=localTarget(dir,home);if(!dir)throw Error('Invalid chosen folder')}
+     if(dir===null)send(await buffered('/api/autobackup','GET'));
+     else {headers['content-type']='application/json';send(await buffered('/api/autobackup/set','POST',Buffer.from(JSON.stringify({dir}))))}
+    }else{
+     const reply=await buffered(req.url,'POST',body);
+     if(!reply)return;
+     active.throwIfAborted();
+     // A server refusing an unvalidated page path does not have this exact error.
+     // A compressed response cannot be interpreted even if upstream ignored identity.
+     if(!reply.headers['content-encoding']||reply.headers['content-encoding']==='identity'){
+      let data;try{data=JSON.parse(reply.body.toString('utf8'))}catch{}
+      const setup=pathname==='/api/library/browser/setup';
+      const target=setup&&reply.status===200&&typeof data?.revealError==='string'&&data.revealError
+       ?localTarget(data.dir,home):!setup&&reply.status===400?targetOf(data?.error,home):null;
+      if(target){
+       try{
+        active.throwIfAborted();await cancellable(()=>openFolder(target,{signal:active}),active);active.throwIfAborted();
+        if(!setup){res.writeHead(204);res.end();return}
+        delete data.revealError;reply.body=Buffer.from(JSON.stringify(data));
+        for(const name of ['transfer-encoding','content-encoding','etag','content-md5'])delete reply.headers[name];
+        reply.headers['content-length']=String(reply.body.length);
+       }catch(error){if(active.aborted)throw error}
+      }
+     }
+     send(reply);
+    }
+   }catch(error){if(!active.aborted&&!res.headersSent){res.writeHead(error.status||502);res.end('Native folder handoff failed')}}
+   finally{req.off('aborted',cancel)}
+   return;
+  }
   if(authCookie)headers.cookie=withAuth(headers.cookie);
   if(pathname==='/api/settings'&&req.method==='POST'){
    try{
@@ -92,6 +205,6 @@ export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120
   upstream.on('response',()=>socket.destroy());upstream.on('error',()=>socket.destroy());upstream.end();
  });
  await bind(server,port,retries,delays);
- return {async stop(){for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve))}};
+ return {async stop(){lifetime.abort();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve))}};
 }
 export async function freePort(){const server=http.createServer();await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});const port=server.address().port;await new Promise(resolve=>server.close(resolve));return port}

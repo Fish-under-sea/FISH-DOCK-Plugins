@@ -1,6 +1,6 @@
 # 插件开发者指南
 
-当前协议为 v1。当前官方插件：飞书 **2.2.0**、Clash **2.3.6**、Magpie **2.3.7**（exe `v0.1.4262+fish.34`）；作者用数组、不再有维护者字段。OFM 已退役（2026-10-25 暂停维护，2.3.0 起移出官方目录与活动构建链），历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)，不再随目录发行。两个内置件按 npm 包登记、不单独发行：`@fish-under-sea/magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `@fish-under-sea/magpie-purge`（破甲），首装与后续更新都交给 magpie 自己的更新循环，Dock 不随包分发它们的目录。两者的源码分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1。当前官方插件：飞书 **2.2.0**、Clash **2.3.6**、Magpie **2.3.8**（exe `v0.1.4262+fish.35`，要求宿主 ≥2.3.4；液态玻璃本版不可用、默认关闭）；作者用数组、不再有维护者字段。OFM 已退役（2026-10-25 暂停维护，2.3.0 起移出官方目录与活动构建链），历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)，不再随目录发行。两个内置件按 npm 包登记、不单独发行：`@fish-under-sea/magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `@fish-under-sea/magpie-purge`（破甲），首装与后续更新都交给 magpie 自己的更新循环，Dock 不随包分发它们的目录。两者的源码分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
@@ -102,6 +102,12 @@ const view=await window.FishDock.call('weather.view');
 Magpie 的 `gateway.open` 是宿主提供的特定管理页入口，地址只接收当前服务的回环端口。普通插件不借用该入口。网关页面按需加载，其原生账号与用量仍由各自服务处理。
 
 **视觉规范见 [设计语言](design-language.md)**：主题只有 `data-dock-theme` 与 `--dock-*` 两个来源（不许用 `prefers-color-scheme`）、两层 token、尺寸刻度表、控件八态、列表与弹层、emoji 必须包 16px 盒子、文案与数据口径、无障碍底线，以及一张"真踩过的反面清单"。新写页面先过那张尺寸刻度表再谈配色——2.1.3/2.1.4 里被投诉的"丑"多数出在孤值与 emoji 撑高，不是配色能力。
+
+## Magpie 的 DuMate 供应商预装
+
+`plugins/magpie/preinstall.mjs` 的默认基线包含 **百度搭子 DuMate**：包名 `magpie-dumate`、provider id `dumate`，显式安装串为 `github:R227BOUT/magpie-dumate`。该来源来自本机已登记的 spec；公开仓库 [R227BOUT/magpie-dumate](https://github.com/R227BOUT/magpie-dumate) 的 `package.json`（核实时为 0.3.0）、源码和 MIT 许可证均已核对，源码归档可公开下载，不推测 npm scope，也不把截图标识当作提交号。
+
+这里的“内置”仅指默认登记：Dock 不分发个人已安装目录或登录凭据，实际安装与更新由 Magpie 自己的更新循环按 GitHub spec 获取。新装登记，升级按基线差集补登记；已有同包 npm 条目或同仓库 GitHub spec 不重复登记，`off`、`options`、钉住的 npm 版本与 GitHub `#ref` 原样保留。基线对齐后用户移除的条目不会因重启加回；`FISH_DOCK_MAGPIE_PREINSTALL=0` 可关闭预装登记。登记成功不代表安装或登录完成，用户需自行授权，真实供应商调用另行确认。
 
 ## Magpie 的页面插件
 

@@ -13,14 +13,15 @@ async function sandbox(){
  return {root,data,list:path.join(data,'plugins.json'),marker:path.join(data,markerName)};
 }
 
-test('预装基线是 12 家：11 个社区包 + Meoo（不在拼名规则里，带显式 git 规格）',()=>{
- assert.equal(PREINSTALLED.length,12);
+test('预装基线是 13 家：11 个社区包 + Meoo + DuMate（显式 git 规格）',()=>{
+ assert.equal(PREINSTALLED.length,13);
  assert.deepEqual(PREINSTALLED.map(item=>item.package),[
   '@magpie-community/opencode-raccoon-auth',
   '@magpie-community/opencode-autoclaw-auth',
   '@magpie-community/opencode-cline-auth',
   '@magpie-community/opencode-codearts-auth',
   '@magpie-community/opencode-loomy-auth',
+  'magpie-dumate',
   '@fish-under-sea/opencode-meoo-auth',
   '@magpie-community/opencode-minimax-auth',
   '@magpie-community/opencode-qoder-auth',
@@ -30,7 +31,7 @@ test('预装基线是 12 家：11 个社区包 + Meoo（不在拼名规则里，
   '@magpie-community/opencode-zcode-auth',
  ]);
  for(const item of PREINSTALLED){
-  if(item.package==='@fish-under-sea/opencode-meoo-auth')continue; // 显式规格那条不按 <package>@latest 拼
+  if(item.stem==='dumate')continue; // DuMate 以核实的 GitHub spec 登记，不猜 npm scope
   assert.equal(item.spec,`${item.package}@latest`,'按 latest 登记，交给上游的更新循环');
  }
  // 页面插件不在这里：它们由 page-seed 以稳定目录登记，走了会变成两条同包条目。
@@ -92,6 +93,81 @@ test('建站 Agent（meoo-agent）不再内置，但已装用户不受影响',()
  assert.deepEqual(kept[0].options,{collapsed:true});
 });
 
+test('DuMate 新装以核实的 GitHub spec 登记，不写个人目录或配置',async()=>{
+ const dumate=PREINSTALLED.find(item=>item.stem==='dumate');
+ assert.deepEqual(dumate,{stem:'dumate',name:'百度搭子 DuMate',package:'magpie-dumate',spec:'github:R227BOUT/magpie-dumate'});
+ const {data,list}=await sandbox();
+ const result=await seedPreinstalled({data});
+ assert.equal(result.added.includes('magpie-dumate'),true);
+ const entries=JSON.parse(await utf8(list)).plugins.filter(entry=>entry.spec===dumate.spec);
+ assert.deepEqual(entries,[{spec:dumate.spec}],'只登记 spec，安装与登录交给 Magpie');
+ assert.equal(pendingStems({installed:[]}).includes('dumate'),true);
+ assert.equal(pendingStems({installed:['dumate']}).includes('dumate'),false);
+});
+
+test('DuMate 升级仅补基线差集，不恢复用户移除的旧包，并保持幂等',async()=>{
+ const {data,list,marker}=await sandbox();
+ const previous=PREINSTALLED.filter(item=>item.stem!=='dumate');
+ await seedPreinstalled({data,packages:previous});
+ const before=JSON.parse(await utf8(list));
+ before.plugins=before.plugins.filter(entry=>packageOf(entry.spec)!=='@magpie-community/opencode-qoder-auth');
+ before.plugins[0]={...before.plugins[0],off:true,options:{collapsed:true}};
+ await fs.writeFile(list,JSON.stringify(before,null,2)+'\n');
+ const result=await seedPreinstalled({data});
+ assert.deepEqual(result.added,['magpie-dumate']);
+ assert.equal(result.registered.includes('magpie-dumate'),true);
+ assert.equal(result.registered.includes('@magpie-community/opencode-qoder-auth'),false,'旧基线里移除的项不补');
+ const after=JSON.parse(await utf8(list));
+ assert.deepEqual(after.plugins.slice(0,-1),before.plugins,'原有条目配置不动');
+ assert.deepEqual(after.plugins.at(-1),{spec:'github:R227BOUT/magpie-dumate'});
+ assert.deepEqual(JSON.parse(await utf8(marker)).baseline,PREINSTALLED.map(item=>item.spec));
+ const state=await readPreinstallState({data});
+ assert.deepEqual(state.added,['magpie-dumate']);
+ assert.deepEqual(state.registered,result.registered);
+ const text=await utf8(list);
+ const again=await seedPreinstalled({data});
+ assert.equal(again.skipped,true);
+ assert.deepEqual(again.added,[]);
+ assert.equal(await utf8(list),text);
+});
+
+test('已装 DuMate 的 GitHub/npm 规格、钉版本、停用状态和 options 原样保留',async(t)=>{
+ for(const spec of ['github:R227BOUT/magpie-dumate','github:R227BOUT/magpie-dumate#1d950b3','github:R227BOUT/magpie-dumate#v0.3.0','magpie-dumate@0.3.0']){
+  for(const off of [true,false])await t.test(`${spec}, off=${off}`,async()=>{
+   const {data,list,marker}=await sandbox();
+   const previous=PREINSTALLED.filter(item=>item.stem!=='dumate');
+   const existing={spec,off,options:{collapsed:true,custom:{keep:'user-choice'}}};
+   const raw=JSON.stringify({plugins:[...previous.map(item=>({spec:item.spec})),existing]},null,2)+'\n';
+   await fs.writeFile(list,raw);
+   await fs.writeFile(marker,JSON.stringify({schema:2,baseline:previous.map(item=>item.spec)})+'\n');
+   const result=await seedPreinstalled({data});
+   assert.deepEqual(result.added,[],'同包不重复登记');
+   assert.equal(result.registered.includes('magpie-dumate'),true,'钉住的版本也算已登记');
+   assert.equal(await utf8(list),raw,'已有清单逐字保留，不碰配置或登录');
+   assert.deepEqual(JSON.parse(await utf8(list)).plugins.at(-1),existing);
+   assert.equal((await readPreinstallState({data})).registered.includes('magpie-dumate'),true);
+  });
+ }
+ const next=addPreinstalled({raw:JSON.stringify({plugins:[{spec:'github:other/magpie-dumate#v0.3.0'},{spec:'github:R227BOUT/magpie-dumate-other'}]})});
+ assert.equal(next.added.includes('magpie-dumate'),true,'不同仓库不能误算为已装');
+});
+
+test('DuMate 基线对齐后用户移除，不因重启重新登记',async()=>{
+ const {data,list,marker}=await sandbox();
+ await seedPreinstalled({data});
+ const manifest=JSON.parse(await utf8(list));
+ manifest.plugins=manifest.plugins.filter(entry=>entry.spec!=='github:R227BOUT/magpie-dumate');
+ const raw=JSON.stringify(manifest,null,2)+'\n';
+ await fs.writeFile(list,raw);
+ const markerBefore=await utf8(marker);
+ const result=await seedPreinstalled({data});
+ assert.equal(result.skipped,true);
+ assert.deepEqual(result.added,[]);
+ assert.equal(result.registered.includes('magpie-dumate'),false);
+ assert.equal(await utf8(list),raw);
+ assert.equal(await utf8(marker),markerBefore);
+});
+
 test('packageOf 只认 npm 包名，git 与绝对路径都不匹配',()=>{
  assert.equal(packageOf('@magpie-community/opencode-qoder-auth@latest'),'@magpie-community/opencode-qoder-auth');
  assert.equal(packageOf('@magpie-community/opencode-qoder-auth@0.2.50'),'@magpie-community/opencode-qoder-auth');
@@ -105,12 +181,12 @@ test('packageOf 只认 npm 包名，git 与绝对路径都不匹配',()=>{
  assert.equal(packageOf(undefined),'');
 });
 
-test('清单不存在时写出 12 条，只写 spec，结尾换行',()=>{
+test('清单不存在时写出 13 条，只写 spec，结尾换行',()=>{
  const next=addPreinstalled({raw:undefined});
  assert.equal(next.changed,true);
- assert.equal(next.added.length,12);
+ assert.equal(next.added.length,13);
  const manifest=JSON.parse(next.text);
- assert.equal(manifest.plugins.length,12);
+ assert.equal(manifest.plugins.length,13);
  assert.deepEqual(manifest.plugins[0],{spec:'@magpie-community/opencode-raccoon-auth@latest'});
  assert.equal(next.text.endsWith('\n'),true,'结尾换行');
  assert.equal(next.text,JSON.stringify({plugins:PREINSTALLED.map(item=>({spec:item.spec}))},null,2)+'\n');
@@ -119,7 +195,7 @@ test('清单不存在时写出 12 条，只写 spec，结尾换行',()=>{
 test('空清单对象（plugins: []）补齐缺的包',()=>{
  const next=addPreinstalled({raw:'{"plugins":[]}\n'});
  assert.equal(next.changed,true);
- assert.equal(JSON.parse(next.text).plugins.length,12);
+ assert.equal(JSON.parse(next.text).plugins.length,13);
 });
 
 test('已有同包条目（含写死的版本号）原样保留，不重复登记',()=>{
@@ -127,7 +203,7 @@ test('已有同包条目（含写死的版本号）原样保留，不重复登�
  const next=addPreinstalled({raw});
  assert.equal(next.changed,true);
  assert.equal(next.added.includes('@magpie-community/opencode-qoder-auth'),false,'已有就不加');
- assert.equal(next.added.length,11);
+ assert.equal(next.added.length,12);
  const manifest=JSON.parse(next.text);
  const qoder=manifest.plugins.filter(entry=>packageOf(entry.spec)==='@magpie-community/opencode-qoder-auth');
  assert.equal(qoder.length,1,'同包只留一条');
@@ -147,10 +223,10 @@ test('用户自己装的本地目录插件与 git 插件不参与匹配，也不
  assert.equal(manifest.plugins[0].spec,'C:/data/plugins/page-checkin');
  assert.equal(manifest.plugins[1].spec,'github:owner/repo');
  assert.equal(manifest.plugins[2].spec,'@magpie-community/page-relay-probe');
- assert.equal(next.added.length,12);
+ assert.equal(next.added.length,13);
 });
 
-test('12 条都在时不算变化，逐字不改清单',()=>{
+test('13 条都在时不算变化，逐字不改清单',()=>{
  const raw=JSON.stringify({plugins:PREINSTALLED.map(item=>({spec:item.spec}))},null,2)+'\n';
  const next=addPreinstalled({raw});
  assert.equal(next.changed,false);
@@ -174,12 +250,12 @@ test('首次登记写清单与标记；再跑一次直接跳过，不动磁盘',
  const {data,list,marker}=await sandbox();
  const first=await seedPreinstalled({data});
  assert.equal(first.skipped,false);
- assert.equal(first.added.length,12);
+ assert.equal(first.added.length,13);
  const text=await utf8(list);
- assert.equal(JSON.parse(text).plugins.length,12);
+ assert.equal(JSON.parse(text).plugins.length,13);
  const record=JSON.parse(await utf8(marker));
  assert.equal(record.schema,2);
- assert.equal(record.registered.length,12);
+ assert.equal(record.registered.length,13);
  const before=(await fs.stat(list)).mtimeMs;
  const second=await seedPreinstalled({data});
  assert.equal(second.skipped,true);
@@ -203,7 +279,7 @@ test('基线对齐后：marker 在、用户删过的项不加回来，registered
  assert.equal(result.added.length,0);
  assert.equal((await fs.stat(list)).mtimeMs,before,'不动清单');
  assert.equal((await fs.stat(marker)).mtimeMs,markerBefore,'不动 marker');
- assert.equal(result.registered.length,11,'registered 不含被删的 qoder');
+ assert.equal(result.registered.length,12,'registered 不含被删的 qoder');
  assert.equal(result.registered.includes('@magpie-community/opencode-qoder-auth'),false);
 });
 
@@ -225,13 +301,13 @@ test('老 marker（无 meoo）+ 新基线（含 meoo）→ 补登记 meoo 的 gi
  const meoo=manifest.plugins.filter(entry=>entry.spec==='@fish-under-sea/opencode-meoo-auth@latest');
  assert.equal(meoo.length,1,'git spec 写进清单且只有一条');
  assert.equal(manifest.plugins.some(entry=>entry.spec==='C:/data/plugins/page-checkin'),true,'用户自己的条目不动');
- assert.equal(manifest.plugins.length,13);
- // marker 升级到 schema 2，baseline 对齐到当前 12 家基线。
+ assert.equal(manifest.plugins.length,14);
+ // marker 升级到 schema 2，baseline 对齐到当前 13 家基线。
  const record=JSON.parse(await utf8(marker));
  assert.equal(record.schema,2);
- assert.equal(record.baseline.length,12);
+ assert.equal(record.baseline.length,13);
  assert.deepEqual(record.baseline,PREINSTALLED.map(item=>item.spec));
- assert.equal(record.registered.length,12,'registered 与清单一致');
+ assert.equal(record.registered.length,13,'registered 与清单一致');
  // 再跑一次：基线已对齐 → 幂等，什么都不写。
  const before=(await fs.stat(list)).mtimeMs;
  const markerBefore=(await fs.stat(marker)).mtimeMs;
@@ -254,9 +330,9 @@ test('旧格式与坏 marker 都不抛错，按缺字段处理',async()=>{
   await fs.writeFile(path.join(data,markerName),typeof bad==='string'?bad:JSON.stringify(bad));
   const result=await seedPreinstalled({data});
   assert.equal(result.skipped,false,'退化为全量补登记');
-  assert.equal(result.added.length,11,'已登记的 raccoon 不重复，补其余 11 家');
+  assert.equal(result.added.length,12,'已登记的 raccoon 不重复，补其余 12 家');
   const manifest=JSON.parse(await utf8(list));
-  assert.equal(manifest.plugins.length,12,'补齐后正好 12 条');
+  assert.equal(manifest.plugins.length,13,'补齐后正好 13 条');
   const record=JSON.parse(await utf8(path.join(data,markerName)));
   assert.equal(record.schema,2,'补登记后 marker 升级到 schema 2');
  }
@@ -266,7 +342,7 @@ test('旧格式与坏 marker 都不抛错，按缺字段处理',async()=>{
 // 实际补上的；不再是「拿基线抄一遍」。
 test('状态文件的 registered/added 取实际登记结果，与 plugins.json 一致',async()=>{
  const {data,list,marker}=await sandbox();
- // 老根：12 家已在（无 meoo），走一次补登记。
+ // 老根：除 meoo 外的 12 家已在，走一次补登记。
  const specs=PREINSTALLED.filter(item=>item.stem!=='meoo').map(item=>({spec:item.spec}));
  await fs.writeFile(list,JSON.stringify({plugins:specs},null,2)+'\n');
  const legacy=PREINSTALLED.filter(item=>item.stem!=='meoo').map(item=>item.package);
@@ -274,17 +350,17 @@ test('状态文件的 registered/added 取实际登记结果，与 plugins.json 
  await seedPreinstalled({data});
  const state=await readPreinstallState({data});
  assert.deepEqual(state.added,['@fish-under-sea/opencode-meoo-auth'],'added 只记本次补的');
- assert.equal(state.registered.length,12);
+ assert.equal(state.registered.length,13);
  assert.deepEqual(state.registered,PREINSTALLED.map(item=>item.package));
  const manifest=JSON.parse(await utf8(list));
  // registered 按基线序、清单按写入序：比集合，再核数——口径与 registeredFrom 一致。
  const inList=new Set(manifest.plugins.filter(entry=>PREINSTALLED.some(item=>item.spec===entry.spec)).map(entry=>entry.spec));
- assert.equal(inList.size,12);
- for(const item of PREINSTALLED)assert.equal(inList.has(item.spec),true,'清单里 12 家基线都在');
+ assert.equal(inList.size,13);
+ for(const item of PREINSTALLED)assert.equal(inList.has(item.spec),true,'清单里 13 家基线都在');
 });
 
 // #71 S3 的另一半：ensurePreinstallState 拿到空 registered 时照实写，不再拿基线
-// 顶上（老版本这里会把 12 家全写进去，撒谎的来源之一）。
+// 顶上（老版本这里会把 13 家全写进去，撒谎的来源之一）。
 test('ensurePreinstallState 对 seeded.registered=[] 照实写空',async()=>{
  const {data}=await sandbox();
  await ensurePreinstallState({data,seeded:{registered:[],added:[]},at:new Date('2026-11-04T12:00:00Z')});
@@ -293,17 +369,17 @@ test('ensurePreinstallState 对 seeded.registered=[] 照实写空',async()=>{
  assert.deepEqual(state.added,[]);
 });
 
-// 新装用户行为不变：没有 marker、没有清单 → 一次性登记 12 家，marker 与状态文件
+// 新装用户行为不变：没有 marker、没有清单 → 一次性登记 13 家，marker 与状态文件
 // 与旧版产物等价（marker 多了 baseline 字段）。
-test('新装用户：首启登记 12 家，二启幂等',async()=>{
+test('新装用户：首启登记 13 家，二启幂等',async()=>{
  const {data}=await sandbox();
  const first=await seedPreinstalled({data});
  assert.equal(first.skipped,false);
- assert.equal(first.added.length,12);
+ assert.equal(first.added.length,13);
  assert.deepEqual(first.registered,PREINSTALLED.map(item=>item.package));
  const state=await readPreinstallState({data});
  assert.deepEqual(state.registered,PREINSTALLED.map(item=>item.package));
- assert.equal(state.added.length,12);
+ assert.equal(state.added.length,13);
  const second=await seedPreinstalled({data});
  assert.equal(second.skipped,true);
  assert.equal(second.added.length,0);
@@ -324,7 +400,7 @@ test('zen-free 已装时不被增量补登记触碰（不卸载、不改写）',
  assert.equal(zen.length,1,'zen-free 还在');
  assert.equal(zen[0].off,false);
  assert.deepEqual(zen[0].options,{collapsed:true});
- assert.equal(manifest.plugins.length,13,'12 基线 + 1 zen-free，不多不少');
+ assert.equal(manifest.plugins.length,14,'13 基线 + 1 zen-free，不多不少');
 });
 
 // 已有清单里的其它条目在登记后字节不变，且留一份原文件备份
@@ -341,10 +417,10 @@ test('已有清单里的其它条目在登记后字节不变，且留一份原�
 
 // #16：首启登记要落一份可读状态（config/preinstall-state.json），让「登记已发生、
 // 还在等安装」这件事可判定，而不是只剩一个看不见的标记文件。
-test('首启登记写状态文件：12 家包名 + registeredAt，内容可读回',async()=>{
+test('首启登记写状态文件：13 家包名 + registeredAt，内容可读回',async()=>{
  const {data}=await sandbox();
  const result=await seedPreinstalled({data});
- assert.equal(result.registered.length,12);
+ assert.equal(result.registered.length,13);
  const file=preinstallStateFile(data);
  assert.equal(file.replaceAll('\\','/').endsWith(stateRelativePath),true,'状态文件落在 config/ 下');
  const state=await readPreinstallState({data});
@@ -353,7 +429,7 @@ test('首启登记写状态文件：12 家包名 + registeredAt，内容可读�
  assert.equal(typeof state.registeredAt,'string');
  assert.equal(Number.isNaN(Date.parse(state.registeredAt)),false,'registeredAt 是合法时间');
  assert.deepEqual(state.registered,PREINSTALLED.map(item=>item.package));
- assert.equal(state.added.length,12);
+ assert.equal(state.added.length,13);
 });
 
 test('状态文件缺失时读回 null，写入失败不产生半份临时文件',async()=>{
@@ -369,7 +445,7 @@ test('状态文件缺失时读回 null，写入失败不产生半份临时文件
 
 // pendingStems 只做集合差：给已装 provider 就回还差哪几家，不猜、不编。
 test('pendingStems 按已装 provider 求差，装完为空',()=>{
- assert.equal(pendingStems({installed:[]}).length,12);
+ assert.equal(pendingStems({installed:[]}).length,13);
  assert.deepEqual(pendingStems({installed:['raccoon','cline','loomy']}).slice(0,2),['autoclaw','codearts']);
  assert.deepEqual(pendingStems({installed:PREINSTALLED.map(item=>item.stem)}),[]);
  assert.equal(pendingStems({installed:['loomy-plugin']}).includes('loomy'),true,'别名不算已装到 loomy');
@@ -390,7 +466,7 @@ test('ensurePreinstallState 补写缺失的状态文件，已有就不碰',async
  assert.equal(state.registeredAt,'2026-11-02T09:00:00.000Z','registeredAt 不许被刷新');
 });
 
-// 首次登记没带得回名单（标记已存在的那种启动）也要写下完整的 12 家，
+// 首次登记没带得回名单（标记已存在的那种启动）也要写下完整的 13 家，
 // 否则 host 算不出「还差几个」。
 test('ensurePreinstallState 没有登记结果时按预装基线补齐',async()=>{
  const {data}=await sandbox();

@@ -37,9 +37,11 @@ test('单独发布 Magpie 补丁，清单和目录版本一致',()=>{
  const result=build({out:path.join(root,'out'),sdk,magpie,version:'1.0.1',only:'magpie'});
  assert.deepEqual(result.plugins.map(p=>p.id),['fish.magpie']);
  assert.equal(result.plugins[0].version,'1.0.1');
+ assert.ok(result.plugins[0].dependencies.includes('FISH Dock >=2.3.4'),'dialogs requires host 2.3.4+');
  assert.match(result.plugins[0].url,/\/v1\.0\.1\/magpie\.fish-plugin$/);
  const manifest=JSON.parse(fs.readFileSync(path.join(root,'out/staged/magpie/plugin.json')));
  assert.equal(manifest.version,'1.0.1');assert.ok(manifest.files['plugins/magpie/environment.mjs']);
+ assert.ok(manifest.capabilities.includes('dialogs'));
  assert.deepEqual(fs.readdirSync(result.dist).sort(),['SHA256SUMS.txt','magpie.fish-plugin','stable.json']);
  assert.deepEqual(fs.readdirSync(path.join(root,'out/staged')).sort(),['development.json','magpie']);
 });

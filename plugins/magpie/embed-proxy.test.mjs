@@ -77,3 +77,205 @@ test('代理保留 token URL、鉴权、相对资源、重定向、流和 WebSoc
   await assert.rejects(fetch(`http://127.0.0.1:${port}/`,{signal:AbortSignal.timeout(1000)}));
  }finally{await proxy.stop();for(const peer of peers)peer.destroy();upstream.closeAllConnections();await new Promise(resolve=>upstream.close(resolve))}
 });
+
+import os from 'node:os';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {REVEAL_REFUSED} from './reveal.mjs';
+
+test('handoff rejects wrong methods, opaque origins, wrong Host and oversized bodies before upstream',async()=>{
+ const up=await fakeUpstream((req,res)=>res.end('{}'));
+ const port=await freePort(),proxy=await embedProxy({port,upstreamPort:up.port,openFolder:async()=>assert.fail('must not open')});
+ const url=`http://127.0.0.1:${port}/api/library/reveal`,origin=`http://127.0.0.1:${port}`;
+ try{
+  for(const [options,status] of [
+   [{method:'GET'},405],
+   [{method:'POST',headers:{origin:'null'}},403],
+   [{method:'POST',headers:{origin:`http://localhost:${port}`}},403],
+   [{method:'POST',headers:{origin},body:'x'.repeat(64*1024+1)},413],
+  ]){const response=await fetch(url,options);assert.equal(response.status,status,JSON.stringify(options));await response.text()}
+  const wrongHost=await new Promise((resolve,reject)=>{const req=http.request(url,{method:'POST',headers:{origin,host:`evil.example:${port}`}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode))});req.on('error',reject);req.end()});
+  assert.equal(wrongHost,403);
+  assert.equal(up.requests.length,0);
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('handoff oversized responses stream intact and failed setup opener preserves revealError',async()=>{
+ const large='x'.repeat(80*1024),dir=path.join(os.tmpdir(),'extension');
+ const setup=JSON.stringify({dir,revealError:'cannot reveal'});
+ const up=await fakeUpstream((req,res)=>{const text=req.url.includes('setup')?setup:large;res.writeHead(400+(req.url.includes('setup')?-200:0),{'content-length':Buffer.byteLength(text)});res.end(text)});
+ const port=await freePort(),proxy=await embedProxy({port,upstreamPort:up.port,openFolder:async()=>{throw Error('spawn failed')}});
+ try{
+  for(const [route,text] of [['/api/library/reveal',large],['/api/library/browser/setup',setup]]){
+   const response=await fetch(`http://127.0.0.1:${port}${route}`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`}});
+   assert.equal(await response.text(),text);
+  }
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('choose cancellation discards late dialog results and never writes chosen dir',async()=>{
+ const up=await fakeUpstream((req,res)=>res.end('{}'));
+ let resolveChoice,started;
+ const ready=new Promise(resolve=>started=resolve);
+ const choice=new Promise(resolve=>resolveChoice=resolve);
+ const port=await freePort(),proxy=await embedProxy({port,upstreamPort:up.port,chooseFolder:async()=>{started();return choice}});
+ const controller=new AbortController();
+ try{
+  const pending=fetch(`http://127.0.0.1:${port}/api/autobackup/choose`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`},signal:controller.signal});
+  await ready;controller.abort();await assert.rejects(pending);
+  await proxy.stop();resolveChoice({dir:os.tmpdir()});await delay(20);
+  assert.equal(up.requests.length,0);
+ }finally{resolveChoice?.({dir:null});await proxy.stop();await closeServer(up.server)}
+});
+
+test('host dialog errors do not trigger fallback or modify backup settings',async()=>{
+ const up=await fakeUpstream((req,res)=>res.end('{}'));
+ const port=await freePort(),proxy=await embedProxy({port,upstreamPort:up.port,chooseFolder:async()=>{throw Error('DIALOG_BUSY')},fallbackChoice:async()=>assert.fail('must not fall back')});
+ try{
+  const response=await fetch(`http://127.0.0.1:${port}/api/autobackup/choose`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`}});
+  assert.equal(response.status,502);await response.text();assert.equal(up.requests.length,0);
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+// ---- 2026-11-15 handoff §7.1/§7.2：reveal 接力（HO-P0）、选目录接力（HO-P1） ----
+// 建一个假上游：按路由返回 magpie 网页模式的 400 拒绝文案或指定响应。
+async function fakeUpstream(handler){
+ const requests=[];
+ const server=http.createServer((req,res)=>{requests.push({url:req.url,method:req.method,headers:req.headers});handler(req,res)});
+ server.listen(0,'127.0.0.1');await once(server,'listening');
+ return {server,requests,port:server.address().port};
+}
+async function closeServer(server){server.closeAllConnections?.();await new Promise(resolve=>server.close(resolve))}
+
+test('reveal：库目录拒绝文案 → opener 收到库目录，回 204',async()=>{
+ const home=path.join(os.tmpdir(),'magpie-home');
+ const lib=path.join(home,'data','library');
+ const opened=[];
+ const up=await fakeUpstream((req,res)=>{
+  assert.equal(req.method,'POST');
+  res.writeHead(400,{'content-type':'application/json'});
+  res.end(JSON.stringify({error:REVEAL_REFUSED+`~\\data\\library`}));
+ });
+ const port=await freePort();
+ const proxy=await embedProxy({port,upstreamPort:up.port,home,openFolder:async target=>{opened.push(target)}});
+ try{
+  const res=await fetch(`http://127.0.0.1:${port}/api/library/reveal`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`,'sec-fetch-site':'same-origin','content-type':'application/json'},body:JSON.stringify({path:lib})});
+  assert.equal(res.status,204);
+  assert.deepEqual(opened,[path.normalize(lib)],'opener 收到从文案里解析出的库目录');
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('reveal：越权路径的 400 纯文本原样透传，opener 不被调用',async()=>{
+ const up=await fakeUpstream((req,res)=>{res.writeHead(400,{'content-type':'text/plain'});res.end('not a path the library shows')});
+ const opened=[];
+ const port=await freePort();
+ const proxy=await embedProxy({port,upstreamPort:up.port,openFolder:async t=>{opened.push(t)}});
+ try{
+  const res=await fetch(`http://127.0.0.1:${port}/api/library/reveal`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`,'sec-fetch-site':'same-origin'},body:'{}'});
+  assert.equal(res.status,400);
+  assert.equal(await res.text(),'not a path the library shows');
+  assert.equal(opened.length,0);
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('reveal：跨站 Origin / LAN 页面返回 403，不转发、opener 为空',async()=>{
+ const up=await fakeUpstream((req,res)=>{res.writeHead(500);res.end('should not reach')});
+ const opened=[];
+ const port=await freePort();
+ const proxy=await embedProxy({port,upstreamPort:up.port,openFolder:async t=>{opened.push(t)}});
+ try{
+  for(const headers of [{origin:'https://evil.example'},{origin:'http://192.168.1.5:3426'},{'sec-fetch-site':'cross-site'}]){
+   const res=await fetch(`http://127.0.0.1:${port}/api/library/reveal`,{method:'POST',headers:{...headers},body:'{}'});
+   assert.equal(res.status,403,JSON.stringify(headers));
+   await res.text();
+  }
+  assert.equal(up.requests.length,0,'跨站请求不该转发到上游');
+  assert.equal(opened.length,0);
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('reveal：上游非 400（正常 JSON）原样透传，不改写',async()=>{
+ const up=await fakeUpstream((req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({ok:true}))});
+ const port=await freePort();
+ const proxy=await embedProxy({port,upstreamPort:up.port,openFolder:async()=>{throw Error('不该调用')}});
+ try{
+  const res=await fetch(`http://127.0.0.1:${port}/api/library/reveal`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`,'sec-fetch-site':'same-origin'},body:'{}'});
+  assert.equal(res.status,200);
+  assert.deepEqual(await res.json(),{ok:true});
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('reveal：library/browser/setup 有 revealError 时打开目录、删字段、重算 length',async()=>{
+ const home=path.join(os.tmpdir(),'magpie-home');
+ const dir=path.join(home,'data','extension');
+ const opened=[];
+ const up=await fakeUpstream((req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({dir,'revealError':"can't open"}))});
+ const port=await freePort();
+ const proxy=await embedProxy({port,upstreamPort:up.port,home,openFolder:async t=>{opened.push(t)}});
+ try{
+  const res=await fetch(`http://127.0.0.1:${port}/api/library/browser/setup`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`,'sec-fetch-site':'same-origin'},body:'{}'});
+  assert.equal(res.status,200);
+  const body=await res.json();
+  assert.equal(body.revealError,undefined,'revealError 被删掉');
+  assert.equal(body.dir,dir);
+  assert.deepEqual(opened,[path.normalize(dir)]);
+  assert.equal(Number(res.headers.get('content-length')),Buffer.byteLength(JSON.stringify(body)),'content-length 重算');
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('P1：autobackup/choose 用宿主 dialogs 选目录，选中 POST set 原样返回；取消 GET autobackup',async()=>{
+ const calls=[];
+ const up=await fakeUpstream((req,res)=>{
+  if(req.url.startsWith('/api/autobackup/choose')){res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:"in the browser magpie can't show a folder picker: type the folder's path"}));return}
+  if(req.url.startsWith('/api/autobackup/set')){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({on:true,dir:calls.lastChosen}));return}
+  if(req.url.startsWith('/api/autobackup')){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({on:false,dir:null,view:'autobackup'}));return}
+  res.writeHead(404);res.end();
+ });
+ const port=await freePort();
+ // 选中：宿主能力返回 {dir}
+ let picked=path.join(os.tmpdir(),'magpie-home','data','auto-backups');
+ const proxy=await embedProxy({port,upstreamPort:up.port,chooseFolder:async()=>({dir:picked})});
+ calls.lastChosen=picked;
+ try{
+  const res=await fetch(`http://127.0.0.1:${port}/api/autobackup/choose`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`,'sec-fetch-site':'same-origin'},body:'{}'});
+  assert.equal(res.status,200);
+  assert.equal((await res.json()).dir,picked);
+ }finally{await proxy.stop()}
+ // 取消：宿主能力返回 {dir:null} → GET /api/autobackup 原样返回
+ const port2=await freePort();
+ const proxy2=await embedProxy({port:port2,upstreamPort:up.port,chooseFolder:async()=>({dir:null})});
+ try{
+  const res=await fetch(`http://127.0.0.1:${port2}/api/autobackup/choose`,{method:'POST',headers:{origin:`http://127.0.0.1:${port2}`,'sec-fetch-site':'same-origin'},body:'{}'});
+  assert.equal(res.status,200);
+  assert.equal((await res.json()).view,'autobackup','取消时返回当前 autobackup 视图');
+ }finally{await proxy2.stop();await closeServer(up.server)}
+});
+
+test('P1：宿主能力缺席时 autobackup/choose 用 PowerShell 兜底（注入替身），无输出视为取消',async()=>{
+ const up=await fakeUpstream((req,res)=>{
+  if(req.url.startsWith('/api/autobackup/choose')){res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:'picker'}));return}
+  res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({view:'autobackup',dir:null}));
+ });
+ const port=await freePort();
+ let fallbackCalls=0;
+ const proxy=await embedProxy({port,upstreamPort:up.port,chooseFolder:null,fallbackChoice:async()=>{fallbackCalls++;return null}});
+ try{
+  const res=await fetch(`http://127.0.0.1:${port}/api/autobackup/choose`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`,'sec-fetch-site':'same-origin'},body:'{}'});
+  assert.equal(res.status,200);
+  assert.equal(fallbackCalls,1,'宿主能力缺席时走兜底');
+  assert.equal((await res.json()).view,'autobackup');
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('FISH_MAGPIE_REVEAL=0 时整体关闭：reveal 路由原样透传 400',async()=>{
+ const prev=process.env.FISH_MAGPIE_REVEAL;process.env.FISH_MAGPIE_REVEAL='0';
+ const up=await fakeUpstream((req,res)=>{res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:REVEAL_REFUSED+'~\\x'}))});
+ const opened=[];
+ const port=await freePort();
+ const proxy=await embedProxy({port,upstreamPort:up.port,openFolder:async t=>{opened.push(t)}});
+ try{
+  const res=await fetch(`http://127.0.0.1:${port}/api/library/reveal`,{method:'POST',headers:{origin:`http://127.0.0.1:${port}`,'sec-fetch-site':'same-origin'},body:'{}'});
+  assert.equal(res.status,400);
+  assert.equal(opened.length,0,'开关关闭时不接力');
+ }finally{await proxy.stop();await closeServer(up.server);if(prev===undefined)delete process.env.FISH_MAGPIE_REVEAL;else process.env.FISH_MAGPIE_REVEAL=prev}
+});

@@ -32,6 +32,12 @@ const BASELINE = [
  ['cline', 'Cline'],
  ['codearts', 'CodeArts / OfficeAce'],
  ['loomy', 'Loom'],
+ ['dumate', '百度搭子 DuMate', {
+  // 本机已登记的公开来源；仓库 package.json 为 magpie-dumate（MIT），provider id 为 dumate。
+  // 不猜 npm scope、不复制个人安装目录；首装与更新由 Magpie 按 git spec 获取。
+  package: 'magpie-dumate',
+  spec: 'github:R227BOUT/magpie-dumate',
+ }],
  ['meoo', 'Meoo 秒悟', {
   // 自己的模型直连插件（provider id `meoo`）：npm 上有包，不是 git spec。
   // 它不在 @magpie-community/opencode-<stem>-auth 的拼名规则里，所以显式给
@@ -81,6 +87,15 @@ export function packageOf(spec) {
  return plain ? plain[1] : '';
 }
 
+// GitHub 安装串的 #ref 是用户钉住的版本，不是另一个包。只归一化明确的
+// github:owner/repo 简写；本地路径与其他 git 写法仍按整串比较，不猜来源。
+function specIdentity(spec) {
+ const text = spec.trim();
+ return /^github:[^/#\s]+\/[^/#\s]+(?:#[^\s]*)?$/.test(text)
+  ? text.split('#')[0].toLowerCase()
+  : text;
+}
+
 // plugins.json 只由结构相同的 {spec,off,options} 条目组成。已有同名包的条目
 // 一律保留原样（连用户写死的版本号也不动），只补缺席的包。
 export function addPreinstalled({raw, packages = PREINSTALLED} = {}) {
@@ -92,18 +107,18 @@ export function addPreinstalled({raw, packages = PREINSTALLED} = {}) {
  else manifest = {plugins: []};
  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || !Array.isArray(manifest.plugins)) throw Error('plugins.json 结构无效');
  const have = new Set();
- // 已经写在那里的安装串也记一份：git spec 的包名算不出来（packageOf 认不得
- // github:owner/repo），只有整串相同才算「同一个包已经登记过」。
+ // git spec 的包名算不出来（packageOf 认不得 github:owner/repo），
+ // 按来源比较，保留同仓库已钉住的 #ref；其他 spec 仍按整串比较。
  const specs = new Set();
  for (const entry of manifest.plugins) {
   if (!entry || typeof entry !== 'object') continue;
-  if (typeof entry.spec === 'string' && entry.spec.trim()) specs.add(entry.spec.trim());
+  if (typeof entry.spec === 'string' && entry.spec.trim()) specs.add(specIdentity(entry.spec));
   const name = packageOf(entry.spec);
   if (name) have.add(name);
  }
  const added = [];
  for (const item of packages) {
-  if (have.has(item.package) || specs.has(item.spec)) continue;
+  if (have.has(item.package) || specs.has(specIdentity(item.spec))) continue;
   have.add(item.package);
   manifest.plugins.push({spec: item.spec});
   added.push(item.package);
@@ -205,8 +220,8 @@ export async function ensurePreinstallState({data, seeded = null, at = new Date(
 }
 
 // registeredFrom（#71）：从 plugins.json 的原文算「基线里真正登记在案」的包名。
-// 命中口径与 addPreinstalled 一致——npm 包名匹配，或整串 spec 相同（git spec 算不出
-// 包名，只能按整串比）。清单读不出来（不存在/空/坏 JSON）时按「一个都没有」算，
+// 命中口径与 addPreinstalled 一致——npm 包名匹配，或 spec 来源相同（GitHub 简写
+// 忽略 #ref，保留用户钉版本）。清单读不出来（不存在/空/坏 JSON）时按「一个都没有」算，
 // 不抛错：registered 宁可少报也不编造。
 export function registeredFrom(raw, packages = PREINSTALLED) {
   let manifest = null;
@@ -220,12 +235,12 @@ export function registeredFrom(raw, packages = PREINSTALLED) {
   const seen = new Set();
   for (const entry of manifest.plugins) {
     if (!entry || typeof entry !== 'object' || typeof entry.spec !== 'string' || !entry.spec.trim()) continue;
-    seen.add(entry.spec.trim());
+    seen.add(specIdentity(entry.spec));
     const name = packageOf(entry.spec);
     if (name) seen.add(name);
   }
   return packages
-    .filter((item) => seen.has(item.package) || seen.has(item.spec))
+    .filter((item) => seen.has(item.package) || seen.has(specIdentity(item.spec)))
     .map((item) => item.package);
 }
 

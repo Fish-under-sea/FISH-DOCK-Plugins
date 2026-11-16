@@ -32,7 +32,7 @@ const arg = (args, name, fallback) => {
 
 const packageReadme = (plugin, VERSION) => `# @fish-under-sea/fish-dock-plugin-${plugin.id}
 
-FISH Dock 官方「${plugin.name}」插件，版本 ${VERSION}。适用于 FISH Dock 2.0.0+、Windows x64 和宿主 API 1。
+FISH Dock 官方「${plugin.name}」插件，版本 ${VERSION}。适用于 FISH Dock ${plugin.id==='magpie'?'2.3.4':'2.0.0'}+、Windows x64 和宿主 API 1。
 
 作者：${plugin.authors.join('、')}。${plugin.note ? `${plugin.note}。` : ''}
 

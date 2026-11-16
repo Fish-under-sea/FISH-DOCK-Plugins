@@ -4,19 +4,19 @@
   "baseTag": "v0.1.4262",
   "baseSha": "30de93e9e9d5bf6a013b1773010700d8eaa707f0",
   "fetchedAt": "2026-11-15T16:12:01.337Z",
-  "patch": "magpie-v0.1.4262+fish.34.patch",
-  "versionTag": "v0.1.4262+fish.34",
-  "fileVersion": "0.1.4262.34",
+  "patch": "magpie-v0.1.4262+fish.35.patch",
+  "versionTag": "v0.1.4262+fish.35",
+  "fileVersion": "0.1.4262.35",
   "product": "magpie fish",
   "result": "clean",
   "counts": {
-    "files": 174,
-    "hunks": 295,
-    "appliedFiles": 174,
-    "appliedHunks": 295,
+    "files": 179,
+    "hunks": 311,
+    "appliedFiles": 179,
+    "appliedHunks": 311,
     "conflictFiles": 0,
     "conflictHunks": 0
   },
   "conflicts": [],
-  "note": "Fish.33 rebased onto pinned v0.1.4262; native shared vault, memory relocation and scoped note search; paired desktop Obsidian routes; media settings moved to a lazy script with no core budget raise. Rejected-hunk diagnostics excluded."
+  "note": "Fish.34 plus opt-in native liquid glass with persistent settings, opaque fallback and reduced-transparency support. Core budgets unchanged. Obsidian window repair, dismissible knowledge hint, DuMate and folder handoff live in the Node adapter."
 }

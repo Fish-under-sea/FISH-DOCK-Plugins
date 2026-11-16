@@ -51,10 +51,13 @@ export async function registerObsidianVault(vault,{detected}={}){
   return {...state,registered:true,vault:real,id,reloadNeeded:true};
  }finally{await handle.close();await fs.rm(lock,{force:true})}
 }
-export async function openObsidianVault(vault,{detected,launch}={}){
+export async function openObsidianVault(vault,{detected,launch,spawnProcess=spawn}={}){
  const result=await registerObsidianVault(vault,{detected});if(!result.registered)throw Error(result.reason);
  const uri=obsidianURI(vault);
  if(launch)await launch(result.executable,[uri]);
- else await new Promise((resolve,reject)=>{const child=spawn(result.executable,[uri],{detached:true,stdio:'ignore',windowsHide:true});child.once('error',reject);child.once('spawn',()=>{child.unref();resolve()})});
+ // Obsidian is a GUI, not a background service. SW_HIDE from windowsHide:true
+ // can suppress its vault window while the chooser closes, leaving only an
+ // invisible Electron process. Keep stdio detached without hiding its windows.
+ else await new Promise((resolve,reject)=>{const child=spawnProcess(result.executable,[uri],{detached:true,stdio:'ignore',windowsHide:false});child.once('error',reject);child.once('spawn',()=>{child.unref();resolve()})});
  return {...result,opened:true};
 }

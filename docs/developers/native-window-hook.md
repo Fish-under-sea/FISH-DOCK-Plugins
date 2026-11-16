@@ -34,6 +34,22 @@
 
 Node 后端使用 2.2.0 随附的 [Node SDK](https://github.com/Fish-under-sea/FISH-Dock/blob/main/sdk/node/plugin.mjs)，按既有方式放入插件资源并登记摘要。浏览器页面使用宿主注入的 `window.FishDock`，不直接调用 Tauri 管理命令，也不手动指定插件 owner。
 
+### 2.1 本机文件夹选择（宿主 2.3.4 起）
+
+`dialogs` 是**后端能力**，不属于 `window.FishDock` 的页面 API。清单声明该能力的包要求宿主 **≥ 2.3.4**，旧宿主会拒装；不能把 PowerShell 回退解释为旧宿主也能安装这一清单。Magpie 本轮本地候选为 **2.3.8**，不改写已发布 2.3.7 的兼容口径。
+
+```javascript
+// activate(context) 中使用随 2.3.4+ 宿主提供的 Node SDK。
+const {dir} = await context.dialogs.chooseFolder({title: '选择备份文件夹', parent: 'main'});
+// 取消返回 {dir: null}；页面只能通过插件后端间接申请。
+```
+
+参数只接受 `title?: string`（1–80 字符，无控制字符）与 `parent?: 'main'`；未知字段本地拒绝。该方法不设 SDK 调用超时，会话关闭才 reject。宿主一次只允许一个对话框，并发返回 `DIALOG_BUSY`；其他错误包括能力缺失、`DIALOG_OPERATION_FAILED`、`DIALOG_UNSUPPORTED`。路径原样返回，日志不记完整路径。
+
+插件内 SDK 副本必须实际提供 `context.dialogs.chooseFolder`（协议 `host.dialogs.chooseFolder`），不能只给旧 SDK 的清单加能力。Magpie 对能力缺席仍保留 STA PowerShell `FolderBrowserDialog` 回退，适用于兼容构建；宿主已提供 API 时，权限或忙碌错误不再弹第二个回退框。请求取消或停用后不提交备份目录；SDK 本身不提供单个原生对话框的取消方法，因此已显示的宿主选择框可能仍需用户关闭。
+
+Magpie 的 reveal 接力仅解释白名单原生路由返回的已校验路径，不使用页面正文里的路径。POST、本机同 Host/Origin（HTTP 且同端口）以及非跨站是前提，`null`/远端来源拒绝；本机无 Origin 的非浏览器客户端允许。请求体最多 64 KiB；上游响应超过 64 KiB 原样流式透传。只有打开成功才清除扩展安装响应的 `revealError`；上游拒绝、路径无效或启动资源管理器失败都保留原响应。`FISH_MAGPIE_REVEAL=0` 同时关闭 reveal 与 choose 接力。
+
 ## 3. 浏览器页面按需申请
 
 将申请动作绑定到插件自己的按钮或业务事件：
