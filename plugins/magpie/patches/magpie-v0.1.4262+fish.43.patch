@@ -1,0 +1,1116 @@
+diff --git a/internal/gui/assets/app.js b/internal/gui/assets/app.js
+index 94781d5..65db141 100644
+--- a/internal/gui/assets/app.js
++++ b/internal/gui/assets/app.js
+@@ -19592,7 +19592,7 @@ function renderFonts(s) {
+ // solid look, so "off" is a coordinate and needs no second state; the old
+ // fishGlass boolean survives only as the flag an older settings.json carries
+ // (settings.normal turns it into these three pairs on load).
+-const GLASS_REGIONS = ["sidebar", "content", "overlay", "control"];
++const GLASS_REGIONS = ["sidebar", "content", "overlay", "control", "header", "bar"];
+ function glassPart(value) {
+   const fill = Number(value?.fill), blur = Number(value?.blur);
+   return {
+diff --git a/internal/gui/assets/appearance.js b/internal/gui/assets/appearance.js
+index ec51dda..7bbb79c 100644
+--- a/internal/gui/assets/appearance.js
++++ b/internal/gui/assets/appearance.js
+@@ -40,19 +40,21 @@ window.drawLook = function (s, keep) {
+ // also why turning it off needs no second state: the solid look is a
+ // coordinate, not a mode. app.js's applyGlass paints them; fish-glass.css
+ // reads them; the plugin-page bridge reports data-fish-glass to open pages.
+-const GLASS_FIELDS = { sidebar: "fishGlassSidebar", content: "fishGlassContent", overlay: "fishGlassOverlay", control: "fishGlassControl" };
++const GLASS_FIELDS = { sidebar: "fishGlassSidebar", content: "fishGlassContent", overlay: "fishGlassOverlay", control: "fishGlassControl", header: "fishGlassHeader", bar: "fishGlassBar" };
+ // the presets: magpie's own solid look first, then two quiet ones
+ const GLASS_PRESETS = () => [
+-  ["off", t("Off"), { sidebar: [100, 0], content: [100, 0], overlay: [100, 0], control: [100, 0] }],
+-  ["light", t("Subtle"), { sidebar: [88, 10], content: [82, 12], overlay: [84, 16], control: [86, 10] }],
+-  ["balanced", t("Balanced"), { sidebar: [78, 18], content: [60, 22], overlay: [62, 26], control: [72, 14] }],
+-  ["clear", t("See-through"), { sidebar: [0, 16], content: [0, 20], overlay: [0, 22], control: [0, 10] }],
++  ["off", t("Off"), { sidebar: [100, 0], content: [100, 0], overlay: [100, 0], control: [100, 0], header: [100, 0], bar: [100, 0] }],
++  ["light", t("Subtle"), { sidebar: [88, 10], content: [82, 12], overlay: [84, 16], control: [86, 10], header: [92, 8], bar: [90, 8] }],
++  ["balanced", t("Balanced"), { sidebar: [78, 18], content: [60, 22], overlay: [62, 26], control: [72, 14], header: [84, 14], bar: [80, 14] }],
++  ["clear", t("See-through"), { sidebar: [0, 16], content: [0, 20], overlay: [0, 22], control: [0, 10], header: [0, 14], bar: [0, 12] }],
+ ];
+ const GLASS_REGION_NAMES = () => [
+   ["sidebar", t("Sidebar and title bar"), t("The window's edge: the pages list, and the bar above it")],
+   ["content", t("Pages"), t("Cards, lists and fields: what the reader reads")],
+   ["overlay", t("Popovers and dialogs"), t("Menus, sheets and confirmations")],
+   ["control", t("Controls"), t("Buttons, fields and dropdowns")],
++  ["header", t("Top bar"), t("The window's title row on its own: tune it apart from the sidebar")],
++  ["bar", t("Page bars"), t("A page's own footer or tool row: Add a provider, the install bar, the settings head")],
+ ];
+ // glassNow reads the three pairs the page keeps, clamped the way app.js does.
+ function glassNow(s) {
+diff --git a/internal/gui/assets/fish-glass.css b/internal/gui/assets/fish-glass.css
+index 680610a..6aec7ef 100644
+--- a/internal/gui/assets/fish-glass.css
++++ b/internal/gui/assets/fish-glass.css
+@@ -38,7 +38,10 @@
+   backdrop-filter: none;
+ }
+ /* A highlight cut into the inside edge costs no space or pointer layer. */
+-:root[data-fish-glass] body :is(.sidebar, header.top) {
++:root[data-fish-glass] body .sidebar {
++  box-shadow: inset 0 1px 0 var(--line-2), inset 0 -1px 0 var(--line);
++}
++:root[data-fish-glass] body header.top {
+   box-shadow: inset 0 1px 0 var(--line-2), inset 0 -1px 0 var(--line);
+ }
+ :root[data-fish-glass] body :is(.pop, .modal .dialog, .action-confirm) {
+@@ -69,7 +72,7 @@
+   /* 控件只上底色与高光边，不做定位也不做模糊：下拉触发器一旦变成包含块
+      （position 或 backdrop-filter 都会），挂在它下面的 fixed 弹出层就会跟着
+      小方块定位 —— 用户看到的是「所有下拉框位置都被改了」。 */
+-  :root[data-fish-glass] body :is(.proto.pick, .sess-pick, .set-field, .segs, input:not([type=checkbox]):not([type=range]), textarea, select) {
++  :root[data-fish-glass] body :is(.proto.pick, .sess-pick, .set-field, .segs, .pm-find, .lib-find, .find, .key.acct, .plan.mono, .lib-switch, input:not([type=checkbox]):not([type=range]), textarea, select) {
+     background: color-mix(in srgb, var(--card) var(--fish-glass-control-fill), transparent);
+     box-shadow: inset 0 1px 0 var(--lg-rim-line), inset 0 -1px 0 var(--lg-rim-shade);
+   }
+@@ -180,105 +183,546 @@
+ .fc-clear { flex: none; }
+ 
+ /* gen:glass-surfaces:begin ------------------------------------------------
+-  由 plugins/magpie/tools/glass-surfaces.mjs 从上游 app.css 生成，请勿手改。
+-  命中规则 = 「background 用实色令牌铺底」且不是交互态、表单控件或正文区。
+-  只改 background-color，不碰任何布局属性。*/
+-:root[data-fish-glass] body #agents > .row.dragging,
+-:root[data-fish-glass] body #panelKey .key-rec,
+-:root[data-fish-glass] body #providers > .row.dragging,
+-:root[data-fish-glass] body #view-gateway .find,
+-:root[data-fish-glass] body #view-providers .pv-sel,
+-:root[data-fish-glass] body .acc.adding .bulk-keys,
+-:root[data-fish-glass] body .accts,
+-:root[data-fish-glass] body .achip,
+-:root[data-fish-glass] body .action-confirm,
+-:root[data-fish-glass] body .ag-acc,
+-:root[data-fish-glass] body .ag-chip,
+-:root[data-fish-glass] body .ag-diff-file,
+-:root[data-fish-glass] body .ag-install-row,
+-:root[data-fish-glass] body .ag-lead.welcome,
+-:root[data-fish-glass] body .ag-open .field,
+-:root[data-fish-glass] body .ag-show,
+-:root[data-fish-glass] body .ag-up,
+-:root[data-fish-glass] body .call-archive,
+-:root[data-fish-glass] body .call-body,
+-:root[data-fish-glass] body .call-wire,
+-:root[data-fish-glass] body .call-wire-note,
+-:root[data-fish-glass] body .cc-tip,
+-:root[data-fish-glass] body .chart,
+-:root[data-fish-glass] body .chip,
+-:root[data-fish-glass] body .cx-t,
+-:root[data-fish-glass] body .cxpick,
+-:root[data-fish-glass] body .deprecation,
+-:root[data-fish-glass] body .guide,
+-:root[data-fish-glass] body .guide-agent,
+-:root[data-fish-glass] body .heat-grid .wd,
+-:root[data-fish-glass] body .ic-stack .disc,
+-:root[data-fish-glass] body .kpi,
+-:root[data-fish-glass] body .led th,
+-:root[data-fish-glass] body .led-heat,
+-:root[data-fish-glass] body .led-req .led-box,
+-:root[data-fish-glass] body .led-spd thead th,
+-:root[data-fish-glass] body .led-speed,
+-:root[data-fish-glass] body .led-strip,
+-:root[data-fish-glass] body .led-trend,
+-:root[data-fish-glass] body .led-up,
+-:root[data-fish-glass] body .led-wrap,
+-:root[data-fish-glass] body .list,
+-:root[data-fish-glass] body .mask-tip,
+-:root[data-fish-glass] body .mask-try-in,
+-:root[data-fish-glass] body .mchip,
+-:root[data-fish-glass] body .mfoot .text.action:disabled,
+-:root[data-fish-glass] body .mname,
+-:root[data-fish-glass] body .mnhead,
+-:root[data-fish-glass] body .plugin-panel-body,
+-:root[data-fish-glass] body .pop.proto-menu.sess-menu,
+-:root[data-fish-glass] body .pq-arow,
+-:root[data-fish-glass] body .pq-card,
+-:root[data-fish-glass] body .pq-dial b,
+-:root[data-fish-glass] body .prof-detail,
+-:root[data-fish-glass] body .provider-discovery,
+-:root[data-fish-glass] body .pu-card,
+-:root[data-fish-glass] body .pu-none,
+-:root[data-fish-glass] body .pu-tot,
+-:root[data-fish-glass] body .qt .qt-sub,
+-:root[data-fish-glass] body .qt-wrap,
+-:root[data-fish-glass] body .rate-win .day-chip,
+-:root[data-fish-glass] body .row.pref .set-field,
+-:root[data-fish-glass] body .search-unit,
+-:root[data-fish-glass] body .sess-card,
+-:root[data-fish-glass] body .sess-filter,
+-:root[data-fish-glass] body .sess-menu .sc-top,
+-:root[data-fish-glass] body .sess-pick,
+-:root[data-fish-glass] body .sheet .find,
+-:root[data-fish-glass] body .sheet .sponsor-me,
+-:root[data-fish-glass] body .snip,
+-:root[data-fish-glass] body .snip-wrap > .copy,
+-:root[data-fish-glass] body .stats.empty,
+-:root[data-fish-glass] body .stats.indexing,
+-:root[data-fish-glass] body .subscription-card,
+-:root[data-fish-glass] body .subscription-head .us-more,
+-:root[data-fish-glass] body .text.action,
+-:root[data-fish-glass] body .update-hide,
+-:root[data-fish-glass] body [type=color],
+-:root[data-fish-glass] body [type=file],
+-:root[data-fish-glass] body [type=hidden],
+-:root[data-fish-glass] body [type=submit]),
+-:root[data-fish-glass] body body.side-nav #nav > .nav-top-hl:not([hidden]) {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body #view-providers .row.pv-pick.picked,
+-:root[data-fish-glass] body .acc.adding,
+-:root[data-fish-glass] body .accts .keys-tools,
+-:root[data-fish-glass] body .accts.sorting > .dragging,
+-:root[data-fish-glass] body .action-confirm .confirm-names,
+-:root[data-fish-glass] body .ag-exp,
+-:root[data-fish-glass] body .gw-keys.sorting > .acc.dragging,
+-:root[data-fish-glass] body .search-key-list.sorting > .acc.dragging,
+-:root[data-fish-glass] body .signing,
++  由 plugins/magpie/tools/glass-surfaces.mjs 从上游样式表生成，请勿手改。
++  扫的是 app.css 与各插件页自己的 css；命中 = 「background 用实色令牌铺底」
++  且不是交互态、表单控件或正文区。只改 background-color，不碰布局属性。*/
++:root[data-fish-glass] body #agents > .row.dragging {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body #panelKey .key-rec {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body #providers > .row.dragging {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body #view-gateway .find {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body #view-providers .pv-sel {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .acc.adding .bulk-keys {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .accts {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .achip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .action-confirm {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ag-acc {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ag-chip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ag-diff-file {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ag-install-row {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ag-lead.welcome {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ag-open .field {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ag-show {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ag-up {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .call-archive {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .call-body {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .call-wire {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .call-wire-note {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .cc-tip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .chart {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .chip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ctx-agent {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ctx-card {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ctx-none {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ctx-sess-list {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ctx-spark .at {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ctx-tune {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .cx-t {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .cxpick {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .deprecation {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .editor .acct-proxies {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .editor .key-rates {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .guide {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .guide-agent {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .heat-grid .wd {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ic-stack .disc {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .kpi {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led th {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led-heat {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led-req .led-box {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led-spd thead th {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led-speed {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led-strip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led-trend {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led-up {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led-wrap {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-acct {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-ag.profiles .cnt {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-bili-set .lib-bili-growth {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-browserask-pick {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-empty {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-filepick {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-filter {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-hubaddr {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-hubnode {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-hubstack > * {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-mdview {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-pickbar {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-row > .lib-agents .lib-ag {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-text.lib-skilltext {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-text.small {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .list {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mask-tip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mask-try-in {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mchip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mfoot .text.action:disabled {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mk-card {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mk-find {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mk-sheet .mk-browser-folder {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mname {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mnhead {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .mo-node .ic {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .modal .dialog {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-blocked {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-card {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-content {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-ctip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-demo {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-facet {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-how {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-hub {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-req {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .plugin-panel-body {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pm-browse {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pm-card {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pm-fact {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pm-hero {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pm-rank {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pop.proto-menu.rt-metric-menu {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pop.proto-menu.rt-purpose-menu {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pop.proto-menu.rt-skip-menu {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pop.proto-menu.sess-carry-menu {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pop.proto-menu.sess-menu {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pop.proto-menu.sm-agent-menu {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pq-arow {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pq-card {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pq-dial b {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pr-list {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pr-none {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pr-picks {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pr-stage {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .prof-detail {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .provider-discovery {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ps-hub {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pu-card {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pu-none {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pu-tot {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .qt .qt-sub {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .qt-wrap {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rate-win .day-chip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .row.pref .set-field {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-accts li {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-bodies {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-cx {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-gedit .fbl > .fbrow.dragging {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-gimport-text {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-groups > .rt-group.dragging {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-node {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-rules > .fbl > .rt-rule.dragging {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .search-unit {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .sess-card {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .sess-filter {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .sess-menu .sc-top {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .sess-pick {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .sheet .find {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .sheet .sponsor-me {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .sm-subs-list {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .snip {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .snip-wrap > .copy {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .stats.empty {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .stats.indexing {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .subscription-card {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .subscription-head .us-more {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .text.action {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .update-hide {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .xq-bok {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .xq-box {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .xq-divider span {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body [type=color] {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body [type=file] {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body [type=hidden] {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body #view-providers .row.pv-pick.picked {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .acc.adding {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .accts .keys-tools {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .accts.sorting > .dragging {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .action-confirm .confirm-names {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ag-exp {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .gw-keys.sorting > .acc.dragging {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-detail {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-md {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-projopts {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-row.lib-grouphead {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-subhead {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .lib-tools {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-kind {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-msg {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .msk-val {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pm-md blockquote {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pm-md pre {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pm-md th {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pr-a .kind {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .pr-a .m {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .ps-node {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rp-req .kind {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-accts li.rt-sub {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-ctx-s[aria-pressed="true"] {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-req[aria-pressed="true"] {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-session {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .rt-steps li .kind {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .search-key-list.sorting > .acc.dragging {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .signing {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
+ :root[data-fish-glass] body .subscription-acct {
+   background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
+ }
++:root[data-fish-glass] body .xq-field {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .led-hscroll {
++  background-color: color-mix(in srgb, var(--bg) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .sess-talk {
++  background-color: color-mix(in srgb, var(--bg) var(--fish-glass-content-fill), transparent);
++}
+ /* gen:glass-surfaces:end */
+ 
+ /* 2.4.4: 吸顶页头与页签条的底 ------------------------------------------------
+@@ -291,3 +735,148 @@
+ :root[data-fish-glass] body :is(#view-library .lib-head, #view-plugins .pm-head) {
+   background: transparent;
+ }
++
++/* 2.4.5: 选中态与悬停 —— 玻璃的「凸起高光」 -------------------------------
++   原来选中行只是一块 --pill / --mark-fill 的实色，在玻璃底下看着是黑灰方块。
++   这里把它做成玻璃凸起：上半亮、下半暗的渐变底 + 内高光边 + 轻投影，
++   换选中时用 transition 滑动过去，像从平面里抬起来。
++   只改 background / box-shadow / transition：不位移、不改尺寸。 */
++:root[data-fish-glass] body :is(
++  .nav button.on, #prefs.on,
++  .row.on, .row.sel, .sub.sel, .row.picked,
++  .segs .opt.on, .segs .thumb,
++  .lib-tab.on, .pm-tab.on, .set-tabs button.on, .warm-tabs button.on,
++  .tabs button.on, .chips .on, .pv-pick.picked
++) {
++  background:
++    linear-gradient(180deg,
++      color-mix(in srgb, var(--mark-fill, var(--pill)) 82%, transparent) 0%,
++      color-mix(in srgb, var(--mark-fill, var(--pill)) 52%, transparent) 100%);
++  box-shadow:
++    inset 0 1px 0 var(--lg-rim-line, rgba(255,255,255,.30)),
++    inset 0 -1px 0 var(--lg-rim-shade, rgba(0,0,0,.28)),
++    0 2px 6px rgba(0,0,0,.18);
++  transition: background .18s var(--ease), box-shadow .18s var(--ease);
++}
++/* 悬停：比选中的低一档，只抬一点点，不抢选中 */
++:root[data-fish-glass] body :is(
++  .nav button[data-view]:hover:not(.on), #prefs:hover:not(.on),
++  .row:hover:not(.on):not(.sel), .lib-card:hover, .pm-card:hover
++) {
++  background: color-mix(in srgb, var(--card) 58%, transparent);
++  box-shadow: inset 0 1px 0 var(--lg-rim-line, rgba(255,255,255,.22));
++}
++
++/* 2.4.5: 补充覆盖（生成器抓不到的写法）-------------------------------------
++   审计脚本在预览里逐元素比对「仍然不透明的实底」时，这几处始终没能被生成规则
++   命中（选择器带 :not()/state 组合或写在其它规则里），在这里点名补上。
++   同样只改背景与阴影，不动布局。 */
++:root[data-fish-glass] body :is(
++  .nav-top-hl, .row.model.selected, .accts.gw-keys, .lib-install,
++  .gw-keys, .sheet, .lib-safind, .pm-card, .pm-hero, .pm-rank
++) {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body .row.model.selected {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++}
++/* 侧栏那道跟着选中的滑块：给它玻璃的高光边，抬起来的感觉由渐变与阴影给 */
++:root[data-fish-glass] body #nav > .nav-top-hl:not([hidden]) {
++  background:
++    linear-gradient(180deg,
++      color-mix(in srgb, var(--card) 88%, transparent) 0%,
++      color-mix(in srgb, var(--card) 62%, transparent) 100%);
++  box-shadow:
++    inset 0 1px 0 var(--lg-rim-line, rgba(255,255,255,.30)),
++    inset 0 -1px 0 var(--lg-rim-shade, rgba(0,0,0,.26)),
++    0 2px 6px rgba(0,0,0,.16);
++}
++
++/* 2.4.5: 页内工具条与页脚（新增「工具条」区域）------------------------------
++   设置页头、库/插件页头、库的安装条、概览的统计条：它们是压在内容上的
++   一条，读者常想单独调透。顶栏与侧栏也各自独立了。
++   高光边与阴影的浓度跟着 fill 走：fill=0 时连边框一起消失，是真全透。 */
++:root[data-fish-glass] body :is(
++  #view-settings .set-head, #view-library .lib-head, #view-plugins .pm-head,
++  .lib-install, .stats, .kpi, .chart, #addSheet > .row-head
++) {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-bar-fill), transparent);
++  box-shadow:
++    inset 0 1px 0 color-mix(in srgb, var(--lg-rim-line, rgba(255,255,255,.30)) var(--fish-glass-bar-fill), transparent),
++    inset 0 -1px 0 color-mix(in srgb, var(--lg-rim-shade, rgba(0,0,0,.26)) var(--fish-glass-bar-fill), transparent);
++}
++/* 侧栏与顶栏：fill 掉到 0 时把内描边一起收掉，不留一条亮线 */
++:root[data-fish-glass] body .sidebar {
++  box-shadow:
++    inset 0 1px 0 color-mix(in srgb, var(--lg-rim-line, rgba(255,255,255,.30)) var(--fish-glass-sidebar-fill), transparent),
++    inset 0 -1px 0 color-mix(in srgb, var(--lg-rim-shade, rgba(0,0,0,.26)) var(--fish-glass-sidebar-fill), transparent);
++}
++:root[data-fish-glass] body header.top {
++  box-shadow:
++    inset 0 1px 0 color-mix(in srgb, var(--lg-rim-line, rgba(255,255,255,.30)) var(--fish-glass-header-fill), transparent),
++    inset 0 -1px 0 color-mix(in srgb, var(--lg-rim-shade, rgba(0,0,0,.26)) var(--fish-glass-header-fill), transparent),
++    inset 0 -1px 0 var(--line);
++}
++
++/* 2.4.5: 去黑框、去选中描边，选中一律用玻璃凸起 -----------------------------
++   玻璃底下，实色 1px 边框与强调色描边都会变成「一圈看不懂的黑/亮框」。
++   这里把边框改成透明（几何尺寸不变），选中态换成凸起高光。只动颜色类属性。 */
++:root[data-fish-glass] body :is(
++  .list, .card, .pop, .modal .dialog, .action-confirm, .sheet,
++  .pm-card, .pm-hero, .pm-rank, .lib-card, .stats, .kpi, .chart,
++  button, input, select, textarea, .segs, .field, .proto.pick, .sess-pick, .set-field
++) {
++  border-color: transparent;
++}
++/* 焦点环：不再是 3px 强调色圆圈，改成一层薄薄的玻璃光 */
++:root[data-fish-glass] body :is(input, textarea, select, .pm-find, .lib-find, .find, .set-q):focus-visible {
++  outline: none;
++  box-shadow:
++    inset 0 0 0 1px color-mix(in srgb, var(--accent) 46%, transparent),
++    0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
++}
++/* 选中/按下：一律是抬起来的玻璃，不再是一圈描边或一块灰 */
++:root[data-fish-glass] body :is(
++  [aria-selected="true"], [aria-pressed="true"], [aria-current="page"],
++  .row.sel, .row.on, .row.model.selected, .lib-card.sel, .pm-card.sel,
++  .segs .opt[aria-pressed="true"]
++) {
++  border-color: transparent;
++  background:
++    linear-gradient(180deg,
++      color-mix(in srgb, var(--mark-fill, var(--pill)) 84%, transparent) 0%,
++      color-mix(in srgb, var(--mark-fill, var(--pill)) 54%, transparent) 100%);
++  box-shadow:
++    inset 0 1px 0 color-mix(in srgb, var(--lg-rim-line, rgba(255,255,255,.34)) 100%, transparent),
++    inset 0 -1px 0 color-mix(in srgb, var(--lg-rim-shade, rgba(0,0,0,.26)) 100%, transparent),
++    0 2px 7px rgba(0,0,0,.18);
++  transition: background .18s var(--ease), box-shadow .18s var(--ease);
++}
++
++/* 2.4.5: 底条不绘制、图标不再带黑框 -----------------------------------------
++   1) 页脚与工具条（库的安装条、供应商页的「添加供应商」行）默认就不画底板，
++      只留上面的文字与按钮——用户明确要的是「底部不要那块」。
++   2) 图标方块（.lib-glyph 用 --pill 铺底）、小徽章与开关不再带实底/描边：
++      没点亮时就是一枚图标，不是黑框。 */
++:root[data-fish-glass] body :is(
++  .lib-install, .lib-safind, .use.add, .sheet .add-tools,
++  #addSheet > .row-head
++) {
++  background: none;
++  background-color: transparent;
++  box-shadow: none;
++  border-color: transparent;
++}
++:root[data-fish-glass] body :is(
++  .lib-glyph, .lib-switch, .lib-tag, .use, .gw-mark, .badge,
++  .disc, .snip-wrap > .copy, .text.action
++) {
++  background: none;
++  background-color: transparent;
++  border-color: transparent;
++  box-shadow: none;
++}
++/* 点亮时仍然给一层玻璃底，好分辨选中状态 */
++:root[data-fish-glass] body :is(.lib-glyph.on, .lib-switch.on, .gw-mark.on, .use.add:hover) {
++  background: color-mix(in srgb, var(--mark-fill, var(--pill)) 62%, transparent);
++}
+diff --git a/internal/gui/assets/i18n.js b/internal/gui/assets/i18n.js
+index 1ee9b34..895669a 100644
+--- a/internal/gui/assets/i18n.js
++++ b/internal/gui/assets/i18n.js
+@@ -2788,6 +2788,13 @@ const I18N = {
+     "Allowances": "额度",
+   "Reads conversations": "读取对话",
+   "Wallpaper veil": "底图遮挡",
++    "Top bar": "顶栏",
++    "Memory agent": "记忆 Agent",
++    "Obsidian memory agent": "Obsidian 记忆 Agent",     "Reads conversations, tidies memory and dreams: the one agent Obsidian and magpie both use": "读取对话、整理记忆、做梦：Obsidian 与 magpie 共用这一个 Agent",     "No memory agent yet": "还没有可用的记忆 Agent",     "Memory agent set": "记忆 Agent 已设定",
++    "Pick an agent": "选择 Agent",
++    "The window's title row on its own: tune it apart from the sidebar": "窗口标题那一行，可与侧栏分开单独调",
++    "Page bars": "页内工具条",
++    "A page's own footer or tool row: Add a provider, the install bar, the settings head": "页脚或工具行：添加供应商、安装条、设置页头这类压在内容上的横条",
+   "Veil": "遮挡",
+   "Auto": "自动",
+   "How much of the theme's colour lies over the picture: 0 follows the page's own opacity": "主题色压在壁纸上的比例；0 = 跟随页面自身的不透明度自动计算",
+diff --git a/internal/gui/assets/plugins/library/client.js b/internal/gui/assets/plugins/library/client.js
+index c11768f..014db88 100644
+--- a/internal/gui/assets/plugins/library/client.js
++++ b/internal/gui/assets/plugins/library/client.js
+@@ -1622,55 +1622,29 @@ magpie.plugin("library", (ctx) => {
+       r.append(glyph(GLYPH.subagent), w, button(t("Stop"), "action lib-agentstop", () => agentStop(st.role)));
+       panel.append(r);
+     }
+-    for (const role of agentRoles()) {
+-      const r = el("div", "row lib-row lib-memagent");
+-      const w = el("div", "who");
+-      const mine = memAgents.agents.filter((a) => agentRoleSet(a).includes(role));
+-      const dflt = memAgents.defaults[role] || "";
+-      const picked = mine.find((a) => a.id === (role === "learn" ? dist?.agent : role === "dream" ? dist?.dreamAgent : ""))
+-        || mine.find((a) => a.id === dflt);
+-      w.append(el("div", "name", roleName(role)));
+-      w.append(el("div", "sub", mine.length
+-        ? t("Runs as {name}", { name: picked ? picked.name : mine[0].name })
+-        : t("No agent does this: add one")));
+-      const acts = el("div", "lib-acts");
+-      if (mine.length && !st?.running) acts.append(button(t("Run"), "action lib-agentrun", () => agentRun(role)));
+-      r.append(glyph(GLYPH.subagent), w, acts);
+-      panel.append(r);
+-    }
+-    // the list, each entry's roles and name, with its default marked
+-    for (const a of memAgents.agents) {
+-      const r = el("div", "row lib-row lib-memagent click lib-agentrow");
+-      r.dataset.id = a.id;
+-      const w = el("div", "who");
+-      w.append(el("div", "name", a.name + (a.builtin ? " · " + t("preset") : "")));
+-      const roles = agentRoleSet(a);
+-      const marks = roles.filter((x) => memAgents.defaults[x] === a.id).map((x) => t("default"));
+-      w.append(el("div", "sub", roles.map(roleName).join(", ") + (marks.length ? " · " + marks.join(", ") : "")));
+-      const acts = el("div", "lib-acts");
+-      for (const role of roles) {
+-        if (memAgents.defaults[role] === a.id) continue;
+-        acts.append(button(t("{role}: make default", { role: roleName(role) }), "action lib-agentdefault",
+-          () => agentAct("memory/agents/default", { role, id: a.id }, t("{name} is what {role} runs as", { name: a.name, role: roleName(role) }))));
+-      }
+-      const del = button(t("Remove"), "action lib-agentdel", () => agentAct("memory/agents/remove", { id: a.id }, t("{name} is gone", { name: a.name })));
+-      del.title = t("Takes it out of the list");
+-      acts.append(del);
+-      r.append(glyph(GLYPH.person), w, acts);
+-      panel.append(r);
+-    }
+-    if (memAgentDraft) panel.append(memAgentForm());
+-    const bar = el("div", "lib-acts");
+-    bar.append(button(t("Add an agent"), "action lib-agentnew", () => {
+-      memAgentDraft = { id: "", name: "", role: "learn", model: "", schedule: "" }; memAgentWhat = "new"; render();
+-    }));
+-    bar.append(button(t("Bring the presets back"), "action lib-agentrestore", () =>
+-      agentAct("memory/agents/restore", {}, t("The presets are back"))));
+-    const last = el("div", "row lib-row lib-memagent");
+-    const lw = el("div", "who");
+-    lw.append(el("div", "sub", memAgents.presets?.length ? t("Presets: {names}", { names: memAgents.presets.join(", ") }) : ""));
+-    last.append(lw, bar);
+-    panel.append(last);
++  // 一条就够：同一个记忆 Agent 干读取、整理、做梦三件事。
++  // 原来按角色各列一行、每行一个 Run，既与上面已有的「立即读取 / 立即整理」重复，
++  // 再往下还有添加/恢复预设/删除——那套管理界面撤掉，只留「由谁执行」。
++  const all = memAgents.agents || [];
++  const cur = all.find((a) => a.id === memAgents.defaults.learn) || all[0];
++  const row = el("div", "row lib-row lib-memagent");
++  const who = el("div", "who");
++  who.append(el("div", "name", t("Memory agent")),
++    el("div", "sub", cur ? t("Runs as {name}", { name: cur.name }) : t("No agent does this: add one")));
++  const acts = el("div", "lib-acts");
++  if (all.length > 1) {
++    const pick = menuButton(cur ? cur.name : t("Pick an agent"), "lib-agentpick", () =>
++      openProtoMenu(pick, all.map((a) => ({ v: a.id, name: a.name, literalName: true, note: "" })), cur ? cur.id : "",
++        (v) => {
++          const name = (all.find((a) => a.id === v) || {}).name || v;
++          for (const role of agentRoles()) {
++            agentAct("memory/agents/default", { role, id: v }, t("{name} is what {role} runs as", { name, role: roleName(role) }));
++          }
++        }, t("Memory agent"), "", "left", false));
++    acts.append(pick);
++  }
++  row.append(glyph(GLYPH.subagent), who, acts);
++  panel.append(row);
+     return panel;
+   }
+   function memAgentForm() {
+@@ -3357,7 +3331,29 @@ magpie.plugin("library", (ctx) => {
+         row.append(stack, el("span", "name", names), svg("M6 3.5l4.5 4.5L6 12.5", 12, 1.6));
+         row.onclick = (e) => { e.stopPropagation(); hubFold[key] = false; draw(); };
+         box.append(row);
+-      } else box.append(...list.flatMap(agentRow));
++} else {
++  box.append(...list.flatMap(agentRow));
++  // 记忆 Agent 也在这里出现：Obsidian 侧要选的就是这一个，控制项跟接入的行放在一起，
++  // 不再只藏在「资源库 › 记忆」里。列表与「由谁执行」都取自 /api/memory/agents。
++  const mem = el("div", "row lib-row lib-hubagent lib-memhubrow");
++  const mwho = el("div", "who");
++  mwho.append(el("div", "name", t("Obsidian memory agent")),
++    el("div", "sub", t("Reads conversations, tidies memory and dreams: the one agent Obsidian and magpie both use")));
++  const macts = el("div", "lib-acts");
++  const mpick = menuButton(t("Pick an agent"), "lib-mempick", async () => {
++    const now = await api("memory/agents").catch(() => null);
++    if (!now || !(now.agents || []).length) { status(t("No memory agent yet"), "err", 6000); return; }
++    const cur = now.agents.find((a) => a.id === now.defaults.learn) || now.agents[0];
++    openProtoMenu(mpick, now.agents.map((a) => ({ v: a.id, name: a.name, literalName: true, note: "" })), cur.id,
++      async (v) => {
++        for (const role of agentRoles()) await agentAct("memory/agents/default", { role, id: v }, "").catch(() => {});
++        status(t("Memory agent set"), "ok", 3000);
++      }, t("Memory agent"), "", "left", false);
++  });
++  macts.append(mpick);
++  mem.append(glyph(GLYPH.subagent), mwho, macts);
++  box.append(mem);
++}
+       sec.append(h, box);
+       return [sec];
+     };
+diff --git a/internal/gui/core_budget_test.go b/internal/gui/core_budget_test.go
+index 6863fa9..13c4dd4 100644
+--- a/internal/gui/core_budget_test.go
++++ b/internal/gui/core_budget_test.go
+@@ -17,8 +17,8 @@ import (
+ // never what pays for a change (#5918); the history of each number is in
+ // `git log -L` of this file.
+ const (
+-	appScriptBudget  = 1_087_345 // +543 for the Font color panel in app.js (applyFontColors writes the per-level stylesheet); app.js: 1,080,614 at 8016205e3, with the 5,653 of room it had; +123 for a sidebar list folded from its page's row (hkwok06 on X), its chevron and fold in navicons.js, imported with the first list; +57 for each account of a provider's Usage card in a card of its own (normalcoder_ on X), past the 24 of room left; +17 for an allowance card's wallet line under its rings (apple_test_src on X), the one filter shared with its text line; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
+-	coreScriptBudget = 1_273_620 // +783 for the Font color panel (per-level rows, the dark toggle and applyFontColors); +66 for the Font color row (a colour picker, its reset, and applying --fg); +54 for the See-through preset and opacity 0 support (a fifth preset row and the fill floor at 0); +59 for the Controls region (a fourth pair in the Liquid glass rows: buttons, fields and dropdowns); +1,766 for Settings › Appearance (the Liquid glass three-region rows, its presets and the live slider preview in appearance.js, and the Appearance tab the nine look rows moved to): they draw on every Settings view, so there is no page to move them to; every core script at 8016205e3, the old measure 682 over its cap there (#5918); +367 for the model test on a chosen account (tmr11235), no page left to move it to; +151 for the provider menu's "Only on this device" item and its four translations; +458 for Settings › About's Report a problem row and its translations; +113 for withScheme, the one rule every typed address goes through (eachg0 on X), cut to the shortest form that keeps it whole; +10 for the kept whole's tooltip (Musikrv77852 on X), the past-cycle line reused for it, no page left to move it to; +1,112 for Codex's Open button and its Open Codex with menu (Yink88564391 on X), packed to the shortest form, no page left to move them to; +168 for Discover's long lists drawn in part (the owner, 11-13), after the rest of its hook moved into plugingrid.js, imported when Plugins first draws; +296 for the cap toggle and Smart sentences that say what they do and the Sign in on another computer row (Wing8Aqua on X), packed to the shortest form, no page left to move them to; +333 for In turn's figure in a provider's editor and its words naming the message that goes round (Wing8Aqua on X), the figure itself in rotfig.js, imported when In turn is first shown, the hook packed to the shortest form; +236 for a lone capped Codex account's row saying its turns go to the fallbacks when Codex is connected (not_4O4 on X), the two helpers inlined, no page left to move it to; +717 for omp's advisor (Awad_Yoo on X, #6408): its three rows moved into ompadvisor.js, imported when an omp's settings show, and what is left is the import, the role's " · off" and the Settings line's name, packed to the shortest form; +468 for a plugin's own file import (auth.import) in the import sheet, in the plugin's words (marchen_cc on X), packed to one statement; importSay is read as the Providers rows draw, so it has no lazy page to go to, and nothing else was moved out; +180 for Claude Magpie's own Claude Code folder (xMopf7RF on X, #6459): its Advanced fold in claudemagpie.js, imported when it first shows, and what is left is the import and the fold's place in the Separate app line, 216 bytes packed to the shortest form, less the 36 of room there was; +81 for the Use Claude Magpie button on Claude Desktop's row (xMopf7RF on X), drawn by claudemagpie.js too, what is left the one line that places it (#2710); +225 for the Hermes row's Other profiles lines (Norethcy on X), which 1d60b165c took out while each profile had a row and c96f33d65 left with no place at all, packed to the shortest form; the dead hermes# Default note went with it, and the Agents rows draw it, so there is no page to move it to; +397 for a key's own price rate (tnt12231 on X): its lines, check and placeholder in keyrates.js, imported when a provider with two or more keys opens, and what is left is the import, the draft's copy, Advanced opening for it, the save's one line and proxyLines drawing another kind of line; +316 for an image or video model's chip saying what it makes from its right-click (iceloon on X): the chat chip's Makes… now shared with it, and the media chip's Copy model ID left out, packed to the shortest form; the provider's editor draws it, so there is no page to move it to; +67 for the Claude Code · Claude Magpie row saying it is on magpie through Claude Magpie (xMopf7RF on X), one line in connectLine with the shortest words that say it; the Agents rows draw it, so there is no page to move it to; +12 for AIGoCode's logo in pngIcons (MindfulReturn on X), the list every drawn icon is looked up in; +491 for each cost in the tray panel's and Requests' chart and ranking in its own provider's currency (onkashiko on X): ledProv and the provider passed through, packed to the shortest form; drawLedColumns and drawLedRank are shared by the panel, so there is no page to move it to; +326 for the Qwen AI platform's Token Plan sign-in (imthe99galaxy on X): its field, sign-in and wait in qianwenplan.js, imported when such a provider's editor opens, and what is left is the import and one quotaError line for its two refusals, packed to the shortest form; quotaError reads every card's error, so there is no page to move it to; +72 for Copy all keys (emilochen on X): its row in keyrates.js, imported when a provider with two or more keys opens through keyRateField, now told which of its parts to draw, and what is left is the one line that places it; +83 for the page saying it has gone from view, so what its Sessions and Usage pages keep goes in 30 s and not 7 minutes (P0 memory): folded into the visibilitychange listener every window has, packed to the shortest form, so there is no page to move it to; +270 for Providers' Select, to remove several at once (eiyuuzaki2333 on X): its rows, bar, removal and keys in pvpick.js, imported when Select is first clicked, and what is left is pvSel, the button's click and two lines in renderProviders, which draws the list, so there is no page to move it to; +81 for each account of a provider's Usage card in a card of its own (normalcoder_ on X): one line that makes the box, its brief look left to CSS, and renderQuotas, which draws every card, so there is no page to move it to; +17 for Kimi Code's booster balance under an allowance card's rings in the tray panel (apple_test_src on X): the card's text line and the wallet line share one filter, packed to the shortest form; panelQuotaCard draws every card, so there is no page to move it to; +51 for what a failed plugin install left in plugins/, listed under Installed with a Remove (CHENGJIAHEGOXIS on X): its section in plugininstalled.js as pmLeftovers, imported when Plugins first draws, and what is left is the one call after drawInstalled; draw is what draws the page, so there is no page to move it to; +123 for a sidebar list folded from its page's row (hkwok06 on X): the chevron, its click and the fold kept per page in navicons.js, imported with the first list, and what is left is the folded list read beside the hidden pages' (navList, which navMine now shares) and the two rows' clicks asking navFold first; navSubs draws every list, so there is no page to move it to; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
++	appScriptBudget  = 1_087_361 // +543 for the Font color panel in app.js (applyFontColors writes the per-level stylesheet); app.js: 1,080,614 at 8016205e3, with the 5,653 of room it had; +123 for a sidebar list folded from its page's row (hkwok06 on X), its chevron and fold in navicons.js, imported with the first list; +57 for each account of a provider's Usage card in a card of its own (normalcoder_ on X), past the 24 of room left; +17 for an allowance card's wallet line under its rings (apple_test_src on X), the one filter shared with its text line; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
++	coreScriptBudget = 1_273_636 // +783 for the Font color panel (per-level rows, the dark toggle and applyFontColors); +66 for the Font color row (a colour picker, its reset, and applying --fg); +54 for the See-through preset and opacity 0 support (a fifth preset row and the fill floor at 0); +59 for the Controls region (a fourth pair in the Liquid glass rows: buttons, fields and dropdowns); +1,766 for Settings › Appearance (the Liquid glass three-region rows, its presets and the live slider preview in appearance.js, and the Appearance tab the nine look rows moved to): they draw on every Settings view, so there is no page to move them to; every core script at 8016205e3, the old measure 682 over its cap there (#5918); +367 for the model test on a chosen account (tmr11235), no page left to move it to; +151 for the provider menu's "Only on this device" item and its four translations; +458 for Settings › About's Report a problem row and its translations; +113 for withScheme, the one rule every typed address goes through (eachg0 on X), cut to the shortest form that keeps it whole; +10 for the kept whole's tooltip (Musikrv77852 on X), the past-cycle line reused for it, no page left to move it to; +1,112 for Codex's Open button and its Open Codex with menu (Yink88564391 on X), packed to the shortest form, no page left to move them to; +168 for Discover's long lists drawn in part (the owner, 11-13), after the rest of its hook moved into plugingrid.js, imported when Plugins first draws; +296 for the cap toggle and Smart sentences that say what they do and the Sign in on another computer row (Wing8Aqua on X), packed to the shortest form, no page left to move them to; +333 for In turn's figure in a provider's editor and its words naming the message that goes round (Wing8Aqua on X), the figure itself in rotfig.js, imported when In turn is first shown, the hook packed to the shortest form; +236 for a lone capped Codex account's row saying its turns go to the fallbacks when Codex is connected (not_4O4 on X), the two helpers inlined, no page left to move it to; +717 for omp's advisor (Awad_Yoo on X, #6408): its three rows moved into ompadvisor.js, imported when an omp's settings show, and what is left is the import, the role's " · off" and the Settings line's name, packed to the shortest form; +468 for a plugin's own file import (auth.import) in the import sheet, in the plugin's words (marchen_cc on X), packed to one statement; importSay is read as the Providers rows draw, so it has no lazy page to go to, and nothing else was moved out; +180 for Claude Magpie's own Claude Code folder (xMopf7RF on X, #6459): its Advanced fold in claudemagpie.js, imported when it first shows, and what is left is the import and the fold's place in the Separate app line, 216 bytes packed to the shortest form, less the 36 of room there was; +81 for the Use Claude Magpie button on Claude Desktop's row (xMopf7RF on X), drawn by claudemagpie.js too, what is left the one line that places it (#2710); +225 for the Hermes row's Other profiles lines (Norethcy on X), which 1d60b165c took out while each profile had a row and c96f33d65 left with no place at all, packed to the shortest form; the dead hermes# Default note went with it, and the Agents rows draw it, so there is no page to move it to; +397 for a key's own price rate (tnt12231 on X): its lines, check and placeholder in keyrates.js, imported when a provider with two or more keys opens, and what is left is the import, the draft's copy, Advanced opening for it, the save's one line and proxyLines drawing another kind of line; +316 for an image or video model's chip saying what it makes from its right-click (iceloon on X): the chat chip's Makes… now shared with it, and the media chip's Copy model ID left out, packed to the shortest form; the provider's editor draws it, so there is no page to move it to; +67 for the Claude Code · Claude Magpie row saying it is on magpie through Claude Magpie (xMopf7RF on X), one line in connectLine with the shortest words that say it; the Agents rows draw it, so there is no page to move it to; +12 for AIGoCode's logo in pngIcons (MindfulReturn on X), the list every drawn icon is looked up in; +491 for each cost in the tray panel's and Requests' chart and ranking in its own provider's currency (onkashiko on X): ledProv and the provider passed through, packed to the shortest form; drawLedColumns and drawLedRank are shared by the panel, so there is no page to move it to; +326 for the Qwen AI platform's Token Plan sign-in (imthe99galaxy on X): its field, sign-in and wait in qianwenplan.js, imported when such a provider's editor opens, and what is left is the import and one quotaError line for its two refusals, packed to the shortest form; quotaError reads every card's error, so there is no page to move it to; +72 for Copy all keys (emilochen on X): its row in keyrates.js, imported when a provider with two or more keys opens through keyRateField, now told which of its parts to draw, and what is left is the one line that places it; +83 for the page saying it has gone from view, so what its Sessions and Usage pages keep goes in 30 s and not 7 minutes (P0 memory): folded into the visibilitychange listener every window has, packed to the shortest form, so there is no page to move it to; +270 for Providers' Select, to remove several at once (eiyuuzaki2333 on X): its rows, bar, removal and keys in pvpick.js, imported when Select is first clicked, and what is left is pvSel, the button's click and two lines in renderProviders, which draws the list, so there is no page to move it to; +81 for each account of a provider's Usage card in a card of its own (normalcoder_ on X): one line that makes the box, its brief look left to CSS, and renderQuotas, which draws every card, so there is no page to move it to; +17 for Kimi Code's booster balance under an allowance card's rings in the tray panel (apple_test_src on X): the card's text line and the wallet line share one filter, packed to the shortest form; panelQuotaCard draws every card, so there is no page to move it to; +51 for what a failed plugin install left in plugins/, listed under Installed with a Remove (CHENGJIAHEGOXIS on X): its section in plugininstalled.js as pmLeftovers, imported when Plugins first draws, and what is left is the one call after drawInstalled; draw is what draws the page, so there is no page to move it to; +123 for a sidebar list folded from its page's row (hkwok06 on X): the chevron, its click and the fold kept per page in navicons.js, imported with the first list, and what is left is the folded list read beside the hidden pages' (navList, which navMine now shares) and the two rows' clicks asking navFold first; navSubs draws every list, so there is no page to move it to; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
+ )
+ 
+ // codeBytes is how many bytes of b are code: its blank lines, its lines
+diff --git a/internal/gui/tests/fish-glass.test.cjs b/internal/gui/tests/fish-glass.test.cjs
+index 128cd7c..b9266e2 100644
+--- a/internal/gui/tests/fish-glass.test.cjs
++++ b/internal/gui/tests/fish-glass.test.cjs
+@@ -67,7 +67,7 @@ test("an untouched profile is solid and there is no switch left to press", () =>
+   assert.deepEqual(plain(segsBox.control.options.map(([id]) => id)), ["off", "light", "balanced", "clear", "custom"]);
+   assert.equal(segsBox.control.value, "off", "solid numbers read as Off");
+   // four regions, two numbers each: both solid, both present
+-  assert.equal(ranges.length, 8);
++  assert.equal(ranges.length, 12, "6 regions, opacity and blur each");
+   for (const range of ranges) {
+     const blur = /Blur$/.test(range["aria-label"]);
+     assert.equal(range.value, String(blur ? SOLID.blur : SOLID.fill), range["aria-label"]);
+@@ -84,13 +84,15 @@ test("a preset writes all four regions and keeps everything else on the page", (
+   assert.deepEqual(plain(saves[0].fishGlassContent), { fill: 60, blur: 22 });
+   assert.deepEqual(plain(saves[0].fishGlassOverlay), { fill: 62, blur: 26 });
+   assert.deepEqual(plain(saves[0].fishGlassControl), { fill: 72, blur: 14 });
++  assert.deepEqual(plain(saves[0].fishGlassHeader), { fill: 84, blur: 14 });
++  assert.deepEqual(plain(saves[0].fishGlassBar), { fill: 80, blur: 14 });
+   assert.equal(saves[0].theme, "dark");
+   assert.equal(saves[0].accent, "#0d9488");
+   assert.equal(saves[0].noBird, true);
+   // Off is a coordinate, not another mode: from Balanced it writes solid
+   // numbers. (Pressing the preset already in force is a no-op, so the page
+   // has to be drawn with the saved profile first, as a real save would.)
+-  const balanced = { ...s, fishGlassSidebar: { fill: 78, blur: 18 }, fishGlassContent: { fill: 60, blur: 22 }, fishGlassOverlay: { fill: 62, blur: 26 }, fishGlassControl: { fill: 72, blur: 14 } };
++  const balanced = { ...s, fishGlassSidebar: { fill: 78, blur: 18 }, fishGlassContent: { fill: 60, blur: 22 }, fishGlassOverlay: { fill: 62, blur: 26 }, fishGlassControl: { fill: 72, blur: 14 }, fishGlassHeader: { fill: 84, blur: 14 }, fishGlassBar: { fill: 80, blur: 14 } };
+   context.window.drawLook(balanced, context.prefsKeep(balanced));
+   nodes.get("fishGlassSegs").control.pick("off");
+   assert.equal(saves.length, 2);
+@@ -98,11 +100,13 @@ test("a preset writes all four regions and keeps everything else on the page", (
+   assert.deepEqual(plain(saves[1].fishGlassContent), SOLID);
+   assert.deepEqual(plain(saves[1].fishGlassOverlay), SOLID);
+   assert.deepEqual(plain(saves[1].fishGlassControl), SOLID);
++  assert.deepEqual(plain(saves[1].fishGlassHeader), SOLID);
++  assert.deepEqual(plain(saves[1].fishGlassBar), SOLID);
+ });
+ 
+ test("a slider saves only its own region, and a number no preset holds reads as Custom", () => {
+   const { nodes, saves, ranges, context } = fixture();
+-  const s = { theme: "dark", fishGlassSidebar: { fill: 78, blur: 18 }, fishGlassContent: { fill: 60, blur: 22 }, fishGlassOverlay: { fill: 62, blur: 26 }, fishGlassControl: { fill: 72, blur: 14 } };
++  const s = { theme: "dark", fishGlassSidebar: { fill: 78, blur: 18 }, fishGlassContent: { fill: 60, blur: 22 }, fishGlassOverlay: { fill: 62, blur: 26 }, fishGlassControl: { fill: 72, blur: 14 }, fishGlassHeader: { fill: 84, blur: 14 }, fishGlassBar: { fill: 80, blur: 14 } };
+   context.window.drawLook(s, context.prefsKeep(s));
+   assert.equal(nodes.get("fishGlassSegs").control.value, "balanced");
+   // sidebar fill is the first range drawn for the first region
+@@ -115,7 +119,7 @@ test("a slider saves only its own region, and a number no preset holds reads as
+   assert.deepEqual(plain(saves[0].fishGlassOverlay), { fill: 62, blur: 26 });
+   assert.deepEqual(plain(saves[0].fishGlassControl), { fill: 72, blur: 14 });
+   // numbers that match no preset are Custom, and Custom is not a button that writes
+-  const custom = { theme: "dark", fishGlassSidebar: { fill: 70, blur: 18 }, fishGlassContent: { fill: 60, blur: 22 }, fishGlassOverlay: { fill: 62, blur: 26 }, fishGlassControl: { fill: 72, blur: 14 } };
++  const custom = { theme: "dark", fishGlassSidebar: { fill: 70, blur: 18 }, fishGlassContent: { fill: 60, blur: 22 }, fishGlassOverlay: { fill: 62, blur: 26 }, fishGlassControl: { fill: 72, blur: 14 }, fishGlassHeader: { fill: 84, blur: 14 }, fishGlassBar: { fill: 80, blur: 14 } };
+   context.window.drawLook(custom, context.prefsKeep(custom));
+   assert.equal(nodes.get("fishGlassSegs").control.value, "custom");
+   nodes.get("fishGlassSegs").control.pick("custom");
+diff --git a/internal/settings/settings.go b/internal/settings/settings.go
+index 467a608..5de76bb 100644
+--- a/internal/settings/settings.go
++++ b/internal/settings/settings.go
+@@ -142,6 +142,12 @@ type Settings struct {
+ 	// wallpaper while liquid glass is on, 1–95 %; 0 leaves it to
+ 	// veilGlass, which follows the content region's opacity.
+ 	FishGlassVeil int `json:"fishGlassVeil,omitzero"`
++	// FishGlassHeader is the window's top bar on its own: the title row,
++	// which many readers want clearer or plainer than the pages.
++	FishGlassHeader FishGlassRegion `json:"fishGlassHeader,omitempty"`
++	// FishGlassBar is a page's own footer or tool row (Add a provider,
++	// install bar, settings head): separate, since they sit over content.
++	FishGlassBar FishGlassRegion `json:"fishGlassBar,omitempty"`
+ 	// Colorblind switches chart series (--c1…--c7) to an Okabe–Ito palette
+ 	// and gives each quota curve window, and its legend key, a dash of its
+ 	// own (#2073).
+@@ -3053,6 +3059,14 @@ func (s Settings) normal() Settings {
+ 	}
+ 	s.FishGlassSidebar, s.FishGlassContent, s.FishGlassOverlay, s.FishGlassControl =
+ 		s.FishGlassSidebar.glass(), s.FishGlassContent.glass(), s.FishGlassOverlay.glass(), s.FishGlassControl.glass()
++	s.FishGlassHeader, s.FishGlassBar = s.FishGlassHeader.glass(), s.FishGlassBar.glass()
++	// 顶栏与页内工具条是后加的两个区域：没设过就是实底，空值不能被读成完全透明
++	if s.FishGlassHeader == (FishGlassRegion{}) {
++		s.FishGlassHeader = FishGlassRegion{Fill: 100}
++	}
++	if s.FishGlassBar == (FishGlassRegion{}) {
++		s.FishGlassBar = FishGlassRegion{Fill: 100}
++	}
+ 	s.FishGlass = s.fishGlassOn()
+ 	if s.Lang == "" {
+ 		s.Lang = "system"
+diff --git a/internal/settingsapi/settingsapi.go b/internal/settingsapi/settingsapi.go
+index b1fc6fa..a1ec3db 100644
+--- a/internal/settingsapi/settingsapi.go
++++ b/internal/settingsapi/settingsapi.go
+@@ -28,7 +28,7 @@ import (
+ // written.
+ var Keys = []string{
+ 	// Appearance
+-	"theme", "accent", "fontColors", "fontColorsDark", "fontColorsDarkOn", "fishGlass", "fishGlassSidebar", "fishGlassContent", "fishGlassOverlay", "fishGlassControl", "fishGlassVeil", "colorblind", "reduceMotion", "noBird", "lang", "uiFont", "codeFont",
++	"theme", "accent", "fontColors", "fontColorsDark", "fontColorsDarkOn", "fishGlass", "fishGlassSidebar", "fishGlassContent", "fishGlassOverlay", "fishGlassControl", "fishGlassHeader", "fishGlassBar", "fishGlassVeil", "colorblind", "reduceMotion", "noBird", "lang", "uiFont", "codeFont",
+ 	// the tray, the Dock and this computer
+ 	"tray", "dock", "dockWindow", "dockNever", "lightweight", "keepAwake", "keepAwakeDisplay",
+ 	"noWSLAgents", "sessionTerminal", "signInLinkOnly", "quitNoAsk", "restoreOnQuit",
+@@ -333,6 +333,8 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
+ 		{"fishGlassContent", &in.FishGlassContent, cur.FishGlassContent},
+ 		{"fishGlassOverlay", &in.FishGlassOverlay, cur.FishGlassOverlay},
+ 		{"fishGlassControl", &in.FishGlassControl, cur.FishGlassControl},
++		{"fishGlassHeader", &in.FishGlassHeader, cur.FishGlassHeader},
++		{"fishGlassBar", &in.FishGlassBar, cur.FishGlassBar},
+ 	} {
+ 		if _, sent := fields[region.key]; !sent {
+ 			if legacyGlass {
