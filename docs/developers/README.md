@@ -1,6 +1,6 @@
 # 插件开发者指南
 
-当前协议为 v1。当前官方插件：飞书 **2.2.0**、Clash **2.3.6**、Magpie **2.3.8**（exe `v0.1.4262+fish.35`，要求宿主 ≥2.3.4；液态玻璃本版不可用、默认关闭）；作者用数组、不再有维护者字段。OFM 已退役（2026-10-25 暂停维护，2.3.0 起移出官方目录与活动构建链），历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)，不再随目录发行。两个内置件按 npm 包登记、不单独发行：`@fish-under-sea/magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `@fish-under-sea/magpie-purge`（破甲），首装与后续更新都交给 magpie 自己的更新循环，Dock 不随包分发它们的目录。两者的源码分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1。当前官方插件：飞书 **2.2.0**、Clash **2.4.0**、Magpie **2.4.0**（exe `v0.1.4262+fish.36`，要求宿主 ≥2.3.4；液态玻璃按区域精细调节，Magpie 的「外观」为独立分页）；作者用数组、不再有维护者字段。OFM 已退役（2026-10-25 暂停维护，2.3.0 起移出官方目录与活动构建链），历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)，不再随目录发行。两个内置件按 npm 包登记、不单独发行：`@fish-under-sea/magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `@fish-under-sea/magpie-purge`（破甲），首装与后续更新都交给 magpie 自己的更新循环，Dock 不随包分发它们的目录。两者的源码分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
@@ -146,3 +146,4 @@ node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.t
 `FISH_TEST_MAGPIE`、`FISH_TEST_MIHOMO` 与 `FISH_TEST_SDK` 启用真实服务验收。验证首次配置、保存失败、业务错误后的继续操作、端口占用、启动就绪、停止、连续启停、卸载保留资料，以及升级失败回滚。前端单测通过后，再用真实 WebView 核对页面加载、布局切换与键盘操作。
 
 发行制作、固定来源与商店更新顺序见 [维护者指南](../maintainers/README.md)。
+

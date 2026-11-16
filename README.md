@@ -35,7 +35,13 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-当前发行：Magpie **2.3.9**（见 [2.3.9 发行说明](docs/releases/2.3.9.md)，要求 **FISH Dock ≥ 2.3.4**），Clash **2.3.6**、飞书 **2.2.0**。
+当前发行：Magpie **2.4.0**（见 [2.4.0 发行说明](docs/releases/2.4.0.md)，要求 **FISH Dock ≥ 2.3.4**），Clash **2.4.0**、飞书 **2.2.0**。v2.4.0 的 Release 资源随本版一并发布。
+
+**2.4.0：外观独立成页、液态玻璃按区域调节，Clash 也有外观设置**
+
+- **Magpie**：设置新增「外观」分页（位于常规与额度之间），外观/强调色/背景图片/液态玻璃/界面字体/代码字体/色盲模式/减弱动态效果/加载时的喜鹊 九项迁入。液态玻璃不再是开/关，而是**侧边栏与标题栏 / 主界面 / 浮层与对话框 / 控件**四个区域各自的不透明度与模糊（100% 且不模糊即实底，预设只是快捷写入这组数字）。内嵌插件页通过 `magpie.glass` / `onGlass` 与 `--magpie-glass-*` 同步拿到同一组值。
+- **Magpie**：修复「在 Obsidian 打开」点了没反应——magpie 的 `/api/open` 走 ShellExecute 且进程被隐藏启动，仓库窗口被继承成隐藏；适配层改为只接管本知识库链接并用可见窗口直接拉起。
+- **Clash**：设置新增「外观」分页，含背景图片（≤2 MB，本地保存）与同一套四区域液态玻璃；只影响面板画面，不写内核配置。
 
 **Magpie 2.3.9：修复 2.3.8 无法启动**
 
@@ -201,12 +207,12 @@
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
 | 飞书 2.2.0 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu) |
-| Clash 2.3.6 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.3.6/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.3.6) |
-| Magpie 2.3.9 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.3.9/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.3.9) |
+| Clash 2.4.0 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.4.0/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.4.0) |
+| Magpie 2.4.0 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.4.0/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.4.0) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-packages-dark.png"><img src="assets/readme/section-packages-light.png" alt="PACKAGES · npm 单包" width="100%"></picture></h2>
 
-每个 npm 包只包含一个对应的插件归档和下载 CLI（bin 名 `fish-dock-plugin-<插件>`），不运行安装后脚本，不修改 Dock 或系统设置。当前 **Magpie 是 2.3.9、Clash 是 2.3.6、飞书是 2.2.0**（OFM 单包停在 2.0.1，已退役只供手动下载），要求 **Node.js ≥ 24** 与 **FISH Dock ≥ 2.0.0**。
+每个 npm 包只包含一个对应的插件归档和下载 CLI（bin 名 `fish-dock-plugin-<插件>`），不运行安装后脚本，不修改 Dock 或系统设置。当前 **Magpie 是 2.4.0、Clash 是 2.4.0、飞书是 2.2.0**（OFM 单包停在 2.0.1，已退役只供手动下载），要求 **Node.js ≥ 24** 与 **FISH Dock ≥ 2.0.0**。
 
 | npm 单包（完整包名） | 版本 | bin | `npm pack` 体积 |
 | --- | --- | --- | --- |
@@ -273,3 +279,4 @@ OFM 基于 Our Free Model 的 standalone 构建与渠道能力。该插件自 20
 本仓的插件适配层与发布工具采用 MIT。发行包同时包含上面这些第三方运行时，所以「适配层 MIT」不等于「包含的全部二进制均为 MIT」：以 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和各插件包内的 `licenses` 目录为准。
 
 <p align="center"><sub>FISH Dock Official Plugins · Four independent packages · Host API 1</sub></p>
+
