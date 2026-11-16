@@ -17,7 +17,40 @@ export async function detectObsidian({env=process.env,platform=process.platform}
 }
 export function obsidianURI(vault,file=''){
  if(!path.isAbsolute(vault)||file&&(path.isAbsolute(file)||file.split(/[\\/]/).some(p=>p==='..')))throw Error('知识库链接路径无效');
+ // encodeURIComponent 而不是 QueryEscape：后者把空格写成 '+', 只有在「按查询串解码」的实现里
+ // 才还原得回来；协议处理器拿到的若被当成裸路径，'+' 会变成一个真的加号。
  return `obsidian://open?path=${encodeURIComponent(file?path.join(vault,file):vault)}`;
+}
+// isOwnVaultOpenURL: 只认本插件知识库自己的 obsidian://open?path=<root>[/笔记.md]。
+// 这条判据是「不交给 magpie 打开」的唯一凭据：magpie 的 /api/open 最终走
+// rundll32 url.dll,FileProtocolHandler（ShellExecute），而 magpie 由 Dock 以
+// windowsHide 启动、自身又没有控制台，继承下来的显示状态可能让 Obsidian 的窗口
+// 被隐藏——用户看到的就是「点了没反应 / 只在后台多一个进程」。
+// 因此适配层自己接管这一条，用 windowsHide:false 直接拉起。
+// 越界、多参数、别的协议一律 false，交回 magpie 原来的处理。
+export function isOwnVaultOpenURL(raw,root){
+ if(typeof raw!=='string'||!raw||!root||raw.length>4096)return false;
+ let url;try{url=new URL(raw)}catch{return false}
+ if(url.protocol!=='obsidian:'||url.host!=='open'||url.pathname||url.hash||url.username||url.password)return false;
+ const params=[...url.searchParams];
+ if(params.length!==1||params[0][0]!=='path')return false;
+ const target=params[0][1];
+ if(!target||!path.isAbsolute(target))return false;
+ const base=path.resolve(root),real=path.resolve(target);
+ const rel=path.relative(base,real);
+ if(rel==='')return true;                                  // 库根本身
+ if(path.isAbsolute(rel)||rel==='..'||rel.startsWith(`..${path.sep}`))return false;
+ return /\.md$/i.test(rel);                                // 库内笔记
+}
+// launchObsidian 是「让 Obsidian 窗口真的出现在用户眼前」的那个动作。
+// GUI 程序不能用 windowsHide:true：SW_HIDE 会把它的仓库窗口一起藏起来，
+// 只剩一个看不见的 Electron 进程（2.3.8 已因此翻过一次车）。
+export function launchObsidian(executable,args,{spawnProcess=spawn}={}){
+ return new Promise((resolve,reject)=>{
+  const child=spawnProcess(executable,args,{detached:true,stdio:'ignore',windowsHide:false});
+  child.once('error',reject);
+  child.once('spawn',()=>{child.unref();resolve()});
+ });
 }
 // Register only the new owned vault; never remove or relabel another vault.
 // Obsidian may hold its registry in memory. Report that a reload can be needed,
@@ -55,9 +88,15 @@ export async function openObsidianVault(vault,{detected,launch,spawnProcess=spaw
  const result=await registerObsidianVault(vault,{detected});if(!result.registered)throw Error(result.reason);
  const uri=obsidianURI(vault);
  if(launch)await launch(result.executable,[uri]);
- // Obsidian is a GUI, not a background service. SW_HIDE from windowsHide:true
- // can suppress its vault window while the chooser closes, leaving only an
- // invisible Electron process. Keep stdio detached without hiding its windows.
- else await new Promise((resolve,reject)=>{const child=spawnProcess(result.executable,[uri],{detached:true,stdio:'ignore',windowsHide:false});child.once('error',reject);child.once('spawn',()=>{child.unref();resolve()})});
+ else await launchObsidian(result.executable,[uri],{spawnProcess});
  return {...result,opened:true};
+}
+// openObsidianUri 打开一条**已经校验过**的本库链接（来自 isOwnVaultOpenURL）。
+// 它不重新登记库，只负责把窗口拉出来；未安装 Obsidian 时明确报错，不静默失败。
+export async function openObsidianUri(uri,{detected,launch,spawnProcess=spawn}={}){
+ const state=detected||await detectObsidian();
+ if(!state.installed)throw Error('未检测到 Obsidian');
+ if(launch)await launch(state.executable,[uri]);
+ else await launchObsidian(state.executable,[uri],{spawnProcess});
+ return {...state,opened:true,uri};
 }

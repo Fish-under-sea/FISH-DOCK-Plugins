@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import {REVEAL_ROUTES,targetOf,localTarget,sameOrigin,openInExplorer,pickedDir} from './reveal.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {managedUpdates,managedUpdateScript} from './managed-update.mjs';
+import {isOwnVaultOpenURL} from './obsidian.mjs';
 import {serviceError} from '../../shared/errors.mjs';
 // 原生 code 一律转成适配层错误码：文案与 shared/child.mjs 的 available() 同源，
 // 原生错误挂在 cause 上留证，不让 EADDRINUSE 之类漏成兜底话术。
@@ -76,7 +77,7 @@ function requestBody(req,limit,signal){
 // Only the handoff routes are buffered. Model streams remain untouched.
 export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120,240],signal,
  openFolder=(target,options)=>openInExplorer(target,spawn,process.platform,options),chooseFolder=null,
- fallbackChoice=defaultFallbackChoice,home=os.homedir()}){
+ fallbackChoice=defaultFallbackChoice,home=os.homedir(),obsidian=null}){
  const sockets=new Set(),lifetime=new AbortController();
  const revealEnabled=String(process.env.FISH_MAGPIE_REVEAL??'')!=='0';
  // Dock 把管理页装在跨站 iframe 里（宿主是 tauri://），浏览器不会把 magpie 那条
@@ -178,6 +179,27 @@ export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120
     if(!settings||typeof settings!=='object'||Array.isArray(settings))throw Error('settings');
     body=Buffer.from(JSON.stringify({...settings,...managedUpdates}));headers['content-length']=String(body.length);delete headers['transfer-encoding'];
    }catch{res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:'设置格式无效'}));return}
+  }
+  // 本插件知识库自己的 obsidian:// 链接不走 magpie 的 /api/open：那条路最终是
+  // ShellExecute（rundll32 url.dll,FileProtocolHandler），而 magpie 由 Dock 以
+  // windowsHide 启动、自身没有控制台，继承下来的显示状态会把 Obsidian 的仓库窗口
+  // 一起藏掉（用户看到「点了没反应」）。这里只接管「本库的链接」这一种，由适配层
+  // 用 windowsHide:false 直接拉起；其他链接、其他协议原样交回 magpie。
+  if(pathname==='/api/open'&&req.method==='POST'&&obsidian){
+   let input=null;
+   try{
+    const chunks=[];let size=0;
+    for await(const chunk of req){size+=chunk.length;if(size>64*1024){res.writeHead(413,{'content-type':'application/json'});res.end(JSON.stringify({error:'打开请求过大'}));return}chunks.push(chunk)}
+    input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+   }catch{res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:'打开请求格式无效'}));return}
+   const raw=typeof input?.URL==='string'?input.URL:typeof input?.url==='string'?input.url:'';
+   const root=typeof obsidian.root==='function'?obsidian.root():obsidian.root;
+   if(isOwnVaultOpenURL(raw,root)){
+    try{await obsidian.open(raw);res.writeHead(204,{'cache-control':'no-store'});res.end()}
+    catch(error){res.writeHead(502,{'content-type':'application/json'});res.end(JSON.stringify({error:String(error?.message||'打开 Obsidian 失败')}))}
+    return;
+   }
+   body=Buffer.from(JSON.stringify(input??{}));headers['content-length']=String(body.length);delete headers['transfer-encoding'];
   }
   const script=pathname==='/app.js';
   if(script){headers['accept-encoding']='identity';delete headers['if-none-match'];delete headers['if-modified-since']}

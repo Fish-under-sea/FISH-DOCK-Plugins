@@ -279,3 +279,52 @@ test('FISH_MAGPIE_REVEAL=0 时整体关闭：reveal 路由原样透传 400',asyn
   assert.equal(opened.length,0,'开关关闭时不接力');
  }finally{await proxy.stop();await closeServer(up.server);if(prev===undefined)delete process.env.FISH_MAGPIE_REVEAL;else process.env.FISH_MAGPIE_REVEAL=prev}
 });
+
+test('本知识库的 obsidian 链接由适配层直接拉起，不转发给 magpie',async()=>{
+ const vault=path.join(os.tmpdir(),'magpie-vault');
+ const up=await fakeUpstream((req,res)=>{res.writeHead(204);res.end()});
+ const opened=[];
+ const port=await freePort();
+ const proxy=await embedProxy({port,upstreamPort:up.port,obsidian:{root:()=>vault,open:async uri=>{opened.push(uri)}}});
+ const origin=`http://127.0.0.1:${port}`;
+ try{
+  const uri='obsidian://open?path='+encodeURIComponent(path.join(vault,'wiki','note.md'));
+  const r=await fetch(`${origin}/api/open`,{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({URL:uri})});
+  assert.equal(r.status,204);
+  assert.deepEqual(opened,[uri]);
+  assert.equal(up.requests.length,0,'本库链接不得到达 magpie');
+
+  // 别的链接原样转发：代理不接管、也不改它的形状
+  const foreign='https://example.com/docs';
+  const f=await fetch(`${origin}/api/open`,{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({URL:foreign,system:true})});
+  assert.equal(f.status,204);await f.text();
+  assert.equal(opened.length,1,'外链不触发 Obsidian');
+  assert.equal(up.requests.length,1);
+  assert.equal(up.requests[0].url,'/api/open');
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('打开本库链接失败时如实报错，不伪装成功',async()=>{
+ const vault=path.join(os.tmpdir(),'magpie-vault');
+ const up=await fakeUpstream((req,res)=>{res.writeHead(204);res.end()});
+ const port=await freePort();
+ const proxy=await embedProxy({port,upstreamPort:up.port,obsidian:{root:()=>vault,open:async()=>{throw Error('未检测到 Obsidian')}}});
+ const origin=`http://127.0.0.1:${port}`;
+ try{
+  const r=await fetch(`${origin}/api/open`,{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({URL:'obsidian://open?path='+encodeURIComponent(vault)})});
+  assert.equal(r.status,502);
+  assert.match((await r.json()).error,/未检测到 Obsidian/);
+  assert.equal(up.requests.length,0);
+ }finally{await proxy.stop();await closeServer(up.server)}
+});
+
+test('没有接管方时 /api/open 维持原样（旧宿主行为不变）',async()=>{
+ const up=await fakeUpstream((req,res)=>{res.writeHead(204);res.end()});
+ const port=await freePort(),proxy=await embedProxy({port,upstreamPort:up.port});
+ const origin=`http://127.0.0.1:${port}`;
+ try{
+  const r=await fetch(`${origin}/api/open`,{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify({URL:'obsidian://open?path=C%3A%5Cv'})});
+  assert.equal(r.status,204);await r.text();
+  assert.equal(up.requests.length,1);
+ }finally{await proxy.stop();await closeServer(up.server)}
+});

@@ -7,7 +7,7 @@ import {available,startChild} from '../../shared/child.mjs';
 import {magpieEnvironment} from './environment.mjs';
 import {preparePortableRuntime} from './portable-runtime.mjs';
 import {prepareKnowledgeVault,deployObsidianPlugin} from './knowledge-vault.mjs';
-import {registerObsidianVault} from './obsidian.mjs';
+import {registerObsidianVault,openObsidianUri} from './obsidian.mjs';
 import {startObsidianBridge} from './obsidian-bridge.mjs';
 import {gatewayAddr,gatewayHost,gatewayPortCandidates,readMagpiePrefs} from './network.mjs';
 import {registerBuiltinPlugins,normalizePageTitles} from './page-seed.mjs';
@@ -178,8 +178,12 @@ export function createRuntime(context,{sourceVault='',connectObsidian=false}={})
    // 之后几十秒的复制、页面同步、就绪等待期间端口一直在手，别的实例抢不走，也就
    // 不会出现「magpie 已经拉起来，最后一步绑端口失败再被回滚」。
    // key 传进代理：它在转发时补鉴权 cookie，Dock 的跨站 iframe 里页面资源才不会 401。
+  // 知识库根要到 prepareKnowledgeVault 之后才知道，而代理先于它建好：
+  // 用 getter 读，请求到达时它已经就绪；空串表示「还没准备好」，那时不接管本库链接。
+  let knowledgeRoot='';
  const proxy=await embedProxy({port,upstreamPort,key,signal,openFolder:context.openFolder,
-  chooseFolder:typeof context.dialogs?.chooseFolder==='function'?options=>context.dialogs.chooseFolder(options):null});
+  chooseFolder:typeof context.dialogs?.chooseFolder==='function'?options=>context.dialogs.chooseFolder(options):null,
+  obsidian:{root:()=>knowledgeRoot,open:uri=>openObsidianUri(uri)}});
 	// #30：listeningPort / fellBack 要留到 return 那一行用，声明必须在 try 外面——
 	// 之前写在 try 里，启动成功时 return 反而抛 ReferenceError，插件永远报服务异常。
 	let portable,child,bridge,knowledge,listeningPort=0,fellBack=false;
@@ -189,6 +193,7 @@ export function createRuntime(context,{sourceVault='',connectObsidian=false}={})
     portable=await preparePortableRuntime(executable,credentials,{signal,onPhase:track});
     try{
      knowledge=await prepareKnowledgeVault({data:portable.data,sourceVault,signal,onPhase:()=>track('prepare-data')});
+     knowledgeRoot=knowledge.root;
      await deployObsidianPlugin(knowledge.root);
     }catch(error){if(error.name==='AbortError')throw error;throw Object.assign(serviceError('DATA_MIGRATION_FAILED'),{cause:error})}
     // A missing or busy Obsidian never prevents the model gateway from starting.
