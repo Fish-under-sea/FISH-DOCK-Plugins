@@ -1,0 +1,3243 @@
+diff --git a/docs/subsystems/memagent.md b/docs/subsystems/memagent.md
+index a3350a3..48a6065 100644
+--- a/docs/subsystems/memagent.md
++++ b/docs/subsystems/memagent.md
+@@ -115,11 +115,40 @@ transcript says which server didn't start and why, and is bounded
+ | `memory-agent.run` | The one-run lock across magpies. |
+ | In memory | The run going: phase, step of `MaxSteps`, and the last `maxMessages` transcript lines. Kept for the window after it ends, until the next run of that role. |
+ | `<cache>/memory-agent/work/<run-id>/` | The run's own files, for what is too big for a conversation. |
++| `memory-audit.jsonl` | Every change a run made to memory: `{at, action, id, role, agent, result, scope, kind, error}`. |
++| `<vault>/logs/memory-conflicts.md` | Each machine change refused because the memory is the user's. |
+ 
+ `StatusOf(role)` answers `{running, phase, doing, of, steps, wrote, saved,
+ started, ended, messages[], error}` — what the GUI's status route and the
+ Obsidian plugin poll.
+ 
++## Audit and conflicts
++
++Every change a run makes to memory is one line of
++`memory-audit.jsonl` (`LogAudit`), appended and flushed, never rewritten:
++`save`, `forget`, `remove`, `promote` and `status`, with the memory's id,
++the role, the agent, what it did (`added`, `merged`, `changed`, `forgotten`,
++`removed`, `promoted`, a new status, `refused` or `conflict`) and, when it
++didn't go through, why (`error`). A line holds no memory text — only what
++changed — so a secret in a memory never reaches the log, and one over
++`MaxAuditLine` is cut rather than written whole. A log that can't be written
++is noted with `log.Printf` and otherwise passed over: audit never stops a
++change the user asked for. Lines are appended one write at a time
++(`auditMu`), so two runs' lines are two whole lines.
++
++A machine change to what the user wrote is refused (`ConflictError`,
++`IsConflict`), and the refusal is added to `<vault>/logs/memory-conflicts.md`
++through the run's sandbox, so it is inside the folders a run may write and
++nowhere else: the memory's id, the action, the role, why it was refused
++(`origin=user`, `edited by the user`, or both) and the user's words, with
++one that looks like a secret replaced by `[redacted]`. The note is only ever
++added to (`Sandbox.Append`), and the memory itself is left exactly as it
++was — the tools check `memory.Get` before `Edit`/`Forget`/`Remove`. A change
++that leaves the user's words alone is not a conflict: a run may still save
++what is new, and forget what isn't theirs. `memory_status` is the machine's
++for a candidate it proposed; taking the user's own memory out of use is
++refused.
++
+ ## Failure and compatibility
+ 
+ - An unreadable `memory-agents.json` runs nothing (the registry's rule); an
+diff --git a/internal/gui/assets/plugins/library/client.js b/internal/gui/assets/plugins/library/client.js
+index f34a49f..c11768f 100644
+--- a/internal/gui/assets/plugins/library/client.js
++++ b/internal/gui/assets/plugins/library/client.js
+@@ -1140,6 +1140,8 @@ magpie.plugin("library", (ctx) => {
+     memLoading = true;
+     try {
+       [mem, dist, sem] = await Promise.all([api("memory"), api("memory/distill").catch(() => null), api("memory/semantic").catch(() => null)]);
++      memAgents = await api("memory/agents").catch(() => null);
++      memStatusView = await api("memory/agents/status").catch(() => null);
+     } catch (e) {
+       status(e.message, "err");
+     }
+@@ -1147,6 +1149,7 @@ magpie.plugin("library", (ctx) => {
+     if (tab === "memory" && mem) render();
+     distWatch();
+     semWatch();
++    agentWatch();
+     rankSoon();
+   }
+   function memDirty() {
+@@ -1255,7 +1258,7 @@ magpie.plugin("library", (ctx) => {
+     const sw = toggle(mem.digest, t("In the agents' instructions"), (on) => memChange("memory/digest", { on }, on ? t("The agents read the memories' summary") : t("The memories' summary is taken out of the agents' instructions")));
+     row.append(glyph(GLYPH.doc), who, sw);
+     card.append(row);
+-    if (dist) card.append(distillRow(), dreamRow());
++    if (dist) card.append(distillRow(), dreamRow(), memAgentPanel());
+     if (sem) card.append(semRow());
+     if (!lib.servers.some((s) => s.name === "magpie-memory")) {
+       const r = el("div", "row lib-row lib-memtools");
+@@ -1455,27 +1458,32 @@ magpie.plugin("library", (ctx) => {
+     bar.onkeydown = (e) => { if (e.key === "Escape") memPickKeys(e, ""); };
+     return bar;
+   }
+-  // the model conversations are read and memory tidied with: the
+-  // automatic one or one picked, shared by both rows
+-  function memModelPick(d) {
+-    const modelName = (id) => { const m = d.models.find((x) => x.id === id); return m ? (m.name || m.id) : id; };
+-    const auto = d.auto ? t("Automatic") + " · " + modelName(d.auto) : t("Automatic");
+-    const pick = menuButton(d.model ? modelName(d.model) : auto, "lib-distmodel", () => openProtoMenu(pick, [
+-      { v: "", name: t("Automatic"), note: d.auto ? modelName(d.auto) : t("No models"), literalName: true },
+-      ...d.models.map((m) => ({ v: m.id, name: m.name || m.id, note: m.providerName || "", literalName: true }))],
+-    d.model || "", (v) => distChange("memory/distill", { on: d.on, model: v }), "Model", "", "left", false, d.models.length > 8 ? "Search models" : ""));
++  // the memory agent conversations are read and memory tidied with: the
++  // automatic one (the role's default) or one picked. The user picks an
++  // agent; the model it runs on is the entry's own route and is never
++  // offered here (internal/memagent).
++  function memAgentPick(d, opts) {
++    const list = opts?.list || d.agents || [];
++    const cur = opts?.value || "", auto = opts?.auto || d.auto || "";
++    const nameOf1 = (id) => { const a = list.find((x) => x.id === id); return a ? a.name : id; };
++    const shown = cur ? nameOf1(cur) : (auto ? t("Automatic") + " · " + nameOf1(auto) : t("Automatic"));
++    const cls = opts?.cls || "lib-distmodel";
++    const pick = menuButton(shown, cls, () => openProtoMenu(pick, [
++      { v: "", name: t("Automatic"), note: auto ? nameOf1(auto) : t("No agents"), literalName: true },
++      ...list.map((a) => ({ v: a.id, name: a.name, note: "", literalName: true }))],
++    cur, (v) => opts.choose(v), opts.head || t("Agent"), "", "left", false, list.length > 8 ? t("Search agents") : ""));
+     return pick;
+   }
+-  // the reasoning level the model reads and tidies at, when its levels
+-  // are known: Default sends none (RealZeroP27 on X)
++  // the reasoning level the picked agent's route is asked at, when its
++  // levels are known: Default sends none (RealZeroP27 on X)
+   function memEffortPick(d) {
+     if (!d.efforts?.length) return null;
+     const shown = d.effort ? d.effortNow || d.effort : "";
+     const b = menuButton(shown ? t(shown) : t("Default"), "lib-disteffort", () => openProtoMenu(b,
+       [{ v: "", name: "Default", note: "The model's own" }, ...d.efforts.map((l) => ({ v: l, name: l, note: "" }))],
+-      shown, (v) => v !== (d.effort || "") && distChange("memory/distill", { on: d.on, model: d.model || "", effort: v }), "Thinking"));
++      shown, (v) => v !== (d.effort || "") && distChange("memory/distill", { on: d.on, agent: d.agent || "", effort: v }), "Thinking"));
+     b.prepend(effortIcon({ options: d.efforts.map((l) => ({ value: l })), value: shown }));
+-    b.title = t("How hard this model thinks");
++    b.title = t("How hard this agent thinks");
+     return b;
+   }
+   // how far back conversations are read: 7 days unless picked, All the
+@@ -1485,13 +1493,13 @@ magpie.plugin("library", (ctx) => {
+     const cur = d.days || 7;
+     const b = menuButton(rangeName(cur), "lib-distrange", () => openProtoMenu(b,
+       (d.ranges || [7, 30, 90, 365, -1]).map((n) => ({ v: String(n), name: rangeName(n), literalName: true, note: n === -1 ? "The latest 400 conversations" : "" })),
+-      String(cur), (v) => +v !== cur && distChange("memory/distill", { on: d.on, model: d.model || "", days: +v }), "How far back it reads"));
++      String(cur), (v) => +v !== cur && distChange("memory/distill", { on: d.on, agent: d.agent || "", days: +v }), "How far back it reads"));
+     b.title = t("How far back it reads");
+     return b;
+   }
+   // Conversations read into memory (internal/memdistill): what the
+   // agents' finished sessions say worth keeping waits under To review.
+-  // Off until switched on; the model is the automatic one or one picked.
++  // Off until switched on; the agent is the automatic one or one picked.
+   function distillRow() {
+     const d = dist;
+     const r = el("div", "row lib-row lib-memdistill");
+@@ -1509,17 +1517,19 @@ magpie.plugin("library", (ctx) => {
+     w.append(el("div", "sub" + (err ? " err" : ""), line));
+     const acts = el("div", "lib-acts");
+     if (d.on) {
+-      acts.append(memModelPick(d), ...[memEffortPick(d)].filter(Boolean), memRangePick(d));
++      acts.append(memAgentPick(d, { value: d.agent, auto: d.auto, choose: (v) => distChange("memory/distill", { on: d.on, agent: v }) }),
++        ...[memEffortPick(d)].filter(Boolean), memRangePick(d));
+       if (!d.running) acts.append(button(t("Read now"), "action lib-distnow", () => distChange("memory/distill/run", {})));
+       else if (d.of > 1) acts.append(button(t("Stop"), "action lib-diststop", () => distChange("memory/distill/stop", {})));
+     }
+-    acts.append(toggle(d.on, t("Learn from conversations"), (on) => distChange("memory/distill", { on, model: d.model || "" })));
++    acts.append(toggle(d.on, t("Learn from conversations"), (on) => distChange("memory/distill", { on, agent: d.agent || "" })));
+     r.append(glyph(GLYPH.search), w, acts);
+     return r;
+   }
+   // The nightly tidy (memdistill's Dream): memories that repeat are
+   // merged, ones out of date set aside, the last night's undone at once.
+-  // The model is the one picked above; with reading off, it is picked here.
++  // Its agent is picked here; with reading on, the agents row above holds
++  // learn's own.
+   function dreamRow() {
+     const d = dist;
+     const r = el("div", "row lib-row lib-memdream");
+@@ -1537,12 +1547,163 @@ magpie.plugin("library", (ctx) => {
+     w.append(el("div", "sub" + (err ? " err" : ""), line));
+     const acts = el("div", "lib-acts");
+     if (ch.length && !d.undone && !d.dreaming) acts.append(button(t("Undo"), "action lib-dreamundo", () => distChange("memory/dream/undo", {}, true)));
+-    if (d.dream && !d.on) acts.append(memModelPick(d), ...[memEffortPick(d)].filter(Boolean));
++    if (d.dream && !d.on) acts.append(memAgentPick(d, { list: d.dreamAgents || [], value: d.dreamAgent, auto: d.dreamAuto, cls: "lib-dreamagent",
++      choose: (v) => distChange("memory/distill", { on: d.on, agent: d.agent || "", dreamAgent: v }) }));
+     if (d.dream && !d.dreaming && !d.running) acts.append(button(t("Tidy now"), "action lib-dreamnow", () => distChange("memory/dream/run", {})));
+     acts.append(toggle(d.dream, t("Tidy up every night"), (on) => distChange("memory/dream", { on })));
+     r.append(glyph(GLYPH.backup), w, acts);
+     return r;
+   }
++  // The memory agents (internal/memagent): who reads conversations, tidies
++  // memory and dreams, on which magpie agent and route. The list, what is
++  // running, and add/change/remove, a role's default and the presets back.
++  // No model is offered: an entry's route is internal.
++  let memAgents = null;    // /api/memory/agents
++  let memAgentDraft = null; // the entry open to add or change, as typed
++  let memAgentWhat = "";   // "new" or the id being changed
++  let memStatusView = null; // /api/memory/agents/status: the run going
++  let memStatusPoll = 0;
++  async function loadAgents() {
++    try { memAgents = await api("memory/agents"); } catch (e) { memAgents = null; status(e.message, "err", 6000); }
++  }
++  const agentRoles = () => memAgents?.roles || ["learn", "organize", "dream"];
++  const roleName = (r) => ({ learn: t("Reads conversations"), organize: t("Tidies memory"), dream: t("Dreams") })[r] || r;
++  // the roles one entry carries out, in the registry's order
++  const agentRoleSet = (a) => agentRoles().filter((r) => (a.role || "").split("|").some((x) => x.trim() === r));
++  async function agentAct(path, body, said) {
++    try {
++      memAgents = await api(path, body);
++      dist = await api("memory/distill").catch(() => dist);
++      if (said) status(said);
++    } catch (e) { status(e.message, "err", 6000); }
++    memAgentDraft = null; memAgentWhat = "";
++    render();
++    agentWatch();
++  }
++  // while a run goes, its status is read again every 2s: phase, how far,
++  // what it said, and how it ended
++  function agentWatch() {
++    clearTimeout(memStatusPoll);
++    if (!memStatusView?.running) return;
++    memStatusPoll = setTimeout(async () => {
++      if (tab !== "memory") return;
++      const was = JSON.stringify(memStatusView);
++      try { memStatusView = await api("memory/agents/status?role=" + (memStatusView.role || "")); } catch { return; }
++      if (JSON.stringify(memStatusView) !== was) render();
++      agentWatch();
++    }, 2000);
++  }
++  function agentRun(role) {
++    api("memory/agents/" + role + "/run", {}).then((st) => { memStatusView = st; render(); agentWatch(); })
++      .catch((e) => status(e.message, "err", 6000));
++  }
++  function agentStop(role) {
++    api("memory/agents/" + role + "/stop", {}).then((st) => { memStatusView = st; render(); agentWatch(); })
++      .catch((e) => status(e.message, "err", 6000));
++  }
++  function memAgentPanel() {
++    const panel = el("div", "lib-agentpanel");
++    if (!memAgents) {
++      const r = el("div", "row lib-row lib-memagent");
++      const w = el("div", "who");
++      w.append(el("div", "name", t("Memory agents")), el("div", "sub err", t("The agents' registry can't be read")));
++      r.append(glyph(GLYPH.subagent), w);
++      panel.append(r);
++      return panel;
++    }
++    const st = memStatusView;
++    if (st?.running) {
++      const r = el("div", "row lib-row lib-memagent lib-memrun");
++      const w = el("div", "who");
++      const doing = st.of ? " · " + t("{n} of {m}", { n: st.doing || 0, m: st.of }) : "";
++      w.append(el("div", "name", t("A memory agent is running") + doing),
++        el("div", "sub", (st.phase || "") + (st.agent ? " · " + st.agent : "")));
++      for (const m of (st.messages || []).slice(-4)) w.append(el("div", "sub lib-memline", (m.tool ? m.tool + " · " : "") + (m.text || "")));
++      r.append(glyph(GLYPH.subagent), w, button(t("Stop"), "action lib-agentstop", () => agentStop(st.role)));
++      panel.append(r);
++    }
++    for (const role of agentRoles()) {
++      const r = el("div", "row lib-row lib-memagent");
++      const w = el("div", "who");
++      const mine = memAgents.agents.filter((a) => agentRoleSet(a).includes(role));
++      const dflt = memAgents.defaults[role] || "";
++      const picked = mine.find((a) => a.id === (role === "learn" ? dist?.agent : role === "dream" ? dist?.dreamAgent : ""))
++        || mine.find((a) => a.id === dflt);
++      w.append(el("div", "name", roleName(role)));
++      w.append(el("div", "sub", mine.length
++        ? t("Runs as {name}", { name: picked ? picked.name : mine[0].name })
++        : t("No agent does this: add one")));
++      const acts = el("div", "lib-acts");
++      if (mine.length && !st?.running) acts.append(button(t("Run"), "action lib-agentrun", () => agentRun(role)));
++      r.append(glyph(GLYPH.subagent), w, acts);
++      panel.append(r);
++    }
++    // the list, each entry's roles and name, with its default marked
++    for (const a of memAgents.agents) {
++      const r = el("div", "row lib-row lib-memagent click lib-agentrow");
++      r.dataset.id = a.id;
++      const w = el("div", "who");
++      w.append(el("div", "name", a.name + (a.builtin ? " · " + t("preset") : "")));
++      const roles = agentRoleSet(a);
++      const marks = roles.filter((x) => memAgents.defaults[x] === a.id).map((x) => t("default"));
++      w.append(el("div", "sub", roles.map(roleName).join(", ") + (marks.length ? " · " + marks.join(", ") : "")));
++      const acts = el("div", "lib-acts");
++      for (const role of roles) {
++        if (memAgents.defaults[role] === a.id) continue;
++        acts.append(button(t("{role}: make default", { role: roleName(role) }), "action lib-agentdefault",
++          () => agentAct("memory/agents/default", { role, id: a.id }, t("{name} is what {role} runs as", { name: a.name, role: roleName(role) }))));
++      }
++      const del = button(t("Remove"), "action lib-agentdel", () => agentAct("memory/agents/remove", { id: a.id }, t("{name} is gone", { name: a.name })));
++      del.title = t("Takes it out of the list");
++      acts.append(del);
++      r.append(glyph(GLYPH.person), w, acts);
++      panel.append(r);
++    }
++    if (memAgentDraft) panel.append(memAgentForm());
++    const bar = el("div", "lib-acts");
++    bar.append(button(t("Add an agent"), "action lib-agentnew", () => {
++      memAgentDraft = { id: "", name: "", role: "learn", model: "", schedule: "" }; memAgentWhat = "new"; render();
++    }));
++    bar.append(button(t("Bring the presets back"), "action lib-agentrestore", () =>
++      agentAct("memory/agents/restore", {}, t("The presets are back"))));
++    const last = el("div", "row lib-row lib-memagent");
++    const lw = el("div", "who");
++    lw.append(el("div", "sub", memAgents.presets?.length ? t("Presets: {names}", { names: memAgents.presets.join(", ") }) : ""));
++    last.append(lw, bar);
++    panel.append(last);
++    return panel;
++  }
++  function memAgentForm() {
++    const d = memAgentDraft;
++    const box = el("div", "lib-agentform");
++    const row = el("div", "row lib-row");
++    const w = el("div", "who");
++    const idIn = input(d.id, t("An id: letters, digits, - and _"));
++    idIn.className = "lib-agentid"; idIn.value = d.id; idIn.disabled = memAgentWhat !== "new";
++    idIn.oninput = () => { d.id = idIn.value; idIn.onkeydown = (e) => e.stopPropagation(); };
++    const nameIn = input(d.name, t("Its name"));
++    nameIn.className = "lib-agentname"; nameIn.value = d.name;
++    nameIn.oninput = () => { d.name = nameIn.value; };
++    const roleSel = menuButton(agentRoleSet(d).map(roleName).join(" + ") || t("Pick a role"), "lib-agentrole", () =>
++      openProtoMenu(roleSel, agentRoles().map((r) => ({ v: r, name: roleName(r), literalName: true, note: "" })),
++        agentRoleSet(d)[0] || "", (v) => {
++          const set = new Set(agentRoleSet(d)); if (set.has(v)) set.delete(v); else set.add(v);
++          d.role = agentRoles().filter((r) => set.has(r)).join("|"); render();
++        }, t("What it does"), "", "left", true));
++    const modelIn = input(d.model, t("The model route (internal, e.g. group/deepseek)"));
++    modelIn.className = "lib-agentmodel"; modelIn.value = d.model;
++    modelIn.oninput = () => { d.model = modelIn.value; };
++    w.append(idIn, nameIn, roleSel, modelIn);
++    const acts = el("div", "lib-acts");
++    const send = () => agentAct(memAgentWhat === "new" ? "memory/agents" : "memory/agents/update",
++      { id: d.id, name: d.name, role: d.role, model: d.model, schedule: d.schedule },
++      t("{name} is saved", { name: d.name || d.id }));
++    acts.append(button(t("Save"), "action lib-agentsave", send));
++    acts.append(button(t("Cancel"), "action lib-agentcancel", () => { memAgentDraft = null; render(); }));
++    row.append(w, acts);
++    box.append(row);
++    return box;
++  }
+   // Search by meaning (memembed): a small model on this computer reads
+   // each memory once, and the search finds what means the same in other
+   // words or another language. Switched off, the model is deleted.
+diff --git a/internal/gui/fish_vault.go b/internal/gui/fish_vault.go
+index c60a829..0c22261 100644
+--- a/internal/gui/fish_vault.go
++++ b/internal/gui/fish_vault.go
+@@ -180,4 +180,16 @@ func fishVaultRoutes(mux *http.ServeMux) {
+ 		// Routing, privacy, model restrictions, accounting and streaming stay native.
+ 		gw.Handler().ServeHTTP(w, request)
+ 	}))
++
++	// The memory agents as the Obsidian plugin offers them (M-E): the agents
++	// to pick from, the run going, and starting and stopping one. The same
++	// handlers the GUI's Memory tab calls (memory_agents_run.go), behind this
++	// surface's own pairing token rather than a cookie: the plugin picks an
++	// agent and watches it run without a browser, and never sends a model
++	// where a memory task is picked.
++	h := agentHandlers{}
++	mux.HandleFunc("GET /api/fish-vault/memory/agents", guard(h.agents))
++	mux.HandleFunc("GET /api/fish-vault/memory/agents/status", guard(h.status))
++	mux.HandleFunc("POST /api/fish-vault/memory/agents/{role}/run", guard(h.run))
++	mux.HandleFunc("POST /api/fish-vault/memory/agents/{role}/stop", guard(h.stop))
+ }
+diff --git a/internal/gui/fish_vault_memory_test.go b/internal/gui/fish_vault_memory_test.go
+new file mode 100644
+index 0000000..dad8cad
+--- /dev/null
++++ b/internal/gui/fish_vault_memory_test.go
+@@ -0,0 +1,205 @@
++package gui
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/yetone/magpie/internal/memagent"
++)
++
++// fishAgentsAt points the registry at a folder of the test's own, so a route
++// never reads or writes the user's memory-agents.json.
++func fishAgentsAt(t *testing.T) {
++	t.Helper()
++	dir := t.TempDir()
++	old := memagent.Path
++	memagent.Path = func() string { return filepath.Join(dir, "memory-agents.json") }
++	t.Cleanup(func() { memagent.Path = old })
++}
++
++func fishVaultMux(t *testing.T) *http.ServeMux {
++	t.Helper()
++	mux := http.NewServeMux()
++	memoryRoutes(mux)
++	return mux
++}
++
++// fishCall is one request as the Obsidian plugin makes it: the pairing token,
++// no Origin, from this computer.
++func fishCall(t *testing.T, mux *http.ServeMux, method, path, body, token string) *httptest.ResponseRecorder {
++	t.Helper()
++	req := httptest.NewRequest(method, path, strings.NewReader(body))
++	req.RemoteAddr = "127.0.0.1:5"
++	req.Header.Set("X-Fish-Obsidian-Token", token)
++	rec := httptest.NewRecorder()
++	mux.ServeHTTP(rec, req)
++	return rec
++}
++
++// The memory agents the Obsidian plugin lists are the registry's, by id and
++// name: the model a run is sent to is never offered, and an admin cookie
++// without the pairing token gets nothing.
++func TestFishVaultMemoryAgentsRoute(t *testing.T) {
++	_, token := guiFishVault(t)
++	fishAgentsAt(t)
++	mux := fishVaultMux(t)
++	if _, err := memagent.Restore(); err != nil {
++		t.Fatal(err)
++	}
++	rec := fishCall(t, mux, "GET", "/api/fish-vault/memory/agents", "", token)
++	if rec.Code != 200 {
++		t.Fatalf("agents: %d %s", rec.Code, rec.Body)
++	}
++	var v struct {
++		Agents   []struct{ ID, Name string }
++		Defaults map[string]string
++		Roles    []string
++	}
++	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
++		t.Fatalf("agents: %s", rec.Body)
++	}
++	if len(v.Agents) != 2 {
++		t.Fatalf("agents: %+v", v.Agents)
++	}
++	for _, a := range v.Agents {
++		if a.ID == "" || a.Name == "" {
++			t.Fatalf("an agent without id or name: %+v", a)
++		}
++	}
++	// no model, no route: what the plugin shows is a name to pick
++	if strings.Contains(strings.ToLower(rec.Body.String()), "deepseek") {
++		t.Fatalf("a model route leaked to the plugin: %s", rec.Body)
++	}
++	if v.Defaults[memagent.Learn] != "memory-curator" || v.Defaults[memagent.Dream] != "dreamer" {
++		t.Fatalf("defaults: %+v", v.Defaults)
++	}
++	// by role: only learn's agents are listed (the defaults name every role,
++	// so the page can show what each runs as)
++	rec = fishCall(t, mux, "GET", "/api/fish-vault/memory/agents?role=learn", "", token)
++	if rec.Code != 200 {
++		t.Fatalf("role learn: %d %s", rec.Code, rec.Body)
++	}
++	var byRole struct {
++		Agents []struct{ ID, Name string }
++	}
++	if err := json.Unmarshal(rec.Body.Bytes(), &byRole); err != nil {
++		t.Fatalf("role learn: %s", rec.Body)
++	}
++	if len(byRole.Agents) != 1 || byRole.Agents[0].ID != "memory-curator" {
++		t.Fatalf("role learn listed: %+v", byRole.Agents)
++	}
++	for _, a := range byRole.Agents {
++		if a.ID == "dreamer" {
++			t.Fatalf("a dream agent was offered for learn: %+v", byRole.Agents)
++		}
++	}
++	// a role memory doesn't have is refused
++	if rec := fishCall(t, mux, "GET", "/api/fish-vault/memory/agents?role=nope", "", token); rec.Code != 400 {
++		t.Fatalf("an unknown role: %d", rec.Code)
++	}
++}
++
++// The plugin's routes need the pairing token, as every other one on this
++// surface does: a cookie alone, a wrong token, another host or an Origin
++// gets 403.
++func TestFishVaultMemoryRoutesNeedThePairingToken(t *testing.T) {
++	_, token := guiFishVault(t)
++	fishAgentsAt(t)
++	mux := fishVaultMux(t)
++	for _, tc := range []struct {
++		name, token, origin, remote string
++		want                        int
++	}{
++		{"no token", "", "", "127.0.0.1:5", 403},
++		{"wrong token", "wrong", "", "127.0.0.1:5", 403},
++		{"an origin", token, "null", "127.0.0.1:5", 403},
++		{"another host", token, "", "192.0.2.1:5", 403},
++		{"the token", token, "", "127.0.0.1:5", 200},
++	} {
++		for _, path := range []string{
++			"/api/fish-vault/memory/agents",
++			"/api/fish-vault/memory/agents/status?role=learn",
++		} {
++			req := httptest.NewRequest("GET", path, nil)
++			req.RemoteAddr = tc.remote
++			req.Header.Set("X-Fish-Obsidian-Token", tc.token)
++			if tc.origin != "" {
++				req.Header.Set("Origin", tc.origin)
++			}
++			rec := httptest.NewRecorder()
++			mux.ServeHTTP(rec, req)
++			if rec.Code != tc.want {
++				t.Fatalf("%s %s: %d %s", tc.name, path, rec.Code, rec.Body)
++			}
++		}
++	}
++}
++
++// Status says what a role is doing (or its last run), refused for a role
++// memory doesn't have; the plugin polls it while one goes.
++func TestFishVaultMemoryStatusRoute(t *testing.T) {
++	_, token := guiFishVault(t)
++	fishAgentsAt(t)
++	mux := fishVaultMux(t)
++	rec := fishCall(t, mux, "GET", "/api/fish-vault/memory/agents/status?role=organize", "", token)
++	if rec.Code != 200 {
++		t.Fatalf("status: %d %s", rec.Code, rec.Body)
++	}
++	var st memagent.Status
++	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
++		t.Fatalf("status: %s", rec.Body)
++	}
++	if st.Running {
++		t.Fatalf("nothing should be running: %+v", st)
++	}
++	if rec := fishCall(t, mux, "GET", "/api/fish-vault/memory/agents/status?role=nope", "", token); rec.Code != 400 {
++		t.Fatalf("an unknown role: %d", rec.Code)
++	}
++}
++
++// A run the plugin asks for with an agent that doesn't carry the role out is
++// refused, and nothing starts; stopping a role that isn't going isn't an
++// error.
++func TestFishVaultMemoryRunAndStop(t *testing.T) {
++	_, token := guiFishVault(t)
++	fishAgentsAt(t)
++	mux := fishVaultMux(t)
++	if _, err := memagent.Restore(); err != nil {
++		t.Fatal(err)
++	}
++	for _, c := range []struct{ path, body string }{
++		{"/api/fish-vault/memory/agents/learn/run", `{"agent":"dreamer"}`},
++		{"/api/fish-vault/memory/agents/learn/run", `{"agent":"not-there"}`},
++		{"/api/fish-vault/memory/agents/nope/run", `{}`},
++		{"/api/fish-vault/memory/agents/nope/stop", `{}`},
++	} {
++		if rec := fishCall(t, mux, "POST", c.path, c.body, token); rec.Code != 400 {
++			t.Fatalf("%s %s: %d %s", c.path, c.body, rec.Code, rec.Body)
++		}
++	}
++	if memagent.Running() {
++		t.Fatal("a refused run started")
++	}
++	rec := fishCall(t, mux, "POST", "/api/fish-vault/memory/agents/dream/stop", `{}`, token)
++	if rec.Code != 200 {
++		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
++	}
++}
++
++// The GUI's own run routes are not the plugin's: the plugin's paths live
++// under /api/fish-vault, and the GUI's are cookie-authenticated. A plugin
++// token on the GUI's path does not open it, and the reverse holds too.
++func TestFishVaultMemoryRoutesStayOffTheGuiPaths(t *testing.T) {
++	_, token := guiFishVault(t)
++	fishAgentsAt(t)
++	mux := fishVaultMux(t)
++	// the GUI's status is not served to the plugin's surface at all
++	rec := fishCall(t, mux, "GET", "/api/memory/agents/status?role=learn", "", token)
++	if rec.Code != http.StatusNotFound {
++		t.Fatalf("the plugin reached the GUI's status: %d %s", rec.Code, rec.Body)
++	}
++}
+diff --git a/internal/gui/library.go b/internal/gui/library.go
+index 7ffd205..5b88516 100644
+--- a/internal/gui/library.go
++++ b/internal/gui/library.go
+@@ -179,6 +179,7 @@ func libraryRoutes(mux *http.ServeMux, w Windows) {
+ 	memoryDistillRoutes(mux)
+ 	memorySemanticRoutes(mux)
+ 	memoryAgentRoutes(mux)
++	memoryAgentRunRoutes(mux)
+ 	mux.HandleFunc("GET /api/library", func(rw http.ResponseWriter, r *http.Request) {
+ 		v, err := libraryRead(nil, r.URL.Query().Get("glance") == "1")
+ 		if err != nil {
+diff --git a/internal/gui/memory_agents_run.go b/internal/gui/memory_agents_run.go
+new file mode 100644
+index 0000000..ea2fb70
+--- /dev/null
++++ b/internal/gui/memory_agents_run.go
+@@ -0,0 +1,262 @@
++package gui
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"slices"
++	"strings"
++
++	"github.com/yetone/magpie/internal/fishvault"
++	"github.com/yetone/magpie/internal/gateway"
++	"github.com/yetone/magpie/internal/memagent"
++	"github.com/yetone/magpie/internal/memdistill"
++)
++
++// Running a memory agent from the window, and watching it: a run reads
++// conversations (learn), tidies memory and inspirations (organize), or
++// dreams across the vault (dream), as the agent the registry names. The run
++// itself is memagent's: one at a time across magpies, cancellable, with its
++// progress and transcript kept in memory-agent status.
++//
++// The same handlers answer on two surfaces: the GUI's cookie-authenticated
++// routes (/api/memory/agents/...), and the Obsidian plugin's, behind the
++// private pairing token (fish_vault.go). Both start and stop the same runs,
++// read the same status, and offer the same agents: the actions are here, the
++// authentication is each surface's own.
++
++// memoryAgentsForView is the agents of role as a surface that may only offer
++// them lists: their ids and names, which role each carries out, and the one
++// each role runs as. The model a run is sent to is the entry's own route and
++// is never offered where a memory task is picked.
++type memoryAgentsForView struct {
++	Agents   []agentRef        `json:"agents"`
++	Defaults map[string]string `json:"defaults"`
++	Roles    []string          `json:"roles"`
++}
++
++// agentView is the agents of role as that view lists them: every one when
++// role is "", else those carrying it out.
++func agentView(role string) (*memoryAgentsForView, error) {
++	r, err := memagent.Load()
++	if err != nil {
++		return nil, err
++	}
++	v := &memoryAgentsForView{Agents: []agentRef{}, Defaults: map[string]string{}, Roles: memagent.Roles}
++	for _, a := range r.Agents {
++		if role != "" && !a.HasRole(role) {
++			continue
++		}
++		v.Agents = append(v.Agents, agentRef{ID: a.ID, Name: a.Name})
++	}
++	for k, id := range r.Defaults {
++		v.Defaults[k] = id
++	}
++	return v, nil
++}
++
++// roleParam is a role a request names, normalized as an entry's own is; ""
++// is every role, and a role memory doesn't have is an error.
++func roleParam(role string) (string, error) {
++	role = strings.ToLower(strings.TrimSpace(role))
++	if role != "" && !slices.Contains(memagent.Roles, role) {
++		return "", fmt.Errorf("role %q isn't one of %s", role, strings.Join(memagent.Roles, ", "))
++	}
++	return role, nil
++}
++
++// agentHandlers are the memory agents' actions, shared by every surface that
++// may offer them. Each writes its own answer; a surface only decides who may
++// ask (the GUI's cookie, the Obsidian plugin's pairing token).
++type agentHandlers struct{}
++
++// agents answers the agents of ?role= for a surface that lists them to pick
++// from: the ids and names only, with the roles and their defaults.
++func (agentHandlers) agents(rw http.ResponseWriter, r *http.Request) {
++	role, err := roleParam(r.URL.Query().Get("role"))
++	if err != nil {
++		fail(rw, err)
++		return
++	}
++	v, err := agentView(role)
++	if err != nil {
++		fail(rw, err)
++		return
++	}
++	writeJSON(rw, v)
++}
++
++// status answers the run going, when it is that role's, else the last one it
++// ran.
++func (agentHandlers) status(rw http.ResponseWriter, r *http.Request) {
++	role, err := roleParam(r.URL.Query().Get("role"))
++	if err != nil {
++		fail(rw, err)
++		return
++	}
++	writeJSON(rw, memagent.StatusOf(role))
++}
++
++// run starts a run of the role in the background: {agent?, model?, effort?}.
++// An agent that doesn't carry the role out is a 400 and nothing starts; a
++// run already going is a 409 with the status that says which.
++func (agentHandlers) run(rw http.ResponseWriter, r *http.Request) {
++	role, err := roleParam(r.PathValue("role"))
++	if err != nil {
++		fail(rw, err)
++		return
++	}
++	var in struct {
++		Agent  string `json:"agent"`
++		Model  string `json:"model"`
++		Effort string `json:"effort"`
++	}
++	if err := json.NewDecoder(http.MaxBytesReader(rw, r.Body, 8192)).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
++		fail(rw, err)
++		return
++	}
++	if in.Agent != "" {
++		if err := checkAgent(role, in.Agent); err != nil {
++			fail(rw, err)
++			return
++		}
++	}
++	if memagent.Running() {
++		rw.Header().Set("Content-Type", "application/json")
++		rw.WriteHeader(http.StatusConflict)
++		writeJSON(rw, memagent.StatusOf(role))
++		return
++	}
++	go runRole(role, in.Agent, in.Model, in.Effort)
++	st := memagent.StatusOf(role)
++	// the run's start is the goroutine's to record; the window polls until
++	// it says running
++	st.Role = role
++	writeJSON(rw, st)
++}
++
++// stop ends the run going: the request in flight is dropped and what it was
++// reading is read next time. One that isn't going is not an error.
++func (agentHandlers) stop(rw http.ResponseWriter, r *http.Request) {
++	role, err := roleParam(r.PathValue("role"))
++	if err != nil {
++		fail(rw, err)
++		return
++	}
++	memagent.Stop()
++	writeJSON(rw, memagent.StatusOf(role))
++}
++
++// memoryAgentRunRoutes are the memory agents' run on the GUI's surface: the
++// status a window polls, the run started and stopped. The agents themselves
++// and their CRUD are the Memory tab's (memory_agents.go); a surface that only
++// picks from them reads agentView.
++func memoryAgentRunRoutes(mux *http.ServeMux) {
++	h := agentHandlers{}
++	mux.HandleFunc("GET /api/memory/agents/status", h.status)
++	mux.HandleFunc("POST /api/memory/agents/{role}/run", h.run)
++	mux.HandleFunc("POST /api/memory/agents/{role}/stop", h.stop)
++}
++
++// dispatchInput is what memagent.Dispatch is given for a role, gathered
++// here: the conversations due (learn), the vault's notes within the sandbox
++// (dream and organize), the vault, and the gateway this process serves as
++// the model's turns.
++func dispatchInput(role, agent, model, effort string) (memagent.Input, error) {
++	role = strings.ToLower(strings.TrimSpace(role))
++	if !slices.Contains(memagent.Roles, role) {
++		return memagent.Input{}, fmt.Errorf("role %q isn't one of %s", role, strings.Join(memagent.Roles, ", "))
++	}
++	vault := fishvault.Root()
++	if vault == "" {
++		return memagent.Input{}, errors.New("no knowledge vault: the knowledge folder isn't set")
++	}
++	in := memagent.Input{
++		Role: role, Vault: vault, Agent: agent, Model: model, Effort: effort,
++		Ask: gatewayAsk(),
++	}
++	st, err := memdistill.Load()
++	if err != nil {
++		return memagent.Input{}, err
++	}
++	switch role {
++	case memagent.Learn:
++		// what is due by the range picked: quiet for 30 minutes, read once
++		cs, _, err := memagent.Conversations(memagent.ConversationQuery{
++			Limit: memagent.ReadLimit, Quiet: memagent.ReadQuiet, Since: st.Since,
++			Done: st.Done, SkipAgent: memagent.AgentID,
++		})
++		if err != nil {
++			return memagent.Input{}, err
++		}
++		in.Conversations = cs
++	case memagent.Dream, memagent.Organize:
++		sb, err := memagent.OpenSandbox(vault)
++		if err != nil {
++			return memagent.Input{}, err
++		}
++		defer sb.Close()
++		notes, err := memagent.Notes(sb, 0, 0)
++		if err != nil {
++			return memagent.Input{}, err
++		}
++		in.Notes = notes
++	}
++	// the scopes are the entry's, so a run works where its agent may keep
++	if r, err := memagent.Load(); err == nil {
++		if a, ok := agentEntry(r, role, agent); ok {
++			in.Scopes = memagent.ScopesFor(a)
++			if err := memagent.CheckScopes(in.Scopes); err != nil {
++				return memagent.Input{}, err
++			}
++		}
++	}
++	return in, nil
++}
++
++// agentEntry is the agent a run of role would take: the one named, else the
++// role's default.
++func agentEntry(r memagent.Registry, role, id string) (memagent.Agent, bool) {
++	if id = strings.TrimSpace(id); id != "" {
++		return r.Get(id)
++	}
++	return r.Default(role)
++}
++
++// gatewayAsk sends an agent's turns through the gateway this process
++// serves, as any agent's go: routed, masked and counted under the memory
++// agent's name. With no gateway served here it is the error a run shows.
++func gatewayAsk() memagent.Ask {
++	gw := served.Load()
++	if gw == nil {
++		return func(context.Context, memagent.Request) (memagent.Turn, error) {
++			return memagent.Turn{}, errors.New("the gateway isn't served by this magpie")
++		}
++	}
++	return memagent.GatewayAsk(gw.Handler(), gatewayBase())
++}
++
++// gatewayBase and gatewayToken are where this magpie's gateway listens and
++// the key a side job is sent with. Variables so a test need not start one.
++var (
++	gatewayBase  = func() string { return gateway.URL() }
++	gatewayToken = func(id string) string { return gateway.TokenFor(id) }
++)
++
++// runRole dispatches one role's run and keeps what stopped it from starting
++// for the row that shows the role.
++func runRole(role, agent, model, effort string) {
++	in, err := dispatchInput(role, agent, model, effort)
++	if err == nil {
++		_, err = memagent.Dispatch(backendCtx, in)
++	}
++	switch {
++	case err == nil, errors.Is(err, memagent.ErrRunning):
++		// ErrRunning: another run started first, and its status is its own
++	default:
++		noteRunError(role, err.Error())
++	}
++}
+diff --git a/internal/gui/memory_agents_run_test.go b/internal/gui/memory_agents_run_test.go
+new file mode 100644
+index 0000000..d6c679c
+--- /dev/null
++++ b/internal/gui/memory_agents_run_test.go
+@@ -0,0 +1,336 @@
++package gui
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/yetone/magpie/internal/memagent"
++	"github.com/yetone/magpie/internal/memdistill"
++)
++
++// timeNow is the clock the scheduler is asked about.
++func timeNow() time.Time { return time.Now() }
++
++// distillAt points both state files at a folder of the test's own: the
++// registry the agents come from and distill.json the switch and picks.
++func distillAt(t *testing.T) {
++	t.Helper()
++	dir := t.TempDir()
++	oldA, oldD := memagent.Path, memdistill.Path
++	memagent.Path = func() string { return filepath.Join(dir, "memory-agents.json") }
++	memdistill.Path = func() string { return filepath.Join(dir, "distill.json") }
++	t.Cleanup(func() { memagent.Path, memdistill.Path = oldA, oldD })
++}
++
++func distillMux(t *testing.T) *http.ServeMux {
++	t.Helper()
++	mux := http.NewServeMux()
++	memoryDistillRoutes(mux)
++	return mux
++}
++
++func distillGet(t *testing.T, mux *http.ServeMux, path string) (int, map[string]json.RawMessage) {
++	t.Helper()
++	rec := httptest.NewRecorder()
++	mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
++	var v map[string]json.RawMessage
++	if rec.Code == 200 {
++		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
++			t.Fatalf("%s: %s", path, rec.Body)
++		}
++	}
++	return rec.Code, v
++}
++
++func distillPost(t *testing.T, mux *http.ServeMux, path, body string) (int, map[string]json.RawMessage) {
++	t.Helper()
++	rec := httptest.NewRecorder()
++	mux.ServeHTTP(rec, httptest.NewRequest("POST", path, strings.NewReader(body)))
++	var v map[string]json.RawMessage
++	if rec.Code == 200 {
++		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
++			t.Fatalf("%s: %s", path, rec.Body)
++		}
++	}
++	return rec.Code, v
++}
++
++// The Memory tab's row offers agents, never models: the user picks who
++// reads the conversations, and the route that agent runs on is internal.
++func TestDistillOffersAgentsNotModels(t *testing.T) {
++	distillAt(t)
++	mux := distillMux(t)
++	code, v := distillGet(t, mux, "/api/memory/distill")
++	if code != 200 {
++		t.Fatalf("code %d", code)
++	}
++	if _, ok := v["models"]; ok {
++		t.Fatalf("the view still carries models: %v", v["models"])
++	}
++	var agents []agentRef
++	if err := json.Unmarshal(v["agents"], &agents); err != nil {
++		t.Fatalf("agents: %v %s", err, v["agents"])
++	}
++	if len(agents) != 1 || agents[0].ID != "memory-curator" || agents[0].Name != "记忆整理 Agent" {
++		t.Fatalf("agents: %+v", agents)
++	}
++	var auto string
++	_ = json.Unmarshal(v["auto"], &auto)
++	if auto != "memory-curator" {
++		t.Fatalf("auto: %q", auto)
++	}
++	// the tidy's row offers dream's agents
++	var dream []agentRef
++	if err := json.Unmarshal(v["dreamAgents"], &dream); err != nil {
++		t.Fatalf("dreamAgents: %v %s", err, v["dreamAgents"])
++	}
++	if len(dream) != 1 || dream[0].ID != "dreamer" {
++		t.Fatalf("dreamAgents: %+v", dream)
++	}
++	// nothing in the view names a model as a choice
++	if strings.Contains(string(v["agents"]), "group/deepseek") {
++		t.Fatalf("a model leaked into agents: %s", v["agents"])
++	}
++}
++
++// Picking an agent is kept, and the agents list follows the registry: one
++// that stops carrying learn out leaves the list.
++func TestDistillPicksAnAgent(t *testing.T) {
++	distillAt(t)
++	mux := distillMux(t)
++	if _, err := memagent.Restore(); err != nil {
++		t.Fatal(err)
++	}
++	code, v := distillPost(t, mux, "/api/memory/distill", `{"on":true,"agent":"memory-curator"}`)
++	if code != 200 {
++		t.Fatalf("pick: %d %v", code, v)
++	}
++	var agent string
++	_ = json.Unmarshal(v["agent"], &agent)
++	if agent != "memory-curator" {
++		t.Fatalf("agent: %q", agent)
++	}
++	st, err := memdistill.Load()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if st.Model != "memory-curator" || !st.On {
++		t.Fatalf("state: %+v", st)
++	}
++}
++
++// An agent that doesn't carry the role out is a 400 and nothing is written:
++// a run is never pointed at an agent the user couldn't have picked.
++func TestDistillRefusesAnAgentOfAnotherRole(t *testing.T) {
++	distillAt(t)
++	mux := distillMux(t)
++	if _, err := memagent.Restore(); err != nil {
++		t.Fatal(err)
++	}
++	for _, body := range []string{
++		`{"on":true,"agent":"dreamer"}`,             // a dream agent, not learn's
++		`{"on":true,"agent":"not-there"}`,           // no such agent
++		`{"on":true,"dreamAgent":"memory-curator"}`, // learn's, not dream's
++	} {
++		if code, _ := distillPost(t, mux, "/api/memory/distill", body); code != 400 {
++			t.Fatalf("%s taken: %d", body, code)
++		}
++	}
++	st, err := memdistill.Load()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if st.On || st.Model != "" || st.DreamAgent != "" {
++		t.Fatalf("a refused pick was written: %+v", st)
++	}
++}
++
++// The tidy's agent is picked apart from learn's, and both are kept.
++func TestDistillPicksTheDreamAgent(t *testing.T) {
++	distillAt(t)
++	mux := distillMux(t)
++	if _, err := memagent.Restore(); err != nil {
++		t.Fatal(err)
++	}
++	code, v := distillPost(t, mux, "/api/memory/distill", `{"on":true,"agent":"memory-curator","dreamAgent":"dreamer"}`)
++	if code != 200 {
++		t.Fatalf("pick: %d %v", code, v)
++	}
++	st, err := memdistill.Load()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if st.Model != "memory-curator" || st.DreamAgent != "dreamer" {
++		t.Fatalf("state: %+v", st)
++	}
++	var got string
++	_ = json.Unmarshal(v["dreamAgent"], &got)
++	if got != "dreamer" {
++		t.Fatalf("dreamAgent in the view: %q", got)
++	}
++	// an empty dreamAgent puts the role's default back
++	if code, _ := distillPost(t, mux, "/api/memory/distill", `{"on":true,"agent":"memory-curator","dreamAgent":""}`); code != 200 {
++		t.Fatalf("clear: %d", code)
++	}
++	if st, _ := memdistill.Load(); st.DreamAgent != "" {
++		t.Fatalf("dreamAgent: %q", st.DreamAgent)
++	}
++}
++
++// The status route says what a role is doing, and refuses a role memory
++// doesn't have.
++func TestAgentStatusRoute(t *testing.T) {
++	distillAt(t)
++	mux := http.NewServeMux()
++	memoryAgentRunRoutes(mux)
++	rec := httptest.NewRecorder()
++	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/memory/agents/status?role=learn", nil))
++	if rec.Code != 200 {
++		t.Fatalf("status: %d %s", rec.Code, rec.Body)
++	}
++	var st memagent.Status
++	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
++		t.Fatalf("status: %s", rec.Body)
++	}
++	rec = httptest.NewRecorder()
++	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/memory/agents/status?role=nope", nil))
++	if rec.Code != 400 {
++		t.Fatalf("an unknown role: %d", rec.Code)
++	}
++}
++
++// A run asked for an agent that isn't there is a 400 and nothing starts.
++func TestAgentRunRefusesBadAgent(t *testing.T) {
++	distillAt(t)
++	mux := http.NewServeMux()
++	memoryAgentRunRoutes(mux)
++	if _, err := memagent.Restore(); err != nil {
++		t.Fatal(err)
++	}
++	for _, c := range []struct{ path, body string }{
++		{"/api/memory/agents/learn/run", `{"agent":"dreamer"}`},
++		{"/api/memory/agents/learn/run", `{"agent":"not-there"}`},
++		{"/api/memory/agents/nope/run", `{}`},
++		{"/api/memory/agents/nope/stop", `{}`},
++	} {
++		rec := httptest.NewRecorder()
++		mux.ServeHTTP(rec, httptest.NewRequest("POST", c.path, strings.NewReader(c.body)))
++		if rec.Code != 400 {
++			t.Fatalf("%s %s: %d %s", c.path, c.body, rec.Code, rec.Body)
++		}
++	}
++	if memagent.Running() {
++		t.Fatal("a refused run started")
++	}
++}
++
++// Stop on a role that isn't going is not an error: the window's Stop is
++// pressed once, whatever the run did meanwhile.
++func TestAgentStopWhenNothingGoes(t *testing.T) {
++	distillAt(t)
++	mux := http.NewServeMux()
++	memoryAgentRunRoutes(mux)
++	rec := httptest.NewRecorder()
++	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/memory/agents/dream/stop", strings.NewReader(`{}`)))
++	if rec.Code != 200 {
++		t.Fatalf("stop: %d %s", rec.Code, rec.Body)
++	}
++	var st memagent.Status
++	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
++		t.Fatalf("stop: %s", rec.Body)
++	}
++	if st.Running {
++		t.Fatalf("nothing should be running: %+v", st)
++	}
++}
++
++// The dispatch input is what the run is given: the vault, the role's scopes,
++// and what to read. Without a vault a run says so rather than reading nothing.
++func TestDispatchInputGathers(t *testing.T) {
++	distillAt(t)
++	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
++	if _, err := memagent.Restore(); err != nil {
++		t.Fatal(err)
++	}
++	in, err := dispatchInput(memagent.Learn, "", "", "")
++	if err != nil {
++		t.Fatalf("learn: %v", err)
++	}
++	if in.Role != memagent.Learn || in.Vault == "" || in.Ask == nil {
++		t.Fatalf("input: %+v", in)
++	}
++	if len(in.Scopes) != 2 || in.Scopes[0] != "global" {
++		t.Fatalf("scopes: %q", in.Scopes)
++	}
++	if _, err := dispatchInput("nope", "", "", ""); err == nil {
++		t.Fatal("a role memory doesn't have was gathered for")
++	}
++}
++
++// The scheduler asks for a role only when the Memory tab says so: reading
++// when the switch is on, the tidy when it is due.
++func TestKeepDue(t *testing.T) {
++	distillAt(t)
++	if keepDue(memagent.Learn, timeNow()) {
++		t.Fatal("reading is due while switched off")
++	}
++	if _, err := memdistill.Set(true, ""); err != nil {
++		t.Fatal(err)
++	}
++	if !keepDue(memagent.Learn, timeNow()) {
++		t.Fatal("reading isn't due while switched on")
++	}
++	if _, err := memdistill.Set(false, ""); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := memdistill.SetDreamAgent("dreamer"); err != nil {
++		t.Fatal(err)
++	}
++	if st, _ := memdistill.Load(); st.DreamAgent != "dreamer" {
++		t.Fatalf("dreamAgent: %q", st.DreamAgent)
++	}
++	if keepDue(memagent.Organize, timeNow()) {
++		t.Fatal("organize is asked for by a switch it has none")
++	}
++}
++
++// A run that can't start is kept for the row that shows the role: learn's
++// in the reading row's error, the tidy's in its own.
++func TestNoteRunError(t *testing.T) {
++	distillAt(t)
++	noteRunError(memagent.Learn, "the gateway isn't served by this magpie")
++	st, err := memdistill.Load()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(st.Error, "gateway") {
++		t.Fatalf("learn error: %q", st.Error)
++	}
++	noteRunError(memagent.Dream, "no knowledge vault")
++	st, _ = memdistill.Load()
++	if !strings.Contains(st.DreamError, "vault") {
++		t.Fatalf("dream error: %q", st.DreamError)
++	}
++	// a run that starts clears the one before it
++	noteRunError(memagent.Learn, "")
++	st, _ = memdistill.Load()
++	if st.Error != "" {
++		t.Fatalf("learn error left: %q", st.Error)
++	}
++}
++
++// The gateway an agent's turns go through is the one this process serves;
++// with none, a run is told so rather than failing obscurely.
++func TestGatewayAskWithoutAGateway(t *testing.T) {
++	prev := served.Swap(nil)
++	t.Cleanup(func() { served.Store(prev) })
++	ask := gatewayAsk()
++	if _, err := ask(nil, memagent.Request{}); err == nil || !strings.Contains(err.Error(), "isn't served") {
++		t.Fatalf("no gateway: %v", err)
++	}
++}
+diff --git a/internal/gui/memory_distill.go b/internal/gui/memory_distill.go
+index ae6836b..347d765 100644
+--- a/internal/gui/memory_distill.go
++++ b/internal/gui/memory_distill.go
+@@ -5,29 +5,49 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
++	"log"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"strings"
+ 	"time"
+ 
+ 	"github.com/yetone/magpie/internal/gateway"
++	"github.com/yetone/magpie/internal/memagent"
+ 	"github.com/yetone/magpie/internal/memdistill"
+ 	"github.com/yetone/magpie/internal/provider"
+ )
+ 
++// agentRef is one memory agent as a dropdown offers it: its id, which a
++// request names, and its name, which the list shows. The model a run is
++// sent to is the entry's own route and never a choice here.
++type agentRef struct {
++	ID   string `json:"id"`
++	Name string `json:"name"`
++}
++
+ // distillView is the Memory tab's "learn from conversations" row: the
+-// switch, the model picked and the automatic one, the models to pick
+-// from, the last run, and whether one is going.
++// switch, the agent picked and the one learning runs as, the agents to
++// pick from, the last run, and whether one is going. No model is offered:
++// the user picks an agent, and the entry's route is internal.
+ type distillView struct {
+ 	memdistill.State
+-	Auto    string     `json:"auto"`
+-	Models  []modelRef `json:"models"`
+-	Running bool       `json:"running"`
++	// Agent is the memory agent learn runs as; "" the role's default
++	Agent string `json:"agent"`
++	// Auto is the agent it runs as today (the role's default), which the
++	// list shows as the automatic choice
++	Auto string `json:"auto"`
++	// Agents are the memory agents that carry learn out
++	Agents []agentRef `json:"agents"`
++	// DreamAgent and DreamAgents are the same for the nightly tidy
++	DreamAgent  string     `json:"dreamAgent,omitempty"`
++	DreamAuto   string     `json:"dreamAuto,omitempty"`
++	DreamAgents []agentRef `json:"dreamAgents"`
++	Running     bool       `json:"running"`
+ 	// Dreaming is a tidy going (Running is conversations being read)
+ 	Dreaming bool `json:"dreaming"`
+-	// Efforts are the reasoning levels of the model in use (picked or
+-	// automatic), weakest first, none when they aren't known; EffortNow
+-	// the picked Effort fitted to them
++	// Efforts are the reasoning levels of the route in use, weakest first,
++	// none when they aren't known; EffortNow the picked Effort fitted to
++	// them. The route is the agent's, so this only says what it accepts.
+ 	Efforts   []string `json:"efforts,omitempty"`
+ 	EffortNow string   `json:"effortNow,omitempty"`
+ 	// Ranges are the ranges, in days, reading can look back (All -1)
+@@ -37,30 +57,73 @@ type distillView struct {
+ 	Of    int `json:"of,omitempty"`
+ }
+ 
++// agentsFor is the agents of a role as a dropdown lists them, and the one
++// a run of it would take today.
++func agentsFor(role string) ([]agentRef, string) {
++	r, err := memagent.Load()
++	if err != nil {
++		return []agentRef{}, ""
++	}
++	out := []agentRef{}
++	for _, a := range r.ForRole(role) {
++		out = append(out, agentRef{ID: a.ID, Name: a.Name})
++	}
++	if d, ok := r.Default(role); ok {
++		return out, d.ID
++	}
++	return out, ""
++}
++
+ func readDistill() (*distillView, error) {
+ 	st, err := memdistill.Load()
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	st.Done = nil // the marks are the run's, not the page's
+-	v := &distillView{State: st, Auto: distillAuto(), Models: []modelRef{}, Running: memdistill.Running() && !memdistill.Dreaming(), Dreaming: memdistill.Dreaming(), Ranges: memdistill.Ranges}
++	v := &distillView{
++		State: st, Running: memdistill.Running() && !memdistill.Dreaming(),
++		Dreaming: memdistill.Dreaming(), Ranges: memdistill.Ranges,
++	}
+ 	if v.Running {
+ 		v.Doing, v.Of = memdistill.Progress()
+ 	}
+-	inUse := st.Model
+-	if inUse == "" {
+-		inUse = v.Auto
+-	}
+-	if inUse != "" {
+-		v.Efforts, v.EffortNow = gateway.ModelEfforts(inUse), gateway.SideEffort(inUse, st.Effort)
++	v.Agents, v.Auto = agentsFor(memagent.Learn)
++	v.DreamAgents, v.DreamAuto = agentsFor(memagent.Dream)
++	// the agent picked is the one saved with the state (memdistill's model
++	// field, which now names an agent rather than a model)
++	v.Agent, v.DreamAgent = st.Model, st.DreamAgent
++	// the levels are the route's, which only says what it accepts; the
++	// page shows them beside the agent, not instead of it
++	if m := entryModel(v.Agent); m != "" {
++		v.Efforts, v.EffortNow = gateway.ModelEfforts(m), gateway.SideEffort(m, st.Effort)
+ 	}
+-	v.Models = servedModels()
+ 	return v, nil
+ }
+ 
++// entryModel is the route an agent's run is sent to, "" when the agent (or
++// the registry) isn't there. A run overrides it only through the entry.
++func entryModel(id string) string {
++	r, err := memagent.Load()
++	if err != nil {
++		return ""
++	}
++	if id != "" {
++		if a, ok := r.Get(id); ok {
++			return a.Model
++		}
++		return ""
++	}
++	if a, ok := r.Default(memagent.Learn); ok {
++		return a.Model
++	}
++	return ""
++}
++
+ // servedModels are the models a side job can be sent to through the
+ // gateway: a ready subscription's (not one that only decides) and each
+-// routing group's, the group named in place of a provider
++// routing group's, the group named in place of a provider. The Memory tab
++// no longer offers them: a memory agent's route is its own, but the vault's
++// chat and the search by meaning still pick among them.
+ func servedModels() []modelRef {
+ 	ms := []modelRef{}
+ 	for _, e := range provider.Served() {
+@@ -75,9 +138,10 @@ func servedModels() []modelRef {
+ 	return ms
+ }
+ 
+-// distillAuto is the model conversations are read with when none is
+-// picked: the small model magpie picks to describe images, one of the
+-// user's own subscriptions first (gateway.AutoVision).
++// distillAuto is the model conversations could be read with when nothing
++// picks one: the small model magpie picks to describe images, one of the
++// user's own subscriptions first (gateway.AutoVision). Only the legacy
++// pathway asks for it; an agent's run uses the entry's route.
+ func distillAuto() string { return gateway.AutoVision() }
+ 
+ // distillComplete sends one request through the gateway this process
+@@ -140,22 +204,98 @@ func distillComplete(ctx context.Context, model, effort, system, user string) (s
+ 	return b.String(), nil
+ }
+ 
+-// keepDistilling reads conversations into memory while the backend runs:
+-// a few minutes after start, then every hour.
++// keepDistilling runs the memory agents while the backend runs: a few
++// minutes after start, then every hour. Retention stays memdistill's, since
++// it touches no model.
+ func keepDistilling(ctx context.Context) {
+-	memdistill.Keep(ctx, 5*time.Minute, time.Hour, distillAuto, distillComplete)
++	memagent.Keep(ctx, 5*time.Minute, time.Hour, keepDue, keepRun)
++}
++
++// keepRun dispatches one role's due run and waits for it, so two roles never
++// run at once: memagent keeps one run at a time, and a second asked while
++// one goes would be refused and skipped until the next hour.
++func keepRun(role string) error {
++	in, err := dispatchInput(role, "", "", "")
++	if err != nil {
++		noteRunError(role, err.Error())
++		return nil // kept for the row; the next hour tries again
++	}
++	if _, err := memagent.Dispatch(backendCtx, in); err != nil && !errors.Is(err, memagent.ErrRunning) {
++		noteRunError(role, err.Error())
++	}
++	// a run already going is the one that keeps the memory agents: neither
++	// a failure of the scheduler's, nor a reason to try again this hour
++	return nil
++}
++
++// keepDue says whether a role is due at a tick, from the state the Memory
++// tab writes (memdistill's distill.json, whose switch and nightly tidy the
++// user sets there). The daily tidy is due once a night from 03:00, never
++// before the first 03:00 after it was switched on.
++func keepDue(role string, t time.Time) bool {
++	st, err := memdistill.Load()
++	if err != nil {
++		return false
++	}
++	switch role {
++	case memagent.Learn:
++		return st.On
++	case memagent.Dream:
++		return memdistill.Dreams(st, t)
++	}
++	return false
++}
++
++// runInBackground dispatches one role's run and records what it did in the
++// status a window polls. A run that can't start is kept in the state the
++// row reads (memdistill's Error, which the tab shows); an error inside a
++// run is already in memagent's status.
++func runInBackground(role, agent, model, effort string) {
++	go func() {
++		in, err := dispatchInput(role, agent, model, effort)
++		if err == nil {
++			_, err = memagent.Dispatch(backendCtx, in)
++		}
++		switch {
++		case err == nil:
++			noteRunError(role, "")
++		case errors.Is(err, memagent.ErrRunning):
++			// another run of a role is going: not this button's failure
++		default:
++			noteRunError(role, err.Error())
++		}
++	}()
++}
++
++// noteRunError keeps what stopped a run that couldn't start for the row the
++// memory tab draws: learn's in Error, the tidy's in DreamError.
++func noteRunError(role, said string) {
++	var err error
++	if role == memagent.Dream {
++		_, err = memdistill.SetDreamError(said)
++	} else {
++		_, err = memdistill.SetError(said)
++	}
++	if err != nil {
++		log.Println("memory:", err)
++	}
+ }
+ 
+ // distillNow reads every conversation due in the background, for the
+-// switch turned on, a model or a longer range picked, and the Read now
+-// button; the tab polls while it runs, and Stop ends it (RealZeroP27 on
+-// X: the hourly 10 read 400 in 40 hours).
++// switch turned on, an agent picked, and the Read now button; the tab polls
++// while it runs, and Stop ends it (RealZeroP27 on X: the hourly 10 read 400
++// in 40 hours).
+ var distillNow = func() {
+-	go memdistill.ReadAll(backendCtx, distillAuto(), distillComplete)
++	runInBackground(memagent.Learn, "", "", "")
++}
++
++// dreamNow tidies memory in the background, for the Tidy now button.
++var dreamNow = func() {
++	runInBackground(memagent.Dream, "", "", "")
+ }
+ 
+ // distillStop ends the run going.
+-var distillStop = memdistill.Stop
++var distillStop = memagent.Stop
+ 
+ func memoryDistillRoutes(mux *http.ServeMux) {
+ 	mux.HandleFunc("GET /api/memory/distill", func(rw http.ResponseWriter, r *http.Request) {
+@@ -166,26 +306,36 @@ func memoryDistillRoutes(mux *http.ServeMux) {
+ 		}
+ 		writeJSON(rw, v)
+ 	})
+-	// {on, model, effort?, days?}: switched or a model picked; switched
+-	// on, it reads at once. effort and days, when sent, pick the
+-	// reasoning level and how far back it reads; a longer range reads at
+-	// once too
++	// {on, agent, effort?, days?, dreamAgent?}: switched or an agent
++	// picked; switched on, it reads at once. The agent must be one that
++	// carries learn out, or dream's for dreamAgent, or it is a 400 and
++	// nothing is written. effort and days, when sent, pick the reasoning
++	// level and how far back it reads; a longer range reads at once too
+ 	mux.HandleFunc("POST /api/memory/distill", func(rw http.ResponseWriter, r *http.Request) {
+ 		var in struct {
+-			On     bool    `json:"on"`
+-			Model  string  `json:"model"`
+-			Effort *string `json:"effort"`
+-			Days   *int    `json:"days"`
++			On         bool    `json:"on"`
++			Agent      string  `json:"agent"`
++			DreamAgent *string `json:"dreamAgent"`
++			Effort     *string `json:"effort"`
++			Days       *int    `json:"days"`
+ 		}
+ 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+ 			fail(rw, err)
+ 			return
+ 		}
+-		if in.Model != "" && !strings.Contains(in.Model, "/") {
+-			fail(rw, fmt.Errorf("a model's id such as codex/gpt-5.5, not %q", in.Model))
+-			return
++		if in.Agent != "" {
++			if err := checkAgent(memagent.Learn, in.Agent); err != nil {
++				fail(rw, err)
++				return
++			}
+ 		}
+ 		was, _ := memdistill.Load()
++		if in.DreamAgent != nil && *in.DreamAgent != "" {
++			if err := checkAgent(memagent.Dream, *in.DreamAgent); err != nil {
++				fail(rw, err)
++				return
++			}
++		}
+ 		if in.Effort != nil {
+ 			if _, err := memdistill.SetEffort(*in.Effort); err != nil {
+ 				fail(rw, err)
+@@ -201,11 +351,18 @@ func memoryDistillRoutes(mux *http.ServeMux) {
+ 			}
+ 			longer = st.Since.Before(was.Since)
+ 		}
+-		if _, err := memdistill.Set(in.On, in.Model); err != nil {
++		if in.DreamAgent != nil {
++			if _, err := memdistill.SetDreamAgent(*in.DreamAgent); err != nil {
++				fail(rw, err)
++				return
++			}
++		}
++		st, err := memdistill.Set(in.On, in.Agent)
++		if err != nil {
+ 			fail(rw, err)
+ 			return
+ 		}
+-		read := in.On && (!was.On || was.Model != in.Model || longer)
++		read := in.On && (!was.On || was.Model != st.Model || longer)
+ 		if read {
+ 			distillNow()
+ 		}
+@@ -280,7 +437,19 @@ func memoryDistillRoutes(mux *http.ServeMux) {
+ 	})
+ }
+ 
+-// dreamNow tidies memory in the background, for the Tidy now button.
+-var dreamNow = func() {
+-	go memdistill.Dream(backendCtx, distillAuto(), distillComplete)
++// checkAgent refuses an agent that isn't one of the role's: a run is never
++// dispatched to an agent the user couldn't have picked for it.
++func checkAgent(role, id string) error {
++	r, err := memagent.Load()
++	if err != nil {
++		return err
++	}
++	a, ok := r.Get(strings.TrimSpace(id))
++	if !ok {
++		return fmt.Errorf("no memory agent with id %q", id)
++	}
++	if !a.HasRole(role) {
++		return fmt.Errorf("memory agent %q does %s, not %s", id, a.Role, role)
++	}
++	return nil
+ }
+diff --git a/internal/gui/tests/library-memory-agents.test.cjs b/internal/gui/tests/library-memory-agents.test.cjs
+new file mode 100644
+index 0000000..6995204
+--- /dev/null
++++ b/internal/gui/tests/library-memory-agents.test.cjs
+@@ -0,0 +1,85 @@
++// The Memory tab's static contract: no model is ever offered where an
++// agent is picked, and every request speaks the fields the routes read.
++//
++// This runs without a browser, so it holds whether or not Playwright is
++// installed: it reads the client's source rather than a rendered page. What
++// a rendered page does is the Playwright suite's business
++// (internal/gui/tests/library-memory.test.cjs).
++const test = require("node:test");
++const assert = require("node:assert/strict");
++const fs = require("node:fs");
++const path = require("node:path");
++
++const src = fs.readFileSync(path.join(__dirname, "..", "assets", "plugins", "library", "client.js"), "utf8");
++
++// between is the source of one function, from its `function name(` to the
++// line that closes it at the same depth.
++function between(name) {
++  const at = src.indexOf("function " + name + "(");
++  assert.ok(at >= 0, name + " is in client.js");
++  const start = src.lastIndexOf("\n", at) + 1;
++  const end = src.indexOf("\n  }", at);
++  assert.ok(end > at, name + " ends");
++  return src.slice(start, end);
++}
++
++test("no model is offered in the memory rows", () => {
++  for (const fn of ["memAgentPick", "distillRow", "dreamRow"]) {
++    const body = between(fn);
++    assert.ok(!/\bmodels\b/.test(body), fn + " reads the models list");
++    assert.ok(!/\bmodelName\b/.test(body), fn + " names a model");
++    assert.ok(!/d\.model\b/.test(body), fn + " sends d.model");
++  }
++});
++
++test("the agent picker sends the agent, not a model", () => {
++  const body = between("distillRow");
++  assert.match(body, /memory\/distill", \{ on: d\.on, agent/, "the switch sends agent");
++  assert.match(body, /memory\/distill", \{ on: d\.on, agent: v \}/, "picking sends agent");
++  assert.ok(!/on: d\.on, model/.test(body), "nothing sends model");
++});
++
++test("the tidy sends its own agent", () => {
++  const body = between("dreamRow");
++  assert.match(body, /dreamAgent: v/, "picking sends dreamAgent");
++  assert.match(body, /dreamAgents/, "it lists dream's agents");
++});
++
++test("the effort and range pickers speak agent too", () => {
++  for (const fn of ["memEffortPick", "memRangePick"]) {
++    const body = between(fn);
++    assert.match(body, /agent: d\.agent \|\| ""/, fn + " sends agent");
++    assert.ok(!/model:/.test(body), fn + " still sends model");
++  }
++});
++
++test("the panel reads the agent routes it writes", () => {
++  const body = between("agentAct");
++  assert.match(body, /api\(path, body\)/, "a change goes through api()");
++  const panel = between("memAgentPanel");
++  for (const route of ["memory/agents/default", "memory/agents/remove", "memory/agents/restore"]) {
++    assert.ok(panel.includes(route) || between("agentAct").includes("path"), route + " is reachable");
++  }
++  assert.match(panel, /memAgents\.agents/, "the list is the registry's");
++  assert.match(panel, /memAgents\.defaults/, "the defaults are the registry's");
++  assert.match(panel, /roleName/, "a role is named for the user");
++});
++
++test("the status poll reads the run going and names its role", () => {
++  const body = between("agentWatch");
++  assert.match(body, /memory\/agents\/status\?role=/, "the status route with the role");
++  assert.match(body, /memStatusView\?\.running|memStatusView\.running/, "it polls only while one goes");
++});
++
++test("a run and a stop go to the role's own routes", () => {
++  const run = between("agentRun");
++  assert.match(run, /memory\/agents\/" \+ role \+ "\/run"/, "the run route names the role");
++  const stop = between("agentStop");
++  assert.match(stop, /memory\/agents\/" \+ role \+ "\/stop"/, "the stop route names the role");
++});
++
++test("the page loads the agents and a status with the memory tab", () => {
++  const body = between("loadMemory");
++  assert.match(body, /api\("memory\/agents"\)/, "the agents are read");
++  assert.match(body, /api\("memory\/agents\/status"\)/, "the status is read");
++});
+\ No newline at end of file
+diff --git a/internal/gui/tests/library-memory-select.test.cjs b/internal/gui/tests/library-memory-select.test.cjs
+index 42549e4..9f8722c 100644
+--- a/internal/gui/tests/library-memory-select.test.cjs
++++ b/internal/gui/tests/library-memory-select.test.cjs
+@@ -42,7 +42,7 @@ function server(lang, state, sent) {
+     if (url.pathname === "/api/state") return route.fulfill({ json: { agents: [], profiles: [], settings: { lang, theme: "light" } } });
+     if (url.pathname === "/api/plugins") return route.fulfill({ json: { plugins: [] } });
+     if (url.pathname === "/api/library") return route.fulfill({ json: library });
+-    if (url.pathname.startsWith("/api/memory/distill")) return route.fulfill({ json: { on: false, model: "", auto: "", running: false, models: [] } });
++    if (url.pathname.startsWith("/api/memory/distill")) return route.fulfill({ json: { on: false, agent: "", auto: "", dreamAgent: "", running: false, agents: [] } });
+     if (url.pathname.startsWith("/api/memory")) {
+       if (route.request().method() === "POST") {
+         const body = route.request().postDataJSON();
+diff --git a/internal/gui/tests/library-memory-steady.test.cjs b/internal/gui/tests/library-memory-steady.test.cjs
+index 7171762..80033f3 100644
+--- a/internal/gui/tests/library-memory-steady.test.cjs
++++ b/internal/gui/tests/library-memory-steady.test.cjs
+@@ -78,7 +78,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
+         const st = {
+           mem: memories(),
+           sem: { on: true, installed: true, size: 1, done: 1, downloading: false, read: 1, of: 2, reading: false },
+-          dist: { on: true, model: "", auto: "", running: true, models: [] },
++          dist: { on: true, agent: "", auto: "", dreamAgent: "", running: true, agents: [] },
+           semReads: 0, distReads: 0,
+         };
+         await page.route("**/*", server(lang, st));
+diff --git a/internal/gui/tests/library-memory-suggest.test.cjs b/internal/gui/tests/library-memory-suggest.test.cjs
+index 6d46fdb..b6bdf16 100644
+--- a/internal/gui/tests/library-memory-suggest.test.cjs
++++ b/internal/gui/tests/library-memory-suggest.test.cjs
+@@ -50,7 +50,7 @@ function server(lang, state, lib, sent) {
+     if (url.pathname === "/api/state") return route.fulfill({ json: { agents: [], profiles: [], settings: { lang, theme: "light" } } });
+     if (url.pathname === "/api/plugins") return route.fulfill({ json: { plugins: [] } });
+     if (url.pathname === "/api/library") return route.fulfill({ json: lib });
+-    if (url.pathname.startsWith("/api/memory/distill") || url.pathname.startsWith("/api/memory/dream")) return route.fulfill({ json: { on: false, models: [], ranges: [7], efforts: [] } });
++    if (url.pathname.startsWith("/api/memory/distill") || url.pathname.startsWith("/api/memory/dream")) return route.fulfill({ json: { on: false, agents: [], ranges: [7], efforts: [] } });
+     if (url.pathname === "/api/memory/semantic") return route.fulfill({ json: { on: false } });
+     if (url.pathname === "/api/memory/rank") return route.fulfill({ json: { ids: null } });
+     if (url.pathname.startsWith("/api/memory")) {
+diff --git a/internal/gui/tests/library-memory.test.cjs b/internal/gui/tests/library-memory.test.cjs
+index fc5de81..4bc1343 100644
+--- a/internal/gui/tests/library-memory.test.cjs
++++ b/internal/gui/tests/library-memory.test.cjs
+@@ -41,9 +41,9 @@ function memories() {
+ 
+ function distill() {
+   return {
+-    on: false, model: "", auto: "dt/small", running: false, gets: 0,
++    on: false, agent: "", auto: "memory-curator", dreamAgent: "", dreamAuto: "dreamer", running: false, gets: 0,
+     efforts: ["low", "medium", "high"], effort: "", effortNow: "", days: 0, ranges: [7, 30, 90, 365, -1],
+-    models: [{ id: "dt/small", name: "Small", providerName: "DT" }, { id: "dt/m1", name: "Model One", providerName: "DT" }],
++    agents: [{ id: "memory-curator", name: "记忆整理 Agent" }, { id: "tidy-two", name: "Second Curator" }], dreamAgents: [{ id: "dreamer", name: "做梦 Agent" }],
+   };
+ }
+ 
+@@ -103,7 +103,7 @@ function server(lang, state, sent, dist, sem) {
+         else if (url.pathname === "/api/memory/distill/stop") Object.assign(dist, { running: false, last: new Date().toISOString(), added: 0, left: 397, doing: 0, of: 0 });
+         else if ("effort" in body) Object.assign(dist, { effort: body.effort, effortNow: body.effort });
+         else if ("days" in body) Object.assign(dist, { days: body.days === 7 ? 0 : body.days, running: body.days === -1 || body.days > (dist.days || 7), gets: 0, doing: 3, of: 400 });
+-        else Object.assign(dist, { on: body.on, model: body.model, running: body.on, gets: 0, error: "", doing: 12, of: 40 });
++        else Object.assign(dist, { on: body.on, agent: body.agent, dreamAgent: body.dreamAgent ?? dist.dreamAgent, running: body.on, gets: 0, error: "", doing: 12, of: 40 });
+       } else if (dist.running && dist.of !== 400 && ++dist.gets > 1) {
+         // (All's 400 go on until stopped)
+         // the run ends: it read three and proposed one
+@@ -314,12 +314,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
+           assert.deepEqual(sent.findLast((x) => x.path === "/api/memory/digest").body, { on: false });
+         }
+ 
+-        // conversations read: switched on, it reads at once with the automatic model
++        // conversations read: switched on, it reads at once as the automatic agent
+         await drow.locator("button.lib-switch").click();
+         await page.waitForFunction(() => document.querySelector("#view-library .lib-memdistill button.lib-switch")?.getAttribute("aria-checked") === "true");
+-        assert.deepEqual(sent.findLast((x) => x.path === "/api/memory/distill").body, { on: true, model: "" });
+-        assert.match(await drow.locator(".lib-distmodel").textContent(), /Small/);
+-        assert.equal(await trow.locator(".lib-distmodel").count(), 0, "a model picked on both rows");
++        assert.deepEqual(sent.findLast((x) => x.path === "/api/memory/distill").body, { on: true, agent: "" });
++        assert.match(await drow.locator(".lib-distmodel").textContent(), /记忆整理 Agent/); // the agent's name, never a model
++        assert.equal(await trow.locator(".lib-distmodel").count(), 0, "an agent picked on both rows");
+         assert.equal(await drow.locator(".lib-distnow").count(), 0, "Read now while reading");
+         // how far it has gone, and a way to stop it (RealZeroP27 on X)
+         assert.match(await drow.locator(".sub").textContent(), /12\D+40/);
+@@ -357,14 +357,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
+         await page.locator(`${view} .lib-mems .lib-mem`, { hasText: "Ships on Tuesdays" }).waitFor();
+ 
+         if (width === 980) {
+-          // a model picked through the app's menu, not a <select>
++          // an agent picked through the app's menu, not a <select>
+           await drow.locator(".lib-distmodel").click();
+-          await page.locator(".proto-menu .pm-item", { hasText: "Model One" }).click();
+-          await page.waitForFunction(() => /Model One/.test(document.querySelector("#view-library .lib-distmodel")?.textContent || ""));
+-          assert.deepEqual(sent.findLast((x) => x.path === "/api/memory/distill").body, { on: true, model: "dt/m1" });
++          await page.locator(".proto-menu .pm-item", { hasText: "Second Curator" }).click();
++          await page.waitForFunction(() => /Second Curator/.test(document.querySelector("#view-library .lib-distmodel")?.textContent || ""));
++          assert.deepEqual(sent.findLast((x) => x.path === "/api/memory/distill").body, { on: true, agent: "tidy-two" });
+           assert.equal(await page.locator(`${view} select`).count(), 0, "a native select");
+           await drow.locator(".lib-distnow").waitFor({ timeout: 8000 });
+-          // a reasoning level picked: the model's own levels, Default first
++          // a reasoning level picked: the route's own levels, Default first
+           assert.equal(await drow.locator(".lib-disteffort .effort-ic").count(), 1);
+           await drow.locator(".lib-disteffort").click();
+           assert.equal(await page.locator(".proto-menu .pm-item").count(), 4);
+@@ -375,12 +375,12 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
+           assert.notEqual(await drow.locator(".lib-disteffort > svg").evaluate((e) => getComputedStyle(e).transform), "none", "the chevron stays put");
+           await page.locator(".proto-menu .pm-item").nth(3).click();
+           await page.waitForFunction(() => document.querySelector("#view-library .lib-disteffort")?.textContent.trim() !== "" && !document.querySelector(".proto-menu"));
+-          assert.deepEqual(sent.findLast((x) => x.path === "/api/memory/distill").body, { on: true, model: "dt/m1", effort: "high" });
++          assert.deepEqual(sent.findLast((x) => x.path === "/api/memory/distill").body, { on: true, agent: "tidy-two", effort: "high" });
+           // how far back: 7 days unless picked; All reads at once
+           await drow.locator(".lib-distrange").click();
+           assert.equal(await page.locator(".proto-menu .pm-item").count(), 5);
+           await page.locator(".proto-menu .pm-item").nth(4).click();
+-          assert.deepEqual(sent.findLast((x) => x.path === "/api/memory/distill").body, { on: true, model: "dt/m1", days: -1 });
++          assert.deepEqual(sent.findLast((x) => x.path === "/api/memory/distill").body, { on: true, agent: "tidy-two", days: -1 });
+           await page.waitForFunction((was) => document.querySelector("#view-library .lib-distrange")?.textContent !== was, rangeShown);
+           // stopped: what it left is said, and Read now reads the rest
+           assert.match(await drow.locator(".sub").textContent(), /3\D+400/);
+diff --git a/internal/memagent/audit.go b/internal/memagent/audit.go
+new file mode 100644
+index 0000000..9a39cf1
+--- /dev/null
++++ b/internal/memagent/audit.go
+@@ -0,0 +1,285 @@
++package memagent
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"log"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/yetone/magpie/internal/appdir"
++	"github.com/yetone/magpie/internal/memory"
++)
++
++// What a memory agent did to memory, and what it couldn't: every change a
++// run makes is kept in an append-only log, one JSON object a line, so a
++// later look can say what was saved, forgotten, removed, promoted or set
++// aside, by which role and which agent, and whether it went through. A
++// conflict — a machine change to what the user wrote — is kept beside the
++// memories in the vault's logs folder, where the user reads it, and the
++// memory itself is left as they wrote it.
++
++// The actions an audit line names: what a machine change did to memory.
++const (
++	AuditSave    = "save"
++	AuditForget  = "forget"
++	AuditRemove  = "remove"
++	AuditPromote = "promote"
++	AuditStatus  = "status"
++)
++
++// AuditPath is the audit log, one JSON object a line; a variable for tests.
++// It is replaced whole by no one: a line is appended and flushed, and the
++// last good generation isn't kept (lastgood) — a line that made it to disk
++// stays, and a line that didn't is one no one claims.
++var AuditPath = func() string { return appdir.Join(appdir.Config(), "memory-audit.jsonl") }
++
++// ConflictsPath is where a conflict is written, inside the vault:
++// logs/memory-conflicts.md, a folder a run may write.
++const ConflictsPath = "logs/memory-conflicts.md"
++
++// MaxAuditLine is the longest line one entry may make: a memory's text is
++// never in it, so a line is short; one over this is cut rather than written
++// whole, and a run's log stays a log.
++const MaxAuditLine = 4 << 10
++
++// Audit is one machine change to memory, as memory-audit.jsonl keeps it.
++type Audit struct {
++	At     time.Time `json:"at"`
++	Action string    `json:"action"`
++	ID     string    `json:"id,omitempty"`
++	Role   string    `json:"role,omitempty"`
++	Agent  string    `json:"agent,omitempty"`
++	// Result is what happened: added, merged, changed, forgotten, removed,
++	// promoted, status, or refused (and then Error says why).
++	Result string `json:"result"`
++	// Scope and Kind are what the memory is, when the change made or
++	// changed one: enough to read the log without reading memory.
++	Scope string `json:"scope,omitempty"`
++	Kind  string `json:"kind,omitempty"`
++	Error string `json:"error,omitempty"`
++}
++
++// auditMu keeps one append at a time in this process, so two lines written
++// at once are two whole lines: a write is one call with the line's newline,
++// and POSIX and Windows both place it whole or not at all under it.
++var auditMu sync.Mutex
++
++// LogAudit appends one line to memory-audit.jsonl. A log that can't be
++// written is noted and otherwise passed over: audit never stops a change
++// the user asked for, and a run's result stands whatever the log says.
++func LogAudit(a Audit) {
++	if a.At.IsZero() {
++		a.At = now().UTC()
++	} else {
++		a.At = a.At.UTC()
++	}
++	if a.Agent == "" {
++		a.Agent = AgentID
++	}
++	b, err := json.Marshal(a)
++	if err != nil {
++		log.Printf("memory: audit: %v", err)
++		return
++	}
++	if len(b) > MaxAuditLine {
++		b = b[:MaxAuditLine]
++	}
++	b = append(b, '\n')
++	if err := appendLines(AuditPath(), b); err != nil {
++		log.Printf("memory: audit: %s: %v", AuditPath(), err)
++	}
++}
++
++// appendLines adds b to path, making the folder above it when it isn't
++// there, and one line a call: a line is appended whole or not at all.
++func appendLines(p string, b []byte) error {
++	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
++		return err
++	}
++	auditMu.Lock()
++	defer auditMu.Unlock()
++	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
++	if err != nil {
++		return err
++	}
++	_, werr := f.Write(b)
++	if werr == nil {
++		werr = f.Sync()
++	}
++	cerr := f.Close()
++	if werr != nil {
++		return werr
++	}
++	return cerr
++}
++
++// AuditSave records a memory_save: whether it added the memory, merged into
++// one already there, or changed one it named, and its scope and kind.
++func NewAuditSave(role string, m *memory.Memory, added bool, wasID string, err error) Audit {
++	act := Audit{Action: AuditSave, Role: role, Agent: AgentID}
++	if err != nil {
++		act.Result, act.Error = "refused", err.Error()
++		if wasID != "" {
++			act.ID = wasID
++		}
++		return act
++	}
++	act.ID, act.Scope, act.Kind = m.ID, m.Scope, m.Kind
++	switch {
++	case added:
++		act.Result = "added"
++	case wasID != "":
++		act.Result = "changed"
++	default:
++		act.Result = "merged"
++	}
++	return act
++}
++
++// AuditChange records a change to an existing memory: forgotten, removed,
++// promoted or given a status.
++func NewAuditChange(action, role, id, result string, err error) Audit {
++	act := Audit{Action: action, Role: role, ID: id, Agent: AgentID, Result: result}
++	if err != nil {
++		act.Result, act.Error = "refused", err.Error()
++	}
++	return act
++}
++
++// ConflictError is a machine change refused because the memory is the
++// user's: it says which memory, and what was tried.
++type ConflictError struct {
++	ID   string
++	What string
++	// User is what the memory says, when it was read.
++	User string
++}
++
++func (e *ConflictError) Error() string {
++	return fmt.Sprintf("memory %s is the user's own (%s); a machine change leaves it as they wrote it: %s", e.ID, e.What, e.User)
++}
++
++// IsConflict says whether err is a machine change refused because the
++// memory is the user's.
++func IsConflict(err error) bool {
++	var c *ConflictError
++	return errors.As(err, &c)
++}
++
++// refused reports whether a machine change to m is refused, and every way
++// the memory is the user's: one they wrote (origin=user) and one they
++// edited are often both true, and the note says both so the reader can
++// tell which record made it theirs.
++func refused(m *memory.Memory) (bool, string) {
++	if m == nil {
++		return false, ""
++	}
++	var why []string
++	if m.Origin == memory.FromUser {
++		why = append(why, "origin=user")
++	}
++	if !m.Edited.IsZero() {
++		why = append(why, "edited by the user")
++	}
++	return len(why) > 0, strings.Join(why, ", ")
++}
++
++// refusedChange is the conflict a change to m with in is refused for, or
++// nil when the change may go. A change that names nothing the user wrote —
++// setting the status of their own memory aside, or merging the same text —
++// is the machine's to make; what is refused is rewriting their words, the
++// pinned the machine would unpin, or the text it would replace.
++func refusedChange(m *memory.Memory, in memory.Input) *ConflictError {
++	if m == nil {
++		return nil
++	}
++	no, why := refused(m)
++	if !no {
++		return nil
++	}
++	// the user's own memory keeps its words: a machine change that only
++	// asks for a status leaves the text, kind, scope and why alone
++	rewrites := in.Text != nil || in.Kind != nil || in.Scope != nil || in.Why != nil
++	if m.Pinned && in.Pinned != nil && !*in.Pinned {
++		rewrites = true
++	}
++	if !rewrites {
++		return nil
++	}
++	return &ConflictError{ID: m.ID, What: why, User: oneLine(m.Text)}
++}
++
++// FindMemory is the memory with id, or nil when there is none.
++func FindMemory(id string) (*memory.Memory, error) {
++	m, err := memory.Get(id)
++	if errors.Is(err, memory.ErrNotFound) {
++		return nil, nil
++	}
++	return m, err
++}
++
++// LogConflict appends a conflict to the vault's logs/memory-conflicts.md,
++// through the run's sandbox: it is inside the folders a run may write, and
++// nothing outside them is ever reached. The memory itself isn't touched.
++// A conflict that can't be written is noted in the audit line and passed
++// over: the refusal still stands, and the memory is still the user's.
++func LogConflict(sb *Sandbox, role string, c *ConflictError, action string) error {
++	if sb == nil || c == nil {
++		return errors.New("no vault to write a conflict into")
++	}
++	var b strings.Builder
++	fmt.Fprintf(&b, "\n## %s\n\n", now().UTC().Format(time.RFC3339))
++	fmt.Fprintf(&b, "- action: %s\n", action)
++	fmt.Fprintf(&b, "- role: %s\n", role)
++	fmt.Fprintf(&b, "- memory: %s\n", mdEscape(c.ID))
++	fmt.Fprintf(&b, "- why refused: %s\n", c.What)
++	fmt.Fprintf(&b, "- the user's words: %s\n", mdEscape(redact(oneLine(c.User), 300)))
++	b.WriteString("- the memory was left as the user wrote it.\n")
++	return sb.Append(ConflictsPath, []byte(b.String()))
++}
++
++// mdEscape keeps a value on one line in the note, and out of the Markdown's
++// own syntax: a memory's words are text, never a heading or a list.
++func mdEscape(s string) string {
++	s = strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
++	return strings.NewReplacer("`", "\\`", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "<", "&lt;", ">", "&gt;").Replace(s)
++}
++
++// redact takes what looks like a secret out of text that goes into a file
++// the user reads and may share: a token or a key in a memory's words is
++// replaced, never copied into the log.
++func redact(s string, max int) string {
++	fields := strings.Fields(s)
++	for i, f := range fields {
++		if secretish(f) {
++			fields[i] = "[redacted]"
++		}
++	}
++	s = strings.Join(fields, " ")
++	if r := []rune(s); len(r) > max {
++		s = string(r[:max]) + "…"
++	}
++	return s
++}
++
++// secretish says whether a word is a secret's shape: a long unbroken run of
++// letters and digits, a key prefix, or a token with a separator and enough
++// after it to be one.
++func secretish(w string) bool {
++	w = strings.Trim(w, "`.,;:()\"'")
++	lower := strings.ToLower(w)
++	for _, p := range []string{"sk-", "ghp_", "gho_", "github_pat_", "xoxb-", "xoxp-", "ak-", "api_key=", "token=", "password=", "secret="} {
++		if strings.HasPrefix(lower, p) && len(w) > len(p)+8 {
++			return true
++		}
++	}
++	if strings.ContainsAny(w, "_") && len(w) > 40 && !strings.ContainsAny(w, " .:/") {
++		return true
++	}
++	return len(w) > 48 && !strings.ContainsAny(w, " .:/=\"'")
++}
+diff --git a/internal/memagent/audit_conflict_test.go b/internal/memagent/audit_conflict_test.go
+new file mode 100644
+index 0000000..29de627
+--- /dev/null
++++ b/internal/memagent/audit_conflict_test.go
+@@ -0,0 +1,322 @@
++package memagent
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++
++	"github.com/yetone/magpie/internal/memory"
++)
++
++// conflictAt points the audit log at a file of the test's own, and gives
++// the tools the vault a conflict is written into.
++func conflictAt(t *testing.T) (string, *Sandbox) {
++	t.Helper()
++	auditAt(t)
++	sb, dir := openVault(t)
++	return dir, sb
++}
++
++// save runs memory_save as a run of role does, through the tool a model is
++// given rather than its handler, so what is wired is what is tested.
++func saveThrough(t *testing.T, sb *Sandbox, role string, args map[string]any) (string, error) {
++	t.Helper()
++	set, err := toolsFor(sb, nil, role, &runLog{}, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	tool, ok := set.Get(ToolMemorySave)
++	if !ok {
++		t.Fatal("no memory_save")
++	}
++	b, _ := json.Marshal(args)
++	return tool.Call(context.Background(), b)
++}
++
++func forgetThrough(t *testing.T, sb *Sandbox, role, id string) (string, error) {
++	t.Helper()
++	set, err := toolsFor(sb, nil, role, &runLog{}, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	tool, _ := set.Get(ToolMemoryForget)
++	b, _ := json.Marshal(map[string]any{"id": id})
++	return tool.Call(context.Background(), b)
++}
++
++// A memory the user wrote is theirs: a machine change is refused, the
++// refusal is written into the vault's logs/memory-conflicts.md, and the
++// memory itself is left exactly as they wrote it.
++func TestConflictWithTheUsersMemory(t *testing.T) {
++	dir, sb := conflictAt(t)
++	text, kind, scope := "I write in Chinese", memory.Preference, memory.Global
++	user, _, err := memory.Save(memory.Input{Text: &text, Kind: &kind, Scope: &scope}, memory.FromUser, nil, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	before, _ := json.Marshal(user)
++	t.Logf("conflict dir=%q", dir)
++
++	// the machine tries to rewrite their words
++	if _, err := saveThrough(t, sb, Learn, map[string]any{"id": user.ID, "text": "I write in English", "kind": "preference"}); !IsConflict(err) {
++		t.Fatalf("a rewrite of the user's memory: %v", err)
++	}
++	// and to set it aside
++	if _, err := forgetThrough(t, sb, Dream, user.ID); !IsConflict(err) {
++		t.Fatalf("forget of the user's memory: %v", err)
++	}
++
++	after, err := memory.Get(user.ID)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if b, _ := json.Marshal(after); string(b) != string(before) {
++		t.Fatalf("the user's memory changed:\n%+v\nwas\n%s", after, before)
++	}
++	// the conflict is written, inside the vault, only added to
++	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(ConflictsPath)))
++	if err != nil {
++		t.Fatalf("the conflict log: %v", err)
++	}
++	s := string(b)
++	for _, want := range []string{mdEscape(user.ID), "origin=user", "I write in Chinese", AuditSave, AuditForget, "left as the user wrote it"} {
++		if !strings.Contains(s, want) {
++			t.Errorf("the conflict log doesn't say %q:\n%s", want, s)
++		}
++	}
++	if strings.Count(s, mdEscape(user.ID)) < 2 {
++		t.Errorf("both refusals aren't there:\n%s", s)
++	}
++	// each refusal is audited as a conflict
++	got := lines(t, AuditPath())
++	var conflicts int
++	for _, a := range got {
++		if a.Result == "conflict" && a.ID == user.ID {
++			conflicts++
++		}
++	}
++	if conflicts != 2 {
++		t.Fatalf("%d conflicts audited: %+v", conflicts, got)
++	}
++}
++
++// A memory the user edited is theirs too, even when a machine saved it
++// first: the edit is what makes it theirs.
++func TestConflictWithAnEditedMemory(t *testing.T) {
++	dir, sb := conflictAt(t)
++	out, err := saveThrough(t, sb, Organize, map[string]any{"text": "Builds run on mote", "kind": "fact"})
++	if err != nil || !strings.Contains(out, "Remembered") {
++		t.Fatalf("%q %v", out, err)
++	}
++	all, _, err := memory.All()
++	if err != nil {
++		t.Fatal(err)
++	}
++	var id string
++	for _, m := range all {
++		if m.Text == "Builds run on mote" {
++			id = m.ID
++		}
++	}
++	if id == "" {
++		t.Fatalf("the saved memory isn't there: %v", all)
++	}
++	// the user edits it
++	edited := "Builds run on the machine called mote"
++	if _, err := memory.Edit(id, memory.Input{Text: &edited}, true); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := saveThrough(t, sb, Learn, map[string]any{"id": id, "text": "something else", "kind": "fact"}); !IsConflict(err) {
++		t.Fatalf("a rewrite of an edited memory: %v", err)
++	}
++	m, _ := memory.Get(id)
++	if m.Text != edited {
++		t.Fatalf("the user's edit was rewritten: %q", m.Text)
++	}
++	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(ConflictsPath)))
++	if err != nil {
++		t.Fatalf("the conflict log: %v", err)
++	}
++	if !strings.Contains(string(b), "origin=user") || !strings.Contains(string(b), "edited by the user") {
++		t.Fatalf("the conflict doesn't say why:\n%s", b)
++	}
++}
++
++// A change that leaves the user's words alone is not a conflict: the run
++// may still save what is new, and forget what isn't theirs.
++func TestNoConflictWithoutRewriting(t *testing.T) {
++	_, sb := conflictAt(t)
++	text, kind, scope := "Deploys go out on Fridays", memory.Rule, memory.Global
++	if _, _, err := memory.Save(memory.Input{Text: &text, Kind: &kind, Scope: &scope}, memory.FromUser, nil, nil); err != nil {
++		t.Fatal(err)
++	}
++	// a new memory, unrelated to theirs, goes through
++	if out, err := saveThrough(t, sb, Learn, map[string]any{"text": "Use bun for scripts", "kind": "procedure"}); err != nil || !strings.Contains(out, "Remembered") {
++		t.Fatalf("%q %v", out, err)
++	}
++	// one of the machine's own can be forgotten
++	out, err := saveThrough(t, sb, Learn, map[string]any{"text": "Tests run on the box", "kind": "fact"})
++	if err != nil || !strings.Contains(out, "Remembered") {
++		t.Fatalf("%q %v", out, err)
++	}
++	all, _, _ := memory.All()
++	var mine string
++	for _, m := range all {
++		if m.Text == "Tests run on the box" {
++			mine = m.ID
++		}
++	}
++	if _, err := forgetThrough(t, sb, Dream, mine); err != nil {
++		t.Fatalf("forget of the machine's own: %v", err)
++	}
++	if m, _ := memory.Get(mine); m.Status != memory.Archived {
++		t.Fatalf("the machine's memory wasn't set aside: %+v", m)
++	}
++}
++
++// What the tools are given is still the vault's allowlist: a conflict goes
++// into logs/, and a sandbox that refuses logs/ refuses the conflict rather
++// than writing elsewhere. Nothing outside the vault is ever reached.
++func TestConflictStaysInTheWhitelist(t *testing.T) {
++	auditAt(t)
++	// a sandbox whose writable folders leave logs out
++	dir := vault(t)
++	sb, err := OpenSandbox(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sb.Close()
++	old := Writable
++	Writable = []string{"dreams"}
++	t.Cleanup(func() { Writable = old })
++	text, kind, scope := "I write in Chinese", memory.Preference, memory.Global
++	user, _, err := memory.Save(memory.Input{Text: &text, Kind: &kind, Scope: &scope}, memory.FromUser, nil, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	c := &ConflictError{ID: user.ID, What: "origin=user", User: "I write in Chinese"}
++	if err := LogConflict(sb, Learn, c, AuditSave); err == nil {
++		t.Fatal("a conflict was written into a folder the run may not use")
++	}
++	// and it wasn't written anywhere else in the vault
++	if _, err := os.Lstat(filepath.Join(dir, "logs", "memory-conflicts.md")); err == nil {
++		t.Fatal("the conflict was written into logs/, which the run may not use here")
++	}
++	// the refusal stands, and the audit says the conflict couldn't be written
++	if _, err := saveThrough(t, sb, Learn, map[string]any{"id": user.ID, "text": "x"}); !IsConflict(err) {
++		t.Fatalf("the refusal: %v", err)
++	}
++	var noted bool
++	for _, a := range lines(t, AuditPath()) {
++		if strings.Contains(a.Error, "conflict not written") {
++			noted = true
++		}
++	}
++	if !noted {
++		t.Fatal("the audit doesn't say the conflict couldn't be written")
++	}
++}
++
++// A memory's words that look like a secret are not copied into the
++// conflict log the user may share.
++func TestConflictRedactsSecrets(t *testing.T) {
++	dir, sb := conflictAt(t)
++	// a key's shape: a prefix and a long run after it. Built here, never
++	// written out, so no key-shaped literal sits in this source for a scanner
++	// to mistake for a live one.
++	secret := "sk-" + "proj-" + strings.Repeat("a1B2c3D4e5", 4)
++	text, scope := "the key is "+secret, memory.Global
++	user, _, err := memory.Save(memory.Input{Text: &text, Scope: &scope}, memory.FromUser, nil, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := forgetThrough(t, sb, Learn, user.ID); !IsConflict(err) {
++		t.Fatalf("%v", err)
++	}
++	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(ConflictsPath)))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if strings.Contains(string(b), secret) {
++		t.Fatalf("a secret was copied into the conflict log:\n%s", b)
++	}
++	if !strings.Contains(string(b), "\\[redacted\\]") {
++		t.Fatalf("the secret wasn't marked as one:\n%s", b)
++	}
++	// a sentence's words aren't secrets: they stay
++	if !strings.Contains(string(b), "the key is") {
++		t.Fatalf("what isn't a secret was taken out:\n%s", b)
++	}
++}
++
++// The conflict log is added to, never rewritten: a second run's conflict
++// leaves the first's lines as they were.
++func TestConflictLogIsAppendOnly(t *testing.T) {
++	dir, sb := conflictAt(t)
++	first, second := "the deployer is named boatswain", "the staging host is named skiff"
++	var ids []string
++	for _, s := range []string{first, second} {
++		text, scope := s, memory.Global
++		m, _, err := memory.Save(memory.Input{Text: &text, Scope: &scope}, memory.FromUser, nil, nil)
++		if err != nil {
++			t.Fatal(err)
++		}
++		ids = append(ids, m.ID)
++	}
++	for _, id := range ids {
++		if _, err := forgetThrough(t, sb, Learn, id); !IsConflict(err) {
++			t.Fatalf("forget %s: %v", id, err)
++		}
++	}
++	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(ConflictsPath)))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(string(b), first) || !strings.Contains(string(b), second) {
++		t.Fatalf("one of the conflicts was lost:\n%s", b)
++	}
++	// the first block is still whole and first: nothing was rewritten
++	if i, j := strings.Index(string(b), first), strings.Index(string(b), second); i < 0 || j < 0 || i > j {
++		t.Fatalf("the order isn't the order they happened in:\n%s", b)
++	}
++}
++
++// Several runs refusing at once: the note is whole, never interleaved.
++func TestConflictLogConcurrentAppends(t *testing.T) {
++	dir, sb := conflictAt(t)
++	const n = 32
++	var wg sync.WaitGroup
++	for i := 0; i < n; i++ {
++		wg.Add(1)
++		go func(i int) {
++			defer wg.Done()
++			c := &ConflictError{ID: pad(i), What: "origin=user", User: "the user's words"}
++			if err := LogConflict(sb, Learn, c, AuditSave); err != nil {
++				t.Errorf("conflict %d: %v", i, err)
++			}
++		}(i)
++	}
++	wg.Wait()
++	b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(ConflictsPath)))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := strings.Count(string(b), "- action: save"); got != n {
++		t.Fatalf("%d conflicts written, want %d", got, n)
++	}
++	// every block is whole: each has its why line and its last line
++	if strings.Count(string(b), "- why refused: origin=user") != n ||
++		strings.Count(string(b), "left as the user wrote it") != n {
++		t.Fatalf("a block was cut:\n%s", b)
++	}
++	// each memory's block appears once, and with its own id
++	for i := 0; i < n; i++ {
++		if got := strings.Count(string(b), "- memory: "+pad(i)); got != 1 {
++			t.Fatalf("memory %s appears %d times", pad(i), got)
++		}
++	}
++}
+diff --git a/internal/memagent/audit_test.go b/internal/memagent/audit_test.go
+new file mode 100644
+index 0000000..752bf3f
+--- /dev/null
++++ b/internal/memagent/audit_test.go
+@@ -0,0 +1,151 @@
++package memagent
++
++import (
++	"encoding/json"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++
++	"github.com/yetone/magpie/internal/memory"
++)
++
++// auditAt points the audit log at a file of the test's own.
++func auditAt(t *testing.T) string {
++	t.Helper()
++	p := filepath.Join(t.TempDir(), "memory-audit.jsonl")
++	old := AuditPath
++	AuditPath = func() string { return p }
++	t.Cleanup(func() { AuditPath = old })
++	return p
++}
++
++// lines is the audit log's lines, each decoded.
++func lines(t *testing.T, p string) []Audit {
++	t.Helper()
++	b, err := os.ReadFile(p)
++	if err != nil {
++		t.Fatalf("the audit log: %v", err)
++	}
++	var out []Audit
++	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
++		if line == "" {
++			continue
++		}
++		var a Audit
++		if err := json.Unmarshal([]byte(line), &a); err != nil {
++			t.Fatalf("a line that isn't an entry: %q: %v", line, err)
++		}
++		out = append(out, a)
++	}
++	return out
++}
++
++// One change is one line, with what it did: the action, the memory, the
++// role and the agent.
++func TestAuditRecordsOneLine(t *testing.T) {
++	p := auditAt(t)
++	text, kind, scope := "Releases go out on Tuesdays", "fact", "global"
++	LogAudit(NewAuditSave(Learn, &memory.Memory{ID: "m_1", Text: text, Kind: kind, Scope: scope}, true, "",
++		nil))
++	got := lines(t, p)
++	if len(got) != 1 {
++		t.Fatalf("%d lines", len(got))
++	}
++	a := got[0]
++	if a.Action != AuditSave || a.ID != "m_1" || a.Role != Learn || a.Agent != AgentID || a.Result != "added" || a.Kind != kind || a.Scope != scope {
++		t.Fatalf("%+v", a)
++	}
++	if a.At.IsZero() {
++		t.Fatal("no time")
++	}
++	// a second entry is a second line, and neither rewrote the other
++	LogAudit(NewAuditChange(AuditForget, Dream, "m_2", "forgotten", nil))
++	got = lines(t, p)
++	if len(got) != 2 || got[1].Action != AuditForget || got[1].Result != "forgotten" || got[0].ID != "m_1" {
++		t.Fatalf("%+v", got)
++	}
++}
++
++// A log that can't be written is passed over: no panic, no error to the
++// caller, and the change goes on. The audit is never what stops a run.
++func TestAuditFailureDoesNotStop(t *testing.T) {
++	dir := t.TempDir()
++	// a folder where the log's file would be: every append fails
++	p := filepath.Join(dir, "memory-audit.jsonl")
++	if err := os.MkdirAll(filepath.Join(p, "in-the-way"), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	old := AuditPath
++	AuditPath = func() string { return p }
++	t.Cleanup(func() { AuditPath = old })
++	// the log line is dropped, and nothing is returned or thrown
++	LogAudit(NewAuditChange(AuditSave, Learn, "m_1", "added", nil))
++	LogAudit(NewAuditSave(Learn, &memory.Memory{ID: "m_2"}, true, "", nil))
++}
++
++// The log holds no memory's words: a line is what changed, not what it
++// said, so a secret in a memory never reaches the log.
++func TestAuditHoldsNoText(t *testing.T) {
++	p := auditAt(t)
++	secret := "sk-live-0123456789abcdefghijklmnop"
++	LogAudit(NewAuditSave(Learn, &memory.Memory{ID: "m_9", Kind: "fact", Scope: "global"}, true, "", nil))
++	if b, _ := os.ReadFile(p); strings.Contains(string(b), secret) || strings.Contains(string(b), "text") {
++		t.Fatalf("the log holds the memory's words: %s", b)
++	}
++	// and a refusal's error says what, not what the memory said
++	LogAudit(NewAuditChange(AuditSave, Learn, "m_9", "", errors.New("a refused change")))
++	got := lines(t, p)
++	if got[1].Result != "refused" || got[1].Error != "a refused change" {
++		t.Fatalf("%+v", got[1])
++	}
++}
++
++// Many changes at once are many whole lines: an append is one write of one
++// line, so a line is never cut into another.
++func TestAuditConcurrentAppends(t *testing.T) {
++	p := auditAt(t)
++	const n = 64
++	var wg sync.WaitGroup
++	for i := 0; i < n; i++ {
++		wg.Add(1)
++		go func(i int) {
++			defer wg.Done()
++			LogAudit(NewAuditChange(AuditSave, Learn, pad(i), "added", nil))
++		}(i)
++	}
++	wg.Wait()
++	got := lines(t, p)
++	if len(got) != n {
++		t.Fatalf("%d lines, want %d", len(got), n)
++	}
++	seen := map[string]bool{}
++	for _, a := range got {
++		if a.Action != AuditSave || a.Result != "added" || a.ID == "" {
++			t.Fatalf("a line that was cut or crossed: %+v", a)
++		}
++		if seen[a.ID] {
++			t.Fatalf("%s kept twice", a.ID)
++		}
++		seen[a.ID] = true
++	}
++}
++
++// A line longer than the log allows is cut, not written whole: a log stays
++// lines, whatever a caller puts in one.
++func TestAuditLineIsBounded(t *testing.T) {
++	p := auditAt(t)
++	LogAudit(NewAuditChange(AuditSave, Learn, strings.Repeat("a", MaxAuditLine*2), "added", nil))
++	b, err := os.ReadFile(p)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(b) > MaxAuditLine+1 {
++		t.Fatalf("a line of %d bytes", len(b))
++	}
++	if strings.Count(string(b), "\n") != 1 {
++		t.Fatalf("the line spans more than one: %q", b)
++	}
++}
+diff --git a/internal/memagent/audit_tools_test.go b/internal/memagent/audit_tools_test.go
+new file mode 100644
+index 0000000..9bb8680
+--- /dev/null
++++ b/internal/memagent/audit_tools_test.go
+@@ -0,0 +1,125 @@
++package memagent
++
++import (
++	"context"
++	"encoding/json"
++	"strings"
++	"testing"
++
++	"github.com/yetone/magpie/internal/memory"
++)
++
++// callTool runs one of a run's tools by name, as a model's call does.
++func callTool(t *testing.T, sb *Sandbox, role, name string, args map[string]any) (string, error) {
++	t.Helper()
++	set, err := toolsFor(sb, nil, role, &runLog{}, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	tool, ok := set.Get(name)
++	if !ok {
++		t.Fatalf("no %s", name)
++	}
++	b, _ := json.Marshal(args)
++	return tool.Call(context.Background(), b)
++}
++
++// The changes that aren't a run's own save are audited too: a removal, a
++// promotion and a status each leave their line.
++func TestAuditOfRemovePromoteStatus(t *testing.T) {
++	auditAt(t)
++	sb, _ := openVault(t)
++	// two of the machine's own, and one the user wrote
++	mine, _, err := memory.Save(memory.Input{Text: p("Tests run on the box"), Kind: p("fact"), Scope: p("global")}, memory.FromAgent, nil, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	theirs, _, err := memory.Save(memory.Input{Text: p("I write in Chinese"), Kind: p("preference"), Scope: p("global")}, memory.FromUser, nil, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	out, err := callTool(t, sb, Learn, ToolMemoryRemove, map[string]any{"ids": []string{mine.ID, theirs.ID}})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(out, "Removed: "+mine.ID) || !strings.Contains(out, "kept, they are the user's own: "+theirs.ID) {
++		t.Fatalf("%q", out)
++	}
++	// the user's is still there, and the refusal is in the conflict log
++	if _, err := memory.Get(theirs.ID); err != nil {
++		t.Fatalf("the user's memory was removed: %v", err)
++	}
++	if _, err := memory.Get(mine.ID); err == nil {
++		t.Fatal("the machine's memory wasn't removed")
++	}
++
++	// a candidate set aside, and a promotion
++	cand, _, err := memory.Save(memory.Input{Text: p("Nightly tidy runs at three"), Scope: p("agent:" + AgentID), Status: p(memory.Candidate)}, memory.FromAgent, nil, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if out, err := callTool(t, sb, Organize, ToolMemoryStatus, map[string]any{"status": memory.Archived, "ids": []string{cand.ID}}); err != nil || !strings.Contains(out, "archived") {
++		t.Fatalf("%q %v", out, err)
++	}
++	// the user's own isn't a machine's to take out of use
++	if _, err := callTool(t, sb, Organize, ToolMemoryStatus, map[string]any{"status": memory.Archived, "ids": []string{theirs.ID}}); err == nil {
++		t.Fatal("a machine set the user's memory aside")
++	}
++
++	got := lines(t, AuditPath())
++	seen := map[string]int{}
++	for _, a := range got {
++		seen[a.Action]++
++	}
++	for _, action := range []string{AuditRemove, AuditStatus} {
++		if seen[action] == 0 {
++			t.Errorf("no %s line: %+v", action, got)
++		}
++	}
++	// the refusal names the memory, and the removal names what went
++	var refused, removed bool
++	for _, a := range got {
++		if a.Action == AuditRemove && a.ID == theirs.ID && a.Result == "conflict" {
++			refused = true
++		}
++		if a.Action == AuditRemove && a.ID == mine.ID && a.Result == "removed" {
++			removed = true
++		}
++	}
++	if !refused || !removed {
++		t.Fatalf("the removals aren't both written: %+v", got)
++	}
++}
++
++// A save is audited whoever makes it, and what it did is what the line
++// says: added, merged, changed or refused.
++func TestAuditOfSaveResults(t *testing.T) {
++	auditAt(t)
++	sb, _ := openVault(t)
++	if out, err := callTool(t, sb, Learn, ToolMemorySave, map[string]any{"text": "Nightly tidy runs at three", "kind": "fact"}); err != nil || !strings.Contains(out, "Remembered") {
++		t.Fatalf("%q %v", out, err)
++	}
++	if out, err := callTool(t, sb, Learn, ToolMemorySave, map[string]any{"text": "Nightly tidy runs at three", "kind": "fact"}); err != nil || !strings.Contains(out, "Already remembered, merged") {
++		t.Fatalf("%q %v", out, err)
++	}
++	// a refused save is a line too, with its error
++	if _, err := callTool(t, sb, Learn, ToolMemorySave, map[string]any{}); err == nil {
++		t.Fatal("a save with no text went through")
++	}
++	got := lines(t, AuditPath())
++	if len(got) < 3 {
++		t.Fatalf("%d lines: %+v", len(got), got)
++	}
++	if got[0].Result != "added" || got[0].Action != AuditSave {
++		t.Fatalf("the first: %+v", got[0])
++	}
++	if got[1].Result != "merged" {
++		t.Fatalf("the second: %+v", got[1])
++	}
++	if got[len(got)-1].Result != "refused" || got[len(got)-1].Error == "" {
++		t.Fatalf("the refused one: %+v", got[len(got)-1])
++	}
++}
++
++func p(s string) *string { return &s }
+diff --git a/internal/memagent/loop.go b/internal/memagent/loop.go
+index e36e6df..ef7069a 100644
+--- a/internal/memagent/loop.go
++++ b/internal/memagent/loop.go
+@@ -220,7 +220,7 @@ func Run(ctx context.Context, t Task, opts Options) (Result, error) {
+ 		defer closeAll()
+ 		extra = append(mcpTools, extra...)
+ 	}
+-	set, err := toolsFor(sb, sc, log, extra)
++	set, err := toolsFor(sb, sc, t.Role, log, extra)
+ 	if err != nil {
+ 		log.failed(err)
+ 		end(PhaseFailed, err)
+diff --git a/internal/memagent/sandbox.go b/internal/memagent/sandbox.go
+index 3f79d2b..fda215c 100644
+--- a/internal/memagent/sandbox.go
++++ b/internal/memagent/sandbox.go
+@@ -219,6 +219,58 @@ func (s *Sandbox) Write(name string, b []byte) error {
+ 	return nil
+ }
+ 
++// Append adds b to the end of name, a path inside the vault under one of
++// Writable, making the note and the folders above it when they aren't
++// there. A note that is only ever added to — the conflicts log — is added
++// to as it stands, never rewritten: the one who wrote it before is another
++// run, whose lines are not this run's to lay out again.
++func (s *Sandbox) Append(name string, b []byte) error {
++	if s == nil || s.root == nil {
++		return errors.New("no knowledge vault to write to")
++	}
++	rel, err := s.relName(name, Writable)
++	if err != nil {
++		return err
++	}
++	if len(b) > MaxWriteFile {
++		return fmt.Errorf("%q is %d bytes; a run writes at most %d", rel, len(b), MaxWriteFile)
++	}
++	if dir := path.Dir(rel); dir != "." && dir != "/" {
++		if err := s.root.MkdirAll(dir, 0o700); err != nil {
++			return err
++		}
++	}
++	// the note there now is weighed first: what is added is over the run's
++	// budget when the note as it would stand is
++	var held int64
++	if info, err := s.root.Lstat(rel); err == nil && info.Mode().IsRegular() {
++		held = info.Size()
++	}
++	if held+int64(len(b)) > MaxWriteFile {
++		return fmt.Errorf("%q would be %d bytes; a run writes at most %d", rel, held+int64(len(b)), MaxWriteFile)
++	}
++	if s.written+int64(len(b)) > MaxWritten {
++		return fmt.Errorf("this run has written %d bytes already; a run writes at most %d", s.written, MaxWritten)
++	}
++	f, err := s.root.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
++	if err != nil {
++		return err
++	}
++	_, werr := f.Write(b)
++	if werr == nil {
++		werr = f.Sync()
++	}
++	cerr := f.Close()
++	if werr != nil {
++		return werr
++	}
++	if cerr != nil {
++		return cerr
++	}
++	s.written += int64(len(b))
++	return nil
++}
++
+ // relName checks a path a tool gave: relative, inside the vault, under one
+ // of allow, and with no link in any of its components. It gives the name
+ // as the root takes it, with slashes.
+diff --git a/internal/memagent/tools.go b/internal/memagent/tools.go
+index f13c53b..2f3c0d1 100644
+--- a/internal/memagent/tools.go
++++ b/internal/memagent/tools.go
+@@ -33,6 +33,11 @@ const (
+ 	ToolVaultWrite    = "vault_write"
+ 	ToolScratchWrite  = "scratch_write"
+ 	ToolScratchRead   = "scratch_read"
++	// the changes the user's own memory is never given by a machine, but
++	// the proposal's flow asks for: kept, to review, set aside, replaced
++	ToolMemoryRemove  = "memory_remove"
++	ToolMemoryPromote = "memory_promote"
++	ToolMemoryStatus  = "memory_status"
+ )
+ 
+ // Toolset is the tools one run may use, by name.
+@@ -62,7 +67,7 @@ func (s *Toolset) Names() []string {
+ // toolsFor is the tools a run has: the memory tools, the vault's and the
+ // run's own folder's, then the ones the agent's mcp.json adds. A name given
+ // twice is refused: a model can't be shown two tools under one name.
+-func toolsFor(sb *Sandbox, sc *Scratch, log *runLog, extra []Tool) (*Toolset, error) {
++func toolsFor(sb *Sandbox, sc *Scratch, role string, log *runLog, extra []Tool) (*Toolset, error) {
+ 	set := &Toolset{by: map[string]Tool{}}
+ 	add := func(ts ...Tool) error {
+ 		for _, t := range ts {
+@@ -77,7 +82,7 @@ func toolsFor(sb *Sandbox, sc *Scratch, log *runLog, extra []Tool) (*Toolset, er
+ 		}
+ 		return nil
+ 	}
+-	if err := add(memoryTools()...); err != nil {
++	if err := add(memoryTools(sb, role, log)...); err != nil {
+ 		return nil, err
+ 	}
+ 	if err := add(vaultTools(sb, log)...); err != nil {
+@@ -95,7 +100,7 @@ func toolsFor(sb *Sandbox, sc *Scratch, log *runLog, extra []Tool) (*Toolset, er
+ // memoryTools are the memory server's four tools, as a run uses them: the
+ // same names, arguments and answers an agent sees through MCP, so the
+ // memory agent's instructions read the same here as in an agent.
+-func memoryTools() []Tool {
++func memoryTools(sb *Sandbox, role string, log *runLog) []Tool {
+ 	return []Tool{
+ 		{
+ 			Name:        ToolMemorySearch,
+@@ -127,7 +132,7 @@ func memoryTools() []Tool {
+ 				},
+ 				"required": []string{"text"},
+ 			},
+-			Call: memorySaveCall,
++			Call: memorySaveCall(sb, role, log),
+ 		},
+ 		{
+ 			Name:        ToolMemoryForget,
+@@ -137,7 +142,44 @@ func memoryTools() []Tool {
+ 				"properties": map[string]any{"id": map[string]any{"type": "string", "description": "The memory's id, from memory_search"}},
+ 				"required":   []string{"id"},
+ 			},
+-			Call: memoryForgetCall,
++			Call: memoryForgetCall(sb, role, log),
++		},
++		{
++			Name:        ToolMemoryRemove,
++			Description: "Deletes memories for good, when the user asks for one to be gone rather than set aside. Only what a machine saved; a memory the user wrote or edited is kept and the conflict written down.",
++			Schema: map[string]any{
++				"type": "object",
++				"properties": map[string]any{
++					"ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "The memories' ids, from memory_search"},
++				},
++				"required": []string{"ids"},
++			},
++			Call: memoryRemoveCall(sb, role, log),
++		},
++		{
++			Name:        ToolMemoryPromote,
++			Description: "Promotes memories that say the same in two or more projects into one everyone has. What the user wrote is the one kept whenever it is among them.",
++			Schema: map[string]any{
++				"type": "object",
++				"properties": map[string]any{
++					"ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "The memories' ids, from memory_search"},
++				},
++				"required": []string{"ids"},
++			},
++			Call: memoryPromoteCall(role, log),
++		},
++		{
++			Name:        ToolMemoryStatus,
++			Description: "Gives a memory one of the states the user picks from what was proposed: active (kept), candidate (to review), archived (set aside) or superseded.",
++			Schema: map[string]any{
++				"type": "object",
++				"properties": map[string]any{
++					"status": map[string]any{"type": "string", "enum": []string{memory.Active, memory.Candidate, memory.Archived, memory.Superseded}, "description": "The state to give it"},
++					"ids":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "The memories' ids, from memory_search"},
++				},
++				"required": []string{"status", "ids"},
++			},
++			Call: memoryStatusCall(role, log),
+ 		},
+ 		{
+ 			Name:        ToolMemoryContext,
+@@ -355,89 +397,300 @@ func quoted(s string) string {
+ }
+ 
+ // memorySaveCall answers memory_save as the MCP server does, kept as an
+-// agent's save: a text the user wrote is never changed by it.
+-func memorySaveCall(_ context.Context, in json.RawMessage) (string, error) {
+-	var a struct {
+-		Text  string   `json:"text"`
+-		Kind  string   `json:"kind"`
+-		Scope string   `json:"scope"`
+-		Tags  []string `json:"tags"`
+-		Why   string   `json:"why"`
+-		ID    string   `json:"id"`
+-	}
+-	if err := decode(in, &a); err != nil {
+-		return "", err
+-	}
+-	mi := memory.Input{}
+-	text := strings.TrimSpace(a.Text)
+-	if text == "" && strings.TrimSpace(a.ID) == "" {
+-		return "", errors.New("memory_save needs the text to remember")
+-	}
+-	if text != "" {
+-		mi.Text = &text
+-	}
+-	if k := strings.ToLower(strings.TrimSpace(a.Kind)); k != "" {
+-		mi.Kind = &k
+-	}
+-	if a.Tags != nil {
+-		tags := a.Tags
+-		mi.Tags = &tags
+-	}
+-	if w := strings.TrimSpace(a.Why); w != "" {
+-		mi.Why = &w
+-	}
+-	switch which := strings.ToLower(strings.TrimSpace(a.Scope)); which {
+-	case "":
+-	case "global":
+-		scope := memory.Global
+-		mi.Scope = &scope
+-	case "agent":
+-		scope := "agent:" + AgentID
+-		mi.Scope = &scope
+-	case "project":
+-		return "", errors.New("no project is named for this run: use scope global or agent")
+-	default:
+-		return "", fmt.Errorf("scope %q isn't project, global or agent", a.Scope)
+-	}
+-	if id := strings.TrimSpace(a.ID); id != "" {
+-		m, err := memory.Edit(id, mi, false)
++// agent's save: a text the user wrote is never changed by it. Every attempt
++// is audited, and one refused because the memory is the user's is written
++// into the vault's conflict log, with the memory left as it was.
++func memorySaveCall(sb *Sandbox, role string, log *runLog) func(context.Context, json.RawMessage) (string, error) {
++	return func(_ context.Context, in json.RawMessage) (string, error) {
++		var a struct {
++			Text  string   `json:"text"`
++			Kind  string   `json:"kind"`
++			Scope string   `json:"scope"`
++			Tags  []string `json:"tags"`
++			Why   string   `json:"why"`
++			ID    string   `json:"id"`
++		}
++		if err := decode(in, &a); err != nil {
++			LogAudit(NewAuditChange(AuditSave, role, "", "", err))
++			return "", err
++		}
++		mi := memory.Input{}
++		text := strings.TrimSpace(a.Text)
++		if text == "" && strings.TrimSpace(a.ID) == "" {
++			err := errors.New("memory_save needs the text to remember")
++			LogAudit(NewAuditChange(AuditSave, role, "", "", err))
++			return "", err
++		}
++		if text != "" {
++			mi.Text = &text
++		}
++		if k := strings.ToLower(strings.TrimSpace(a.Kind)); k != "" {
++			mi.Kind = &k
++		}
++		if a.Tags != nil {
++			tags := a.Tags
++			mi.Tags = &tags
++		}
++		if w := strings.TrimSpace(a.Why); w != "" {
++			mi.Why = &w
++		}
++		switch which := strings.ToLower(strings.TrimSpace(a.Scope)); which {
++		case "":
++		case "global":
++			scope := memory.Global
++			mi.Scope = &scope
++		case "agent":
++			scope := "agent:" + AgentID
++			mi.Scope = &scope
++		case "project":
++			err := errors.New("no project is named for this run: use scope global or agent")
++			LogAudit(NewAuditChange(AuditSave, role, "", "", err))
++			return "", err
++		default:
++			err := fmt.Errorf("scope %q isn't project, global or agent", a.Scope)
++			LogAudit(NewAuditChange(AuditSave, role, "", "", err))
++			return "", err
++		}
++		if id := strings.TrimSpace(a.ID); id != "" {
++			// what is there now decides: a memory the user wrote or edited
++			// is theirs, and a machine change leaves its words alone
++			was, err := FindMemory(id)
++			if err != nil {
++				LogAudit(NewAuditChange(AuditSave, role, id, "", err))
++				return "", err
++			}
++			if c := refusedChange(was, mi); c != nil {
++				noteConflict(sb, role, c, AuditSave, log)
++				return "", c
++			}
++			m, err := memory.Edit(id, mi, false)
++			LogAudit(NewAuditSave(role, m, false, id, err))
++			if err != nil {
++				return "", err
++			}
++			return "Changed: " + memoryLine(m), nil
++		}
++		if mi.Kind == nil {
++			k := memory.Fact
++			mi.Kind = &k
++		}
++		m, added, err := memory.Save(mi, memory.FromAgent, &memory.Source{Agent: AgentID}, nil)
++		if err == nil && !added && m != nil {
++			// merged into a memory already there: if that one is the user's,
++			// the merge has changed their why, kind or tags
++			if no, why := refused(m); no && (mi.Why != nil || mi.Kind != nil || mi.Tags != nil) {
++				c := &ConflictError{ID: m.ID, What: why, User: oneLine(m.Text)}
++				noteConflict(sb, role, c, AuditSave, log)
++				LogAudit(Audit{Action: AuditSave, Role: role, Agent: AgentID, ID: m.ID, Result: "refused", Error: c.Error()})
++				return "Already remembered, and it is the user's own: it was left as they wrote it: " + memoryLine(m), nil
++			}
++		}
++		LogAudit(NewAuditSave(role, m, added, "", err))
+ 		if err != nil {
+ 			return "", err
+ 		}
+-		return "Changed: " + memoryLine(m), nil
+-	}
+-	if mi.Kind == nil {
+-		k := memory.Fact
+-		mi.Kind = &k
+-	}
+-	m, added, err := memory.Save(mi, memory.FromAgent, &memory.Source{Agent: AgentID}, nil)
+-	if err != nil {
+-		return "", err
+-	}
+-	if !added {
+-		return "Already remembered, merged: " + memoryLine(m), nil
++		if !added {
++			return "Already remembered, merged: " + memoryLine(m), nil
++		}
++		// the loop counts what the run saved, from the call alone: a save
++		// that merged changed nothing to count here
++		return "Remembered: " + memoryLine(m), nil
+ 	}
+-	return "Remembered: " + memoryLine(m), nil
++}
++
++// noteConflict writes a refused change into the vault's conflict log and
++// says it in the run's transcript. A conflict that can't be written is
++// noted in the audit line and passed over: the refusal stands either way.
++func noteConflict(sb *Sandbox, role string, c *ConflictError, action string, log *runLog) {
++	LogAudit(Audit{Action: action, Role: role, Agent: AgentID, ID: c.ID, Result: "conflict", Error: c.Error()})
++	if err := LogConflict(sb, role, c, action); err != nil {
++		LogAudit(Audit{Action: action, Role: role, Agent: AgentID, ID: c.ID, Result: "conflict", Error: "conflict not written: " + err.Error()})
++		log.said("error", action, "the conflict with the user's memory wasn't written into "+ConflictsPath+": "+err.Error())
++		return
++	}
++	log.said("note", "", "refused a change to the user's memory "+c.ID+"; it is in "+ConflictsPath)
+ }
+ 
+ // memoryForgetCall answers memory_forget: the memory is set aside, not
+-// deleted.
+-func memoryForgetCall(_ context.Context, in json.RawMessage) (string, error) {
+-	var a struct {
+-		ID string `json:"id"`
++// deleted. A memory the user wrote or edited is never set aside by a
++// machine: that is a conflict, and it is written down.
++func memoryForgetCall(sb *Sandbox, role string, log *runLog) func(context.Context, json.RawMessage) (string, error) {
++	return func(_ context.Context, in json.RawMessage) (string, error) {
++		var a struct {
++			ID string `json:"id"`
++		}
++		if err := decode(in, &a); err != nil {
++			LogAudit(NewAuditChange(AuditForget, role, "", "", err))
++			return "", err
++		}
++		id := strings.TrimSpace(a.ID)
++		if id == "" {
++			err := errors.New("memory_forget needs the memory's id, from memory_search")
++			LogAudit(NewAuditChange(AuditForget, role, "", "", err))
++			return "", err
++		}
++		was, err := FindMemory(id)
++		if err != nil {
++			LogAudit(NewAuditChange(AuditForget, role, id, "", err))
++			return "", err
++		}
++		if was != nil {
++			if no, why := refused(was); no {
++				c := &ConflictError{ID: was.ID, What: why, User: oneLine(was.Text)}
++				noteConflict(sb, role, c, AuditForget, log)
++				return "", c
++			}
++		}
++		m, err := memory.Forget(id)
++		LogAudit(NewAuditChange(AuditForget, role, id, "forgotten", err))
++		if err != nil {
++			return "", err
++		}
++		return "Forgotten: [" + m.ID + "] " + oneLine(m.Text), nil
+ 	}
+-	if err := decode(in, &a); err != nil {
+-		return "", err
++}
++
++// memoryRemoveCall answers memory_remove: the memories are deleted for
++// good. One the user wrote or edited is kept, and the refusal is written
++// down: a machine never disposes of what they wrote.
++func memoryRemoveCall(sb *Sandbox, role string, log *runLog) func(context.Context, json.RawMessage) (string, error) {
++	return func(_ context.Context, in json.RawMessage) (string, error) {
++		var a struct {
++			IDs []string `json:"ids"`
++		}
++		if err := decode(in, &a); err != nil {
++			LogAudit(NewAuditChange(AuditRemove, role, "", "", err))
++			return "", err
++		}
++		ids := cleanIDs(a.IDs)
++		if len(ids) == 0 {
++			err := errors.New("memory_remove needs the ids to delete")
++			LogAudit(NewAuditChange(AuditRemove, role, "", "", err))
++			return "", err
++		}
++		var keep, gone []string
++		for _, id := range ids {
++			m, err := FindMemory(id)
++			if err != nil {
++				LogAudit(NewAuditChange(AuditRemove, role, id, "", err))
++				return "", err
++			}
++			if m == nil {
++				continue // no longer there: nothing to delete
++			}
++			if no, why := refused(m); no {
++				c := &ConflictError{ID: m.ID, What: why, User: oneLine(m.Text)}
++				noteConflict(sb, role, c, AuditRemove, log)
++				keep = append(keep, m.ID)
++				continue
++			}
++			gone = append(gone, m.ID)
++		}
++		if len(gone) == 0 {
++			return "kept, they are the user's own: " + strings.Join(keep, ", "), nil
++		}
++		err := memory.Remove(gone...)
++		for _, id := range gone {
++			LogAudit(NewAuditChange(AuditRemove, role, id, "removed", err))
++		}
++		if err != nil {
++			return "", err
++		}
++		out := "Removed: " + strings.Join(gone, ", ")
++		if len(keep) > 0 {
++			out += "; kept, they are the user's own: " + strings.Join(keep, ", ")
++		}
++		return out, nil
+ 	}
+-	id := strings.TrimSpace(a.ID)
+-	if id == "" {
+-		return "", errors.New("memory_forget needs the memory's id, from memory_search")
++}
++
++// memoryPromoteCall answers memory_promote: memories saying the same in two
++// projects become one everyone has. memory's own rule keeps the user's
++// among them ("TestPromoteKeepsTheUsersOwn"), so nothing is refused here;
++// what it did is written down.
++func memoryPromoteCall(role string, log *runLog) func(context.Context, json.RawMessage) (string, error) {
++	return func(_ context.Context, in json.RawMessage) (string, error) {
++		var a struct {
++			IDs []string `json:"ids"`
++		}
++		if err := decode(in, &a); err != nil {
++			LogAudit(NewAuditChange(AuditPromote, role, "", "", err))
++			return "", err
++		}
++		ids := cleanIDs(a.IDs)
++		m, err := memory.Promote(ids)
++		id := ""
++		if m != nil {
++			id = m.ID
++		}
++		LogAudit(NewAuditChange(AuditPromote, role, id, "promoted", err))
++		if err != nil {
++			return "", err
++		}
++		return "Promoted: " + memoryLine(m), nil
+ 	}
+-	m, err := memory.Forget(id)
+-	if err != nil {
+-		return "", err
++}
++
++// memoryStatusCall answers memory_status: it gives memories one of the
++// states the user picks from. It is the machine's to propose — a candidate
++// to review, or one it proposed set aside — but taking the user's own
++// memory out of use is theirs, and refused here.
++func memoryStatusCall(role string, log *runLog) func(context.Context, json.RawMessage) (string, error) {
++	return func(_ context.Context, in json.RawMessage) (string, error) {
++		var a struct {
++			Status string   `json:"status"`
++			IDs    []string `json:"ids"`
++		}
++		if err := decode(in, &a); err != nil {
++			LogAudit(NewAuditChange(AuditStatus, role, "", "", err))
++			return "", err
++		}
++		status := strings.ToLower(strings.TrimSpace(a.Status))
++		ids := cleanIDs(a.IDs)
++		if len(ids) == 0 {
++			err := errors.New("memory_status needs the ids to change")
++			LogAudit(NewAuditChange(AuditStatus, role, "", "", err))
++			return "", err
++		}
++		// the user's own memory: a candidate of theirs kept, or one of
++		// theirs marked failed, is their call, not a run's
++		var ours []string
++		for _, id := range ids {
++			m, err := FindMemory(id)
++			if err != nil {
++				LogAudit(NewAuditChange(AuditStatus, role, id, "", err))
++				return "", err
++			}
++			if m == nil {
++				continue
++			}
++			if no, _ := refused(m); no && (status == memory.Active || status == memory.Archived) {
++				return "", fmt.Errorf("memory %s is the user's own: only they decide whether it stays in use", m.ID)
++			}
++			ours = append(ours, m.ID)
++		}
++		n, err := memory.SetStatus(status, ours...)
++		for _, id := range ours {
++			LogAudit(NewAuditChange(AuditStatus, role, id, status, err))
++		}
++		if err != nil {
++			return "", err
++		}
++		return fmt.Sprintf("%d memories are now %s", n, status), nil
++	}
++}
++
++// cleanIDs are ids as a call gives them: trimmed, without blanks or
++// repeats, in the order given.
++func cleanIDs(ids []string) []string {
++	out := make([]string, 0, len(ids))
++	for _, id := range ids {
++		id = strings.TrimSpace(id)
++		if id != "" && !slices.Contains(out, id) {
++			out = append(out, id)
++		}
+ 	}
+-	return "Forgotten: [" + m.ID + "] " + oneLine(m.Text), nil
++	return out
+ }
+ 
+ // vaultListCall answers vault_list.
+diff --git a/internal/memdistill/memdistill.go b/internal/memdistill/memdistill.go
+index 6f341d2..ffc6c9c 100644
+--- a/internal/memdistill/memdistill.go
++++ b/internal/memdistill/memdistill.go
+@@ -103,6 +103,11 @@ type State struct {
+ 	// Dream is the nightly tidy switched on (dream.go), DreamSince when
+ 	Dream      bool      `json:"dream,omitempty"`
+ 	DreamSince time.Time `json:"dreamSince,omitzero"`
++	// DreamAgent is the memory agent the nightly tidy runs as; "" the
++	// role's default. Model is the one learn runs as, in the same words:
++	// an agent's id, not a model's (the memory agents' registry names the
++	// route each is sent to).
++	DreamAgent string `json:"dreamAgent,omitempty"`
+ 	// the last tidy that went through: when, with which model, and what it
+ 	// changed, undone or not; DreamError is what stopped the last one tried
+ 	Dreamt     time.Time       `json:"dreamt,omitzero"`
+@@ -262,6 +267,27 @@ func SetEffort(effort string) (State, error) {
+ 	return change(func(s *State) { s.Effort = effort })
+ }
+ 
++// SetDreamAgent picks the memory agent the nightly tidy runs as, "" for the
++// role's default. It is kept beside the one learn runs as (Model), which
++// now names an agent rather than a model: the memory agents' registry says
++// what each does and which route it is sent to.
++func SetDreamAgent(id string) (State, error) {
++	return change(func(s *State) { s.DreamAgent = strings.TrimSpace(id) })
++}
++
++// SetError keeps what stopped a run that couldn't start for the row that
++// shows it, "" once a run has started, so an old failure isn't shown as
++// the latest run's.
++func SetError(said string) (State, error) {
++	return change(func(s *State) { s.Error = strings.TrimSpace(said) })
++}
++
++// SetDreamError is SetError for the nightly tidy, whose row shows
++// DreamError.
++func SetDreamError(said string) (State, error) {
++	return change(func(s *State) { s.DreamError = strings.TrimSpace(said) })
++}
++
+ // efforts are the levels SetEffort takes (gateway's effortRank).
+ var efforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+ 

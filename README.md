@@ -35,12 +35,12 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock)。
 
-当前发行：Magpie **2.4.0**（见 [2.4.0 发行说明](docs/releases/2.4.0.md)，要求 **FISH Dock ≥ 2.3.4**），Clash **2.4.0**、飞书 **2.2.0**。v2.4.0 的 Release 资源随本版一并发布。
+当前发行（以 `catalog/stable.json` 为唯一权威）：Magpie **2.3.9**、Clash **2.3.6**、飞书 **2.2.0**。下一版 **2.4.0 待发**：Magpie 2.4.0（含记忆 Agent 化，原生标识 `v0.1.4262+fish.38`）与 Clash 2.4.0 的开发包与发行说明已就绪（见 [2.4.0 发行说明](docs/releases/2.4.0.md)），但**尚未发布**——未建 GitHub Release、未发 npm、`catalog/stable.json` 未改；发布与否见维护者指南。
 
-**2.4.0：外观独立成页、液态玻璃按区域调节，Clash 也有外观设置；Magpie 内置记忆 Agent**
+**2.4.0（待发）：外观独立成页、液态玻璃按区域调节，Clash 也有外观设置；Magpie 内置记忆 Agent**
 
 - **Magpie**：设置新增「外观」分页（位于常规与额度之间），外观/强调色/背景图片/液态玻璃/界面字体/代码字体/色盲模式/减弱动态效果/加载时的喜鹊 九项迁入。液态玻璃不再是开/关，而是**侧边栏与标题栏 / 主界面 / 浮层与对话框 / 控件**四个区域各自的不透明度与模糊（100% 且不模糊即实底，预设只是快捷写入这组数字）。内嵌插件页通过 `magpie.glass` / `onGlass` / `onFontColor` 与 `--magpie-glass-*` 同步拿到同一组值。原生服务另附独立的「字体颜色」卡片与可拖动取色器。
-- **Magpie · 记忆 Agent 化（`fish.37`）**：「从对话学习 / 每晚整理 / 做梦」从选模型改为**选 Agent**——内置 `memory-agent`，注册表 `memory-agents.json`（原子写、文件锁、坏文件不覆盖）带 `memory-curator`（learn|organize）与 `dreamer`（dream）两个可改可删的预设；执行器按 Agent 跑工具循环，vault 读写各有白名单、越界一律拒绝，scratch 缓存超 20MB 自动回收；`/api/memory/agents` 提供增删改与恢复。M-D（审计/冲突）与 M-E（Obsidian 端选 Agent 与进度）尚未完成。
+- **Magpie · 记忆 Agent 化（`fish.38`，待发）**：「从对话学习 / 每晚整理 / 做梦」从选模型改为**选 Agent**——内置 `memory-agent`，注册表 `memory-agents.json`（原子写、文件锁、坏文件不覆盖）带 `memory-curator`（learn|organize）与 `dreamer`（dream）两个可改可删的预设；执行器按 Agent 跑工具循环，vault 读写各有白名单、越界一律拒绝，scratch 缓存超 20MB 自动回收；`/api/memory/agents` 提供增删改与恢复，另配 `status/run/stop` 与 2 秒轮询进度。M-D 审计与冲突（`memory-audit.jsonl` 逐次记录、用户记忆/编辑过的记忆机器不改、冲突追加 `logs/memory-conflicts.md`）与 M-E Obsidian 插件（记忆任务选 Agent、进度与状态、`Magpie 对话/` 单层目录沙箱、20MB GC 只删自己产生的笔记）均已完成。
 - **Magpie**：修复「在 Obsidian 打开」点了没反应——magpie 的 `/api/open` 走 ShellExecute 且进程被隐藏启动，仓库窗口被继承成隐藏；适配层改为只接管本知识库链接并用可见窗口直接拉起。
 - **Clash**：设置新增「外观」分页，含背景图片（≤2 MB，本地保存）与同一套四区域液态玻璃；只影响面板画面，不写内核配置。
 
@@ -207,13 +207,13 @@
 
 | 插件 | GitHub 包 | npm 单包 |
 | --- | --- | --- |
-| 飞书 2.2.0 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu) |
-| Clash 2.4.0 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.4.0/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.4.0) |
-| Magpie 2.4.0 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.4.0/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.4.0) |
+| 飞书 2.2.0 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu/v/2.2.0) |
+| Clash 2.3.6 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.3.6/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.3.6) |
+| Magpie 2.3.9 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.3.9/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.3.9) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-packages-dark.png"><img src="assets/readme/section-packages-light.png" alt="PACKAGES · npm 单包" width="100%"></picture></h2>
 
-每个 npm 包只包含一个对应的插件归档和下载 CLI（bin 名 `fish-dock-plugin-<插件>`），不运行安装后脚本，不修改 Dock 或系统设置。当前 **Magpie 是 2.4.0、Clash 是 2.4.0、飞书是 2.2.0**（OFM 单包停在 2.0.1，已退役只供手动下载），要求 **Node.js ≥ 24** 与 **FISH Dock ≥ 2.0.0**。
+每个 npm 包只包含一个对应的插件归档和下载 CLI（bin 名 `fish-dock-plugin-<插件>`），不运行安装后脚本，不修改 Dock 或系统设置。当前 npm 上 **Magpie 是 2.3.9、Clash 是 2.3.6、飞书是 2.2.0**（OFM 单包停在 2.0.1，已退役只供手动下载），要求 **Node.js ≥ 24** 与 **FISH Dock ≥ 2.0.0**；2.4.0 待发，尚未上架。
 
 | npm 单包（完整包名） | 版本 | bin | `npm pack` 体积 |
 | --- | --- | --- | --- |
