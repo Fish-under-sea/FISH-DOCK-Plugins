@@ -6,6 +6,11 @@ import {createRuntime} from './runtime.mjs';
 import {createTun} from './tun.mjs';
 import {readAppearance,savePatch,saveWallpaper} from './appearance-store.mjs';
 let service;
+// 外观的存取要用宿主的 storage。它只在 activate 的回调参数里，而 commands 里的箭头是在
+// 模块作用域求值的（拿不到那个参数）——2.4.0 直接写 context.storage 就是 ReferenceError，
+// 被 SDK 折成 COMMAND_FAILED，外观页于是只剩「插件没能完成」。
+// 因此在 activate 里把它存到模块作用域，命令只读这个变量。
+let storage;
 // 页面版本跟随包内清单：打包时 build-release 把 plugin.json 的 version 写成发行版本，
 // 页面读到的就是同一个号，不再单独维护一个「页面版本」。
 async function pluginVersion() {
@@ -49,6 +54,7 @@ async function autostartKernel(defaultKernel){
  }
 }
 createPlugin({id:'fish.clash',activate:async context=>{
+ storage=context.storage;
  // TUN 服务目录固定在 ProgramData，跨插件升级不随目录移动。
  const programData=process.env.ProgramData||'C:/ProgramData';
  // 内置 geo 数据随插件分发，位于插件自己的 service 目录（与 tun-service.exe 同级）。
@@ -70,9 +76,9 @@ createPlugin({id:'fish.clash',activate:async context=>{
   'tunService','installTunService','uninstallTunService','ipInfo','siteTest'].map(name=>[`clash.${name}`,params=>service[name](params)])),
  // 外观（背景图片与液态玻璃）不进 service 的视图模型：它是界面偏好，
  // 与内核状态无关，所以不随 clash.view 轮询回传，也不会因为内核没起而不可用。
- 'clash.appearance':()=>readAppearance(context.storage),
- 'clash.appearanceSave':params=>savePatch(context.storage,params),
- 'clash.appearanceWallpaper':params=>saveWallpaper(context.storage,params),
+ 'clash.appearance':()=>readAppearance(storage),
+ 'clash.appearanceSave':params=>savePatch(storage,params),
+ 'clash.appearanceWallpaper':params=>saveWallpaper(storage,params),
  'clash.start':()=>{void service.start().catch(()=>{});return service.view({controller:false})},
  'clash.stop':()=>{void service.stop().catch(()=>{});return service.view({controller:false})}
 },onError:()=>{void service?.shutdown().catch(()=>{})}});
