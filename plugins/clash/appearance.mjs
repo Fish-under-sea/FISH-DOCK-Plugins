@@ -31,6 +31,7 @@ export const DEFAULT_APPEARANCE = Object.freeze({
  schema: 1,
  wallpaper: '',
  veil: 40,
+ font: {text: '', dim: ''},
  glass: {
   preset: 'off',
   main: {fill: 100, blur: 0},
@@ -45,6 +46,20 @@ export const WALLPAPER_LIMIT = 2 * 1024 * 1024;
 const WALLPAPER_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 export const WALLPAPER_MAX_BYTES_TEXT = Math.ceil(WALLPAPER_LIMIT * 4 / 3) + 64;
 
+// 字体颜色：正文与次要两档，空串表示跟随主题。只认 #rrggbb。
+const HEX = /^#[0-9a-fA-F]{6}$/;
+export const FONT_KEYS = ['text', 'dim'];
+
+export function isColor(value) {
+  return typeof value === 'string' && HEX.test(value.trim());
+}
+
+export function colorPair(raw) {
+  const out = {text: '', dim: ''};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const key of FONT_KEYS) if (isColor(raw[key])) out[key] = raw[key].trim().toLowerCase();
+  return out;
+}
 const clamp = (value, low, high, fallback) => {
  const n = Number(value);
  if (!Number.isFinite(n)) return fallback;
@@ -87,6 +102,7 @@ export function normalize(raw) {
   schema: 1,
   wallpaper: '',
   veil: 40,
+  font: {text: '', dim: ''},
   glass: {
    preset: 'off',
    main: {...DEFAULT_APPEARANCE.glass.main},
@@ -96,6 +112,7 @@ export function normalize(raw) {
  };
  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
  if (isWallpaper(raw.wallpaper)) out.wallpaper = raw.wallpaper;
+ out.font = colorPair(raw.font);
  out.veil = clamp(raw.veil, 0, 95, 40);
  const glass = raw.glass && typeof raw.glass === 'object' && !Array.isArray(raw.glass) ? raw.glass : {};
  for (const region of GLASS_REGIONS) out.glass[region] = regionOf(glass[region], out.glass[region]);
@@ -127,6 +144,7 @@ export function patch(appearance, change) {
  const next = normalize(appearance);
  if (!change || typeof change !== 'object' || Array.isArray(change)) return next;
  if (change.veil !== undefined) next.veil = clamp(change.veil, 0, 95, next.veil);
+ if (change.font !== undefined) next.font = colorPair({...next.font, ...(change.font && typeof change.font === 'object' ? change.font : {})});
  const g = change.glass && typeof change.glass === 'object' && !Array.isArray(change.glass) ? change.glass : null;
  if (g) {
   const named = typeof g.preset === 'string' ? GLASS_PRESETS[g.preset] : null;
@@ -147,6 +165,8 @@ export function cssVars(appearance) {
  const a = normalize(appearance);
  const vars = {
   '--g-veil': a.veil + '%',
+  '--g-font-text': a.font.text,
+  '--g-font-dim': a.font.dim,
   '--g-wall': a.wallpaper ? `url("${a.wallpaper}")` : 'none',
  };
  for (const region of GLASS_REGIONS) {

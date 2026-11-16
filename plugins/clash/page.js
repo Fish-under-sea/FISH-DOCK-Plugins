@@ -269,14 +269,24 @@
   LB.active={trigger,pop,onOutside,onKey:key,onWheel,onResize};
   popoverRoot.appendChild(pop);
   paint();
-  // 定位：触发器的正下方，空间不足则向上翻。
+  // 定位：先画再量真实高度，按上下可用空间决定朝哪边开。
+  // 2.4.2 之前用 scrollHeight 估高（空列表时回落 320），比实际高得多，
+  // 于是明明下面是空的也会向上翻，把页签和内核对状态条盖住。
   const r=trigger.getBoundingClientRect?.()??{left:0,bottom:0,top:0,width:0};
-  const vh=(window.innerHeight||document.documentElement?.clientHeight||600);
-  const height=Math.min(pop.scrollHeight||320,320);
+  const vw=(window.innerWidth||document.documentElement?.clientWidth||900);
+  const vh=(window.visualViewport?.height||window.innerHeight||document.documentElement?.clientHeight||600);
   pop.style.position='fixed';
-  pop.style.left=Math.round(r.left)+'px';
   pop.style.width=Math.round(r.width||280)+'px';
-  pop.style.top=(r.bottom+4+height>vh&&r.top-4-height>0)?Math.round(r.top-4-height)+'px':Math.round(r.bottom+4)+'px';
+  const natural=Math.round(pop.getBoundingClientRect?.().height||pop.scrollHeight||0)||320;
+  const below=vh-r.bottom-8, above=r.top-8;
+  const up=natural>below&&above>below;
+  const maxH=Math.max(120,Math.min(320,up?above:below));
+  pop.style.maxHeight=maxH+'px';
+  pop.style.overflowY='auto';
+  const h=Math.min(natural,maxH);
+  const width=r.width||280;
+  pop.style.left=Math.round(Math.max(8,Math.min(r.left,vw-width-8)))+'px';
+  pop.style.top=Math.round(up?r.top-4-h:r.bottom+4)+'px';
   pop.focus?.();
   document.addEventListener?.('pointerdown',onOutside,true);
   document.addEventListener?.('keydown',key,true);
@@ -637,6 +647,10 @@
   style.setProperty('--g-veil',`${a.veil}%`);
   style.setProperty('--g-wall',a.wallpaper?`url("${a.wallpaper}")`:'none');
   document.body.toggleAttribute('data-has-wall',!!a.wallpaper);
+  // 字体颜色两档：留空就交回宿主主题（--dock-text / --dock-muted）
+  const fb=document.body.style;
+  const pair=[['--dock-text',a.font?.text],['--dock-muted',a.font?.dim]];
+  for(const [k,v] of pair){ if(v) fb.setProperty(k,v); else fb.removeProperty(k); }
   for(const [id] of GLASS_REGIONS){
    style.setProperty(`--g-${id}-fill`,`${a.glass[id].fill}%`);
    style.setProperty(`--g-${id}-blur`,`${a.glass[id].blur}px`);
@@ -649,6 +663,14 @@
    b.setAttribute('aria-pressed',String(on));
    if(id==='custom')b.disabled=a.glass.preset!=='custom';
   }
+ }
+ // 字体颜色一行：左名称，右色块 + 十六进制 + 清除（留空即跟随主题）。
+ function fontRow(key,label,value){
+  const v=typeof value==='string'&&/^#[0-9a-f]{6}$/.test(value)?value:'';
+  return `<div class="fc-row"><span class="fc-name">${label}</span>
+   <span class="fc-right"><input type="color" class="fc-input" data-fc-key="${key}" value="${v||'#f5f5f7'}" aria-label="${label}">
+   <code class="fc-hex" data-fc-hex="${key}">${v||'跟随主题'}</code>
+   ${v?`<button type="button" class="text fc-clear" data-action="fc-clear" data-fc-key="${key}">清除</button>`:''}</span></div>`;
  }
  function lookRange(key,region,value,min,max,unit,label){
   const out=unit==='%'?`${value}%`:`${value}px`;
@@ -693,10 +715,13 @@
     <div class="segmented look-presets" role="group" aria-label="液态玻璃预设">${presets}</div>
     ${regions}
    </section>
+   <section class="look-card"><h3>字体颜色</h3>
+    <p class="muted small">留空就跟随 Dock 主题；只影响 Clash 面板自己的文字。</p>
+    ${fontRow('text','正文',a.font?.text)}
+    ${fontRow('dim','次要文字',a.font?.dim)}
+   </section>
   </div>
-  <div class="card look-demo"><h3>示例卡片（卡片区域）</h3>
-   <p class="muted small">拖动上面「卡片」的不透明度与模糊，这张卡会跟着变；上面的设置卡保持实底，方便看清数字。</p>
-  </div>`;
+`;
  }
  // 落盘：把当前滑块的值一次性提交。只重画预设按钮，不重画整页，
  // 否则松手那一刻滑块会被重建、焦点与手感都断掉。
@@ -732,6 +757,15 @@
   return true;
  }
  function bindLook(){
+  // 字体颜色：拖动即时改（写 CSS 变量），松手才落盘；清除 = 交回主题。
+  for(const input of root.querySelectorAll('[data-fc-key]')){
+   const k=input.dataset.fcKey;
+   input.oninput=()=>{
+    document.body.style.setProperty(k==='text'?'--dock-text':'--dock-muted',input.value);
+    const hex=root.querySelector(`[data-fc-hex="${k}"]`);if(hex)hex.textContent=input.value;
+   };
+   input.onchange=()=>{void commitLook({font:{[k]:input.value}})};
+  }
   const file=root.querySelector('#look-wall-file');
   if(file)file.onchange=()=>{if(readWallpaperFile(file.files?.[0]))file.value=''};
   for(const input of root.querySelectorAll('[data-look]')){
@@ -1030,6 +1064,11 @@
    if(a==='tun-uninstall-yes'){confirmTun='';return run('uninstallTunService')}
    if(a==='tun-refresh')return run('tunService');
    // 外观：预设即刻落盘并整页重画（按钮与滑块都要跟着坐标走）；滑块只在松手时落盘。
+   if(a==='fc-clear'){
+    const k=b.dataset.fcKey;
+    void commitLook({font:{[k]:''}}).then(()=>draw());
+    return false;
+   }
    if(a==='look-preset'){
     const name=b.dataset.preset;
     if(name==='custom')return false;

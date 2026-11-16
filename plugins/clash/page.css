@@ -57,7 +57,7 @@ header>div:first-child{display:flex;align-items:center;gap:8px}
 .pane{max-height:min(560px,calc(100vh - 120px));overflow:auto;overscroll-behavior:contain;padding-right:4px;padding-bottom:64px}
 /* 三个 pane 统一内滚契约（上限 560 / 视口高）；卡片已改内容高 + overflow:visible，不再靠 pane 长高避免裁切。 */
 .pane.plain{background:transparent;padding:0 4px 4px 0}
-.pane.settings{max-height:min(560px,calc(100vh - 120px));overflow:auto}
+.pane.settings{max-height:min(560px,calc(100vh - 120px));overflow:auto;padding:0 4px 4px 0}
 
 /* ── 控件边界统一走 --line-control（宿主 --dock-line 在 dark 只有 1.5:1） ── */
 button:not(.primary):not([type=submit]),input:not([type=checkbox]),textarea,select{border-color:var(--line-control)}
@@ -177,7 +177,10 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 /* D3：吸底保存条用不透明底 + 分隔线；内核设置页按内容长高、保存条回到文末静态位置，
    滚动到底时 TUN 服务按钮行不再被压住。 */
 .save-bar{position:sticky;bottom:0;display:flex;justify-content:flex-end;padding:8px 0 4px;margin-top:8px;
- background:var(--layer-1);border-top:1px solid var(--line-hair)}
+ background:color-mix(in srgb,var(--layer-1) var(--g-main-fill,100%),transparent);
+ -webkit-backdrop-filter:blur(var(--g-main-blur,0px)) saturate(200%) brightness(1.14);
+ backdrop-filter:blur(var(--g-main-blur,0px)) saturate(200%) brightness(1.14);
+ border-top:1px solid var(--line-hair)}
 .pane.settings .save-bar{position:static}
 
 /* ── 撤销 snackbar：删除后 5 秒内可撤销 ── */
@@ -292,14 +295,12 @@ body[data-has-wall]{
  background-size:cover;background-position:center;background-repeat:no-repeat;background-attachment:fixed;
 }
 /* 外观页自身的版式：两块卡并排，窄了落成单列。 */
-.look-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;align-items:stretch;align-content:start;margin:12px 0}
+.look-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;align-items:stretch;align-content:start;margin:8px 0 0}
 .look-card{background:var(--layer-1);border:1px solid var(--line-hair);border-radius:14px;box-shadow:inset 0 1px 0 var(--hi);padding:16px;min-width:0;display:flex;flex-direction:column}
 /* 左卡（背景图片）通常比右卡矮：把最后那句说明压到卡底，两卡等高时不至于空一截。 */
 .look-card>p.muted:last-child{margin-top:auto}
 .look-card h3{margin:0 0 8px;font-size:13px}
 /* 外观页自己的设置卡保持实底（.look-card 不在玻璃组里），下面这张示例卡走 .card 的玻璃，用来对照效果。 */
-.look-demo{margin-top:12px}
-.look-demo h3{margin:0 0 8px;font-size:13px}
 .look-wall-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
 .look-thumb{width:96px;height:56px;object-fit:cover;border-radius:14px;border:1px solid var(--line-hair);background:var(--layer-2)}
 .look-presets{margin:8px 0 4px}
@@ -401,3 +402,19 @@ body[data-has-wall]{
 
 
 
+
+/* ── 滚动条：默认不占视觉，滚动/悬停时再出现 ─────────────────────────── */
+.pane,.headbar{scrollbar-width:none;-ms-overflow-style:none}
+.pane::-webkit-scrollbar,.headbar::-webkit-scrollbar{width:0;height:0}
+.pane:hover,.pane:focus-within,.headbar:hover{scrollbar-width:thin}
+.pane:hover::-webkit-scrollbar,.pane:focus-within::-webkit-scrollbar{width:8px;height:8px}
+.pane:hover::-webkit-scrollbar-thumb,.pane:focus-within::-webkit-scrollbar-thumb{background:var(--line-hair);border-radius:999px}
+.pane:hover::-webkit-scrollbar-track,.pane:focus-within::-webkit-scrollbar-track{background:transparent}
+/* ── 字体颜色：名称在左、色块与十六进制在右（与液态玻璃的行式布局一致） ── */
+.fc-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--line-hair)}
+.fc-row:first-of-type{border-top:0}
+.fc-name{flex:1 1 auto;font-size:13px}
+.fc-right{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.fc-input{width:36px;height:24px;padding:0;border:1px solid var(--line-hair);border-radius:14px;background:var(--layer-2);cursor:pointer}
+.fc-hex{font-size:12px;color:var(--dock-muted);font-variant-numeric:tabular-nums;min-width:74px}
+.fc-clear{font-size:12px;padding:0 4px}

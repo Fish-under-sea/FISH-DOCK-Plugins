@@ -1,0 +1,93 @@
+diff --git a/internal/gui/appearance.go b/internal/gui/appearance.go
+index b17f911..75a1455 100644
+--- a/internal/gui/appearance.go
++++ b/internal/gui/appearance.go
+@@ -97,13 +97,12 @@ func lookCSS(s settings.Settings) string {
+ 			// the picture fills the window behind the pages, under a veil of
+ 			// the theme's own background (one colour, the top layer), so text
+ 			// on it reads as on the plain page; the cards over it stay opaque.
+-			// While liquid glass is on the veil thins: an 84 % veil leaves the
+-			// picture so faint that a see-through card would look solid again,
+-			// which is exactly what the glass is for. 45 % still keeps prose on
+-			// the bare page readable, and the cards keep their own ground.
++			// While liquid glass is on the veil follows the content region's
++			// fill (veilGlass): an opaque card leaves only the margins showing
++			// the picture, a card at 0 % needs the veil to carry the reading.
+ 			veil := wallVeil
+ 			if s.FishGlass {
+-				veil = wallVeilGlass
++				veil = veilGlass(s.FishGlassContent.Fill)
+ 			}
+ 			fmt.Fprintf(&b, "html:not(.omarchy) body:not(.panel){background:linear-gradient(%[1]s,%[1]s),url(\"/api/appearance/wallpaper?v=%[2]d\") center/cover no-repeat var(--bg)}\n", veil, s.Wallpaper)
+ 			b.WriteString("html:not(.omarchy) body:not(.panel) .sidebar{background:transparent}\n")
+@@ -174,11 +173,30 @@ var (
+ 	darkFill = rgb{0x3a, 0x3a, 0x3f}
+ 	// how much of the theme's background lies over the picture
+ 	wallVeil = "color-mix(in srgb,var(--bg) 84%,transparent)"
+-	// wallVeilGlass is the same veil while liquid glass is on: thinner, so a
+-	// see-through card has a picture to show rather than an almost-solid one.
+-	wallVeilGlass = "color-mix(in srgb,var(--bg) 45%,transparent)"
++	// wallVeilGlass is the veil while liquid glass is on. It is not a constant:
++	// a see-through card needs the picture to show through it, while a card at
++	// 0 % leaves the page's own text lying on the bare picture. So the veil
++	// follows the content region's fill — the more see-through the cards, the
++	// thicker the veil behind them (see veilGlass).
++	wallVeilGlassThick = 84 // a content surface that is gone: the veil does the reading
++	wallVeilGlassThin  = 45 // opaque cards: only the margins show the picture
+ )
+ 
++// veilGlass is the veil over the wallpaper while liquid glass is on, for a
++// content region filled to fill percent: thin under opaque cards, thick under
++// see-through ones, so the page's text always has a ground to read on.
++func veilGlass(fill int) string {
++	f := fill
++	if f < 0 {
++		f = 0
++	}
++	if f > 100 {
++		f = 100
++	}
++	pct := wallVeilGlassThick + (f*(wallVeilGlassThin-wallVeilGlassThick))/100
++	return "color-mix(in srgb,var(--bg) " + strconv.Itoa(pct) + "%,transparent)"
++}
++
+ // accentOn is c, darkened (light theme) or lightened (dark theme) just
+ // enough to read as text on that theme's background and cards, grey or
+ // tinted with c.
+diff --git a/internal/gui/appearance_test.go b/internal/gui/appearance_test.go
+index 7c211c7..42c6b4d 100644
+--- a/internal/gui/appearance_test.go
++++ b/internal/gui/appearance_test.go
+@@ -247,13 +247,29 @@ func TestWallpaper(t *testing.T) {
+ 	if !strings.Contains(boot, "/api/appearance/wallpaper?v=") || !strings.Contains(boot, "color-mix(in srgb,var(--bg) 84%") || !strings.Contains(boot, "body:not(.panel)") {
+ 		t.Fatalf("boot.js draws no picture: %s", boot)
+ 	}
+-	// glass on: the veil thins, so a see-through card has a picture to show
+-	// rather than an almost-solid one; off again restores the full veil.
++	// glass on: the veil follows the content region's fill — thin under
++	// opaque cards (the picture shows in the margins), thick under see-through
++	// ones (the page's text needs a ground). Off again restores the 84 % veil.
+ 	if rec := lookServe(srv, "POST", "/api/settings", `{"fishGlassContent":{"fill":76,"blur":18},"theme":"dark","lang":"en"}`); rec.Code != http.StatusOK {
+ 		t.Fatalf("glass on: %d %s", rec.Code, rec.Body)
+ 	}
++	if thin := lookServe(srv, "GET", "/api/appearance/css", "").Body.String(); !strings.Contains(thin, "color-mix(in srgb,var(--bg) 55%") {
++		t.Fatalf("content at 76 %% should veil the picture at 55 %%: %s", thin)
++	}
++	// a card at 0 % leaves the text on the bare picture: the veil goes full
++	if rec := lookServe(srv, "POST", "/api/settings", `{"fishGlassContent":{"fill":0,"blur":18},"theme":"dark","lang":"en"}`); rec.Code != http.StatusOK {
++		t.Fatalf("glass clear: %d %s", rec.Code, rec.Body)
++	}
++	if full := lookServe(srv, "GET", "/api/appearance/css", "").Body.String(); !strings.Contains(full, "color-mix(in srgb,var(--bg) 84%") {
++		t.Fatalf("a content region at 0 %% must veil the picture at 84 %%: %s", full)
++	}
++	// glass elsewhere, opaque cards: the thinnest veil the glass uses — the
++	// cards carry the reading themselves, the picture only shows in the margins
++	if rec := lookServe(srv, "POST", "/api/settings", `{"fishGlassSidebar":{"fill":76,"blur":18},"fishGlassContent":{"fill":100,"blur":0},"theme":"dark","lang":"en"}`); rec.Code != http.StatusOK {
++		t.Fatalf("glass thin: %d %s", rec.Code, rec.Body)
++	}
+ 	if thin := lookServe(srv, "GET", "/api/appearance/css", "").Body.String(); !strings.Contains(thin, "color-mix(in srgb,var(--bg) 45%") {
+-		t.Fatalf("glass on still veils the picture at 84%%: %s", thin)
++		t.Fatalf("opaque cards should veil the picture at 45 %%: %s", thin)
+ 	}
+ 	if rec := lookServe(srv, "POST", "/api/settings", `{"fishGlassSidebar":{"fill":100,"blur":0},"fishGlassContent":{"fill":100,"blur":0},"fishGlassOverlay":{"fill":100,"blur":0},"theme":"dark","lang":"en"}`); rec.Code != http.StatusOK {
+ 		t.Fatalf("glass off: %d %s", rec.Code, rec.Body)
