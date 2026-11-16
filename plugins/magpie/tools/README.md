@@ -1,6 +1,6 @@
 # 自编译 magpie：构建与上游同步
 
-插件包里的 `service/magpie.exe` 由本目录的脚本编译：**基线 tag 由 `follow-upstream.ps1` 现场解析**（上游是 24h loop，写死必然过期），再加上 `patches/` 里序号最大的那份补丁。当前补丁链：**`fish.40`**（插件 2.4.3，基线 **v0.1.4262**：在 `fish.38` 之上把壁纸遮罩改为随内容区不透明度自适应，修玻璃开到低不透明时内容区读不出来；`fish.38` 是插件 2.4.0 在 `fish.37` 之上并入 M-A3 派发接线、M-D 审计与冲突记录、M-E 的 magpie 侧 fish-vault 记忆 Agent 路由；`fish.37` 是记忆「Agent 化」的 M-A/M-B/M-C 并入 `fish.36` 外观；`fish.36` 是设置 › 外观独立分页、液态玻璃按区域调节并随主题下发给插件页、知识库链接改由适配层直接拉起、`fishvault` 链接空格改 `%20`；`fish.35` 是 2.3.8/2.3.9 的形态；`fish.34` 是插件 2.3.7；`fish.33` 是插件 2.3.6 在 v0.1.3596 上的形态；`fish.32` 是 2.3.6 修复版在 v0.1.3383 上的形态，`fish.31` 是 2.3.5）；旧补丁留在 `patches/` 备查：`fish.16`/`fish.15` 是 v0.1.2799 那条线（2.2.1/2.2.2 前半），`fish.13` 用于 2.1.9–2.2.0，`fish.12` 用于 2.1.8，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1`–`fish.8`。
+插件包里的 `service/magpie.exe` 由本目录的脚本编译：**基线 tag 由 `follow-upstream.ps1` 现场解析**（上游是 24h loop，写死必然过期），再加上 `patches/` 里序号最大的那份补丁。当前补丁链：**`fish.41`**（插件 2.4.4，基线 **v0.1.4262**：`fish.41` 补上设置页「外观」页签的图标、撤回 2.4.3 里改坏的侧栏内滚、把壁纸遮罩改成 `--wall-veil` 变量并让外观表在滑块松手后重画（此前遮罩从未真正生效）、玻璃覆盖改由 `tools/glass-surfaces.mjs` 从 `app.css` 生成、字体颜色「清空」改「重置」、吸顶页头不再留深色唇边；`fish.40` 并入底图遮挡（`fishGlassVeil`）、字体颜色实时生效与记忆 Agent 面板中文化；`fish.39` 让壁纸遮罩随内容区不透明度自适应；`fish.38` 是插件 2.4.0 在 `fish.37` 之上并入 M-A3 派发接线、M-D 审计与冲突记录、M-E 的 magpie 侧 fish-vault 记忆 Agent 路由；`fish.37` 是记忆「Agent 化」的 M-A/M-B/M-C 并入 `fish.36` 外观；`fish.36` 是设置 › 外观独立分页、液态玻璃按区域调节并随主题下发给插件页、知识库链接改由适配层直接拉起、`fishvault` 链接空格改 `%20`；`fish.35` 是 2.3.8/2.3.9 的形态；`fish.34` 是插件 2.3.7；`fish.33` 是插件 2.3.6 在 v0.1.3596 上的形态；`fish.32` 是 2.3.6 修复版在 v0.1.3383 上的形态，`fish.31` 是 2.3.5）；旧补丁留在 `patches/` 备查：`fish.16`/`fish.15` 是 v0.1.2799 那条线（2.2.1/2.2.2 前半），`fish.13` 用于 2.1.9–2.2.0，`fish.12` 用于 2.1.8，2.1.4–2.1.7 是 `v0.1.2732` + `fish.9`–`fish.11`，2.1.3 及更早是 `v0.1.2336` + `fish.1`–`fish.8`。
 
 ## 2.4.0 / fish.37 + fish.38：记忆 Agent 化（内置，M-A 到 M-E）
 
@@ -156,3 +156,14 @@ node tools/stage-development.mjs --out <临时目录> --sdk <Dock SDK> --magpie 
 - **`node --test` 在受限沙箱里不可用**（spawn EPERM，禁管道 stdio）；页面测试直接 `node <file>` 跑。
 - **`internal/gui` / `internal/plugin` 有一批用例在本机恒失败**：`symlink ... A required privilege is not held`（要 SeCreateSymbolicLinkPrivilege）、`sh.exe ... couldn't create signal pipe`、并发 `rename ... Access is denied`。**这些在未打补丁的干净上游上失败集一模一样**，不要当成补丁的回归；判断方法是拿同一套 `go test` 在干净 tag 上跑一遍对比。
 - Windows 打包是 `CGO_ENABLED=0`，MSVC 用不上；`wails` 的 webview 走系统 WebView2。
+
+## 液态玻璃覆盖清单（glass-surfaces.mjs）
+
+`fish-glass.css` 末尾 `gen:glass-surfaces` 两行标记之间的内容由 `glass-surfaces.mjs` 生成，不要手改：
+
+```powershell
+node plugins/magpie/tools/glass-surfaces.mjs <上游源码根>          # 只看命中面与统计
+node plugins/magpie/tools/glass-surfaces.mjs <上游源码根> --write  # 写入 fish-glass.css
+```
+
+它扫描上游 `internal/gui/assets/app.css`，挑出所有「`background` 用实色令牌（`--card` / `--card-2` / `--layer-*`）铺底」的规则，换成本区域的玻璃变量，并排除交互态、表单控件、对话与编辑器正文。只改 `background-color`，不动任何布局属性——玻璃化不该改变版式。上游 `app.css` 大改后重跑一次即可覆盖新增的块。

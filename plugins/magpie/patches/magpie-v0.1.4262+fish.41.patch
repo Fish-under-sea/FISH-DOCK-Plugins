@@ -1,0 +1,327 @@
+diff --git a/internal/gui/appearance.go b/internal/gui/appearance.go
+index a4976a0..d762bc9 100644
+--- a/internal/gui/appearance.go
++++ b/internal/gui/appearance.go
+@@ -96,19 +96,14 @@ func lookCSS(s settings.Settings) string {
+ 		if fi, err := os.Stat(settings.WallpaperPath()); err == nil && fi.Mode().IsRegular() {
+ 			// the picture fills the window behind the pages, under a veil of
+ 			// the theme's own background (one colour, the top layer), so text
+-			// on it reads as on the plain page; the cards over it stay opaque.
+-			// While liquid glass is on the veil follows the content region's
+-			// fill (veilGlass): an opaque card leaves only the margins showing
+-			// the picture, a card at 0 % needs the veil to carry the reading.
+-			veil := wallVeil
+-			if s.FishGlass {
+-				veil = veilGlass(s.FishGlassContent.Fill)
+-				// the user's own veil wins over the computed one
+-				if s.FishGlassVeil > 0 && s.FishGlassVeil <= 95 {
+-					veil = "color-mix(in srgb,var(--bg) " + strconv.Itoa(s.FishGlassVeil) + "%,transparent)"
+-				}
+-			}
+-			fmt.Fprintf(&b, "html:not(.omarchy) body:not(.panel){background:linear-gradient(%[1]s,%[1]s),url(\"/api/appearance/wallpaper?v=%[2]d\") center/cover no-repeat var(--bg)}\n", veil, s.Wallpaper)
++			// on it reads as on the plain page.
++			// The veil is --wall-veil, a variable: the slider that sets it (and
++			// the content region's opacity it follows) changes it on the page,
++			// live, without a new stylesheet. stylesheet-level values only
++			// landed when the accent or the picture changed, which is why
++			// 底图遮挡 used to do nothing at all.
++			veil := veilFor(s)
++			fmt.Fprintf(&b, "html:not(.omarchy) body:not(.panel){--wall-veil:%[1]s;background:linear-gradient(var(--wall-veil),var(--wall-veil)),url(\"/api/appearance/wallpaper?v=%[2]d\") center/cover no-repeat var(--bg)}\n", veil, s.Wallpaper)
+ 			b.WriteString("html:not(.omarchy) body:not(.panel) .sidebar{background:transparent}\n")
+ 		}
+ 	}
+@@ -198,9 +193,36 @@ func veilGlass(fill int) string {
+ 		f = 100
+ 	}
+ 	pct := wallVeilGlassThick + (f*(wallVeilGlassThin-wallVeilGlassThick))/100
++	return veilPct(pct)
++}
++
++// veilPct is the veil colour at pct percent of the theme's background. It is
++// emitted as --wall-veil, a variable, so the page can thin or thicken it while
++// a slider moves without asking the server for a stylesheet again (the class
++// of bug that made 底图遮挡 do nothing).
++func veilPct(pct int) string {
++	if pct < 0 {
++		pct = 0
++	}
++	if pct > 96 {
++		pct = 96
++	}
+ 	return "color-mix(in srgb,var(--bg) " + strconv.Itoa(pct) + "%,transparent)"
+ }
+ 
++// veilFor is the veil the wallpaper gets, as a colour: the reader's own number
++// when they set one, else the computed one while liquid glass is on, else the
++// plain 84 % veil.
++func veilFor(s settings.Settings) string {
++	if s.FishGlassVeil > 0 && s.FishGlassVeil <= 95 {
++		return veilPct(s.FishGlassVeil)
++	}
++	if s.FishGlass {
++		return veilGlass(s.FishGlassContent.Fill)
++	}
++	return wallVeil
++}
++
+ // accentOn is c, darkened (light theme) or lightened (dark theme) just
+ // enough to read as text on that theme's background and cards, grey or
+ // tinted with c.
+diff --git a/internal/gui/assets/app.css b/internal/gui/assets/app.css
+index b134989..5764690 100644
+--- a/internal/gui/assets/app.css
++++ b/internal/gui/assets/app.css
+@@ -477,14 +477,6 @@ body.side-nav #side #nav.hl-on button[data-view]:is(.on, :hover, :active) { back
+ body.side-nav #nav.hl-on button[data-view] { transition: color .22s var(--ease); }
+ body.side-nav #nav.hl-on button[data-view] .nav-ic { transition: color .22s var(--ease); }
+ body.side-nav .nav-ic { display: block; flex: none; color: var(--muted); }
+-/* 2.4.3: 侧栏自己滚。资源库展开十几项后整列会超过窗口高度，
+-   之前没有内滚，于是把下面的分组和页面一起顶下去。 */
+-body.side-nav #side, body.side-nav #nav { min-height: 0; }
+-body.side-nav #nav { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain;
+-  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.45) transparent; }
+-body.side-nav #nav::-webkit-scrollbar { width: 6px; }
+-body.side-nav #nav::-webkit-scrollbar-track { background: transparent; }
+-body.side-nav #nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,.45); border-radius: 999px; }
+ body.side-nav #prefs svg { flex: none; width: 15px; height: 15px; margin: 0 .5px; color: var(--muted); }
+ /* graphite, as a Mac sidebar is: no colour of its own, the page open in the
+    text's own ink, until an accent of the user's own colours it (--mark) */
+diff --git a/internal/gui/assets/app.js b/internal/gui/assets/app.js
+index c2ede02..94781d5 100644
+--- a/internal/gui/assets/app.js
++++ b/internal/gui/assets/app.js
+@@ -24726,6 +24726,7 @@ if (mode === "window" && params.get("view") === "providers" && params.get("edit"
+ 
+ // 字体颜色：把各层级的 --fg/--fg-2/--muted/--faint 写成一张样式表。
+ // 深色单独设置时用与 lookCSS 相同的选择器，这样切换主题不用重算。
++
+ function applyFontColors(s) {
+   const roles = [["main", "--fg"], ["secondary", "--fg-2"], ["muted", "--muted"], ["faint", "--faint"]];
+   const decl = (m) => roles.filter(([k]) => m && m[k]).map(([k, v]) => v + ":" + m[k]).join(";");
+diff --git a/internal/gui/assets/appearance.js b/internal/gui/assets/appearance.js
+index ebc2ff9..ec51dda 100644
+--- a/internal/gui/assets/appearance.js
++++ b/internal/gui/assets/appearance.js
+@@ -119,11 +119,12 @@ function drawGlass(s, keep) {
+         const root = document.documentElement;
+         root.style.setProperty(`--fish-glass-${region}-${key}`, range.value + unit);
+         root.toggleAttribute("data-fish-glass", glassOnScreen({ ...now, [region]: { ...mine } }));
++        const live = { ...now, [region]: { ...mine } };
+       };
+       // the choice is saved when the slider is let go, one region at a time
+       range.onchange = () => {
+         mine[key] = Number(range.value);
+-        savePrefs({ ...keep, [GLASS_FIELDS[region]]: { ...mine } });
++        Promise.resolve(savePrefs({ ...keep, [GLASS_FIELDS[region]]: { ...mine } })).then(() => window.lookPaint?.());
+       };
+       field.append(range, out);
+       values.append(field);
+@@ -147,8 +148,10 @@ function drawGlass(s, keep) {
+     range.value = String(cur);
+     range.setAttribute("aria-label", t("Wallpaper veil"));
+     const out = el("output", "fish-glass-out", cur ? cur + "%" : t("Auto"));
+-    range.oninput = () => { out.textContent = Number(range.value) ? range.value + "%" : t("Auto"); };
+-    range.onchange = () => { savePrefs({ ...keep, fishGlassVeil: Number(range.value) }); };
++    range.oninput = () => {
++      out.textContent = Number(range.value) ? range.value + "%" : t("Auto");
++    };
++    range.onchange = () => { Promise.resolve(savePrefs({ ...keep, fishGlassVeil: Number(range.value) })).then(() => window.lookPaint?.()); };
+     field.append(range, out);
+     values.append(field);
+     row.append(who, values);
+@@ -404,16 +407,25 @@ function drawFontColors(s, keep) {
+         sw.dataset.color = out; sw.style.setProperty("--fc", out || "transparent");
+         sw.classList.toggle("empty", !out);
+         hex.textContent = out || t("Follows theme");
++        reset.hidden = !out;
+         // 立即生效：拖动时不等服务器回包
+         const v = FONT_ROLE_VARS[role];
+         if (v) { if (out) document.documentElement.style.setProperty(v, out); else document.documentElement.style.removeProperty(v); }
+         scheduleFontSave({ ...keep, [field]: next });
+       });
+-      const clear = el("button", "text", t("Clear"));
+-      clear.type = "button";
+-      clear.disabled = !map[role];
+-      clear.onclick = () => { const next = { ...map }; delete next[role]; closeFontPicker(); savePrefs({ ...keep, [field]: next }); };
+-      actions.append(sw, hex, clear);
++      // 重置：清掉这一档的自选颜色，回到主题默认；同时立刻撤掉内联变量，
++      // 不等服务器回包，否则点完还看着旧色。只在设过颜色时出现。
++      const reset = el("button", "text fc-reset", t("Reset"));
++      reset.type = "button";
++      reset.hidden = !map[role];
++      reset.onclick = () => {
++        const next = { ...map }; delete next[role];
++        closeFontPicker();
++        const v = FONT_ROLE_VARS[role];
++        if (v) document.documentElement.style.removeProperty(v);
++        savePrefs({ ...keep, [field]: next });
++      };
++      actions.append(sw, hex, reset);
+       row.append(who, actions);
+       frag.append(row);
+     }
+diff --git a/internal/gui/assets/fish-glass.css b/internal/gui/assets/fish-glass.css
+index 450a54a..fb0672c 100644
+--- a/internal/gui/assets/fish-glass.css
++++ b/internal/gui/assets/fish-glass.css
+@@ -182,26 +182,116 @@
+ .fc-picker-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+ .fc-hex-input { flex: 1 1 auto; height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--fg); font: 12px ui-monospace, monospace; }
+ .fc-clear { flex: none; }
+-/* 2.4.3: 玻璃覆盖补全 -------------------------------------------------
+-   排查方式：把 app.css 里所有写死 `background: var(--card|--layer|--bg)` 的
+-   选择器列出来逐个看归属。三类要分开处理：
+-   1) 与 .list/.card 同级的“面”（表格、订阅卡、KPI、图表）：接内容区变量；
+-   2) 套在 .list 里面的小块：父级已经在当玻璃，它就不要再盖一层实底，
+-      否则玻璃永远透不下来（这是之前看着“缺玻璃”的主因）；
+-   3) 设置页吸顶条、菜单、输入框：分别归 侧栏/浮层/控件。 */
+-:root[data-fish-glass] body :is(.qt-wrap, .subscription-card, .kpi, .chart, .stats.empty, .ag-install-row) {
+-  background: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++
++/* gen:glass-surfaces:begin ------------------------------------------------
++  由 plugins/magpie/tools/glass-surfaces.mjs 从上游 app.css 生成，请勿手改。
++  命中规则 = 「background 用实色令牌铺底」且不是交互态、表单控件或正文区。
++  只改 background-color，不碰任何布局属性。*/
++:root[data-fish-glass] body #agents > .row.dragging,
++:root[data-fish-glass] body #panelKey .key-rec,
++:root[data-fish-glass] body #providers > .row.dragging,
++:root[data-fish-glass] body #view-gateway .find,
++:root[data-fish-glass] body #view-providers .pv-sel,
++:root[data-fish-glass] body .acc.adding .bulk-keys,
++:root[data-fish-glass] body .accts,
++:root[data-fish-glass] body .achip,
++:root[data-fish-glass] body .action-confirm,
++:root[data-fish-glass] body .ag-acc,
++:root[data-fish-glass] body .ag-chip,
++:root[data-fish-glass] body .ag-diff-file,
++:root[data-fish-glass] body .ag-install-row,
++:root[data-fish-glass] body .ag-lead.welcome,
++:root[data-fish-glass] body .ag-open .field,
++:root[data-fish-glass] body .ag-show,
++:root[data-fish-glass] body .ag-up,
++:root[data-fish-glass] body .call-archive,
++:root[data-fish-glass] body .call-body,
++:root[data-fish-glass] body .call-wire,
++:root[data-fish-glass] body .call-wire-note,
++:root[data-fish-glass] body .cc-tip,
++:root[data-fish-glass] body .chart,
++:root[data-fish-glass] body .chip,
++:root[data-fish-glass] body .cx-t,
++:root[data-fish-glass] body .cxpick,
++:root[data-fish-glass] body .deprecation,
++:root[data-fish-glass] body .guide,
++:root[data-fish-glass] body .guide-agent,
++:root[data-fish-glass] body .heat-grid .wd,
++:root[data-fish-glass] body .ic-stack .disc,
++:root[data-fish-glass] body .kpi,
++:root[data-fish-glass] body .led th,
++:root[data-fish-glass] body .led-heat,
++:root[data-fish-glass] body .led-req .led-box,
++:root[data-fish-glass] body .led-spd thead th,
++:root[data-fish-glass] body .led-speed,
++:root[data-fish-glass] body .led-strip,
++:root[data-fish-glass] body .led-trend,
++:root[data-fish-glass] body .led-up,
++:root[data-fish-glass] body .led-wrap,
++:root[data-fish-glass] body .list,
++:root[data-fish-glass] body .mask-tip,
++:root[data-fish-glass] body .mask-try-in,
++:root[data-fish-glass] body .mchip,
++:root[data-fish-glass] body .mfoot .text.action:disabled,
++:root[data-fish-glass] body .mname,
++:root[data-fish-glass] body .mnhead,
++:root[data-fish-glass] body .plugin-panel-body,
++:root[data-fish-glass] body .pop.proto-menu.sess-menu,
++:root[data-fish-glass] body .pq-arow,
++:root[data-fish-glass] body .pq-card,
++:root[data-fish-glass] body .pq-dial b,
++:root[data-fish-glass] body .prof-detail,
++:root[data-fish-glass] body .provider-discovery,
++:root[data-fish-glass] body .pu-card,
++:root[data-fish-glass] body .pu-none,
++:root[data-fish-glass] body .pu-tot,
++:root[data-fish-glass] body .qt .qt-sub,
++:root[data-fish-glass] body .qt-wrap,
++:root[data-fish-glass] body .rate-win .day-chip,
++:root[data-fish-glass] body .row.pref .set-field,
++:root[data-fish-glass] body .search-unit,
++:root[data-fish-glass] body .sess-card,
++:root[data-fish-glass] body .sess-filter,
++:root[data-fish-glass] body .sess-menu .sc-top,
++:root[data-fish-glass] body .sess-pick,
++:root[data-fish-glass] body .sheet .find,
++:root[data-fish-glass] body .sheet .sponsor-me,
++:root[data-fish-glass] body .snip,
++:root[data-fish-glass] body .snip-wrap > .copy,
++:root[data-fish-glass] body .stats.empty,
++:root[data-fish-glass] body .stats.indexing,
++:root[data-fish-glass] body .subscription-card,
++:root[data-fish-glass] body .subscription-head .us-more,
++:root[data-fish-glass] body .text.action,
++:root[data-fish-glass] body .update-hide,
++:root[data-fish-glass] body [type=color],
++:root[data-fish-glass] body [type=file],
++:root[data-fish-glass] body [type=hidden],
++:root[data-fish-glass] body [type=submit]),
++:root[data-fish-glass] body body.side-nav #nav > .nav-top-hl:not([hidden]) {
++  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+ }
+-:root[data-fish-glass] body :is(.subscription-acct, .row.stat .us-more, .qt .qt-sub) {
+-  background: color-mix(in srgb, var(--card) 45%, transparent);
++:root[data-fish-glass] body #view-providers .row.pv-pick.picked,
++:root[data-fish-glass] body .acc.adding,
++:root[data-fish-glass] body .accts .keys-tools,
++:root[data-fish-glass] body .accts.sorting > .dragging,
++:root[data-fish-glass] body .action-confirm .confirm-names,
++:root[data-fish-glass] body .ag-exp,
++:root[data-fish-glass] body .gw-keys.sorting > .acc.dragging,
++:root[data-fish-glass] body .search-key-list.sorting > .acc.dragging,
++:root[data-fish-glass] body .signing,
++:root[data-fish-glass] body .subscription-acct {
++  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
+ }
+-/* 设置页吸顶的那条：它自己刷了一层 92% 的背景，会盖掉侧栏与页面的玻璃 */
+-:root[data-fish-glass] body:not(.side-nav) #view-settings .set-head::before {
+-  background: color-mix(in srgb, var(--bg) var(--fish-glass-content-fill), transparent);
++/* gen:glass-surfaces:end */
++
++/* 2.4.4: 吸顶页头与页签条的底 ------------------------------------------------
++   设置的页头原本刷一层 92% 不透明的 --bg，并且上下各外扩 6px：玻璃开着时，
++   页签下面就多了一道与四周对不上的深色唇边（用户说的「意义不明的底部」）。
++   改成跟随页面自己的遮罩，模糊与吸顶行为都不动；库与插件页的页头直接透明。 */
++:root[data-fish-glass] body :is(#view-settings .set-head, #addSheet > .row-head)::before {
++  background: var(--wall-veil, color-mix(in srgb, var(--bg) 92%, transparent));
+ }
+-/* 菜单：与浮层同一区 */
+-:root[data-fish-glass] body :is(.row-menu, .us-more.open, .ag-more) {
+-  background: color-mix(in srgb, var(--card) var(--fish-glass-overlay-fill), transparent);
+-  -webkit-backdrop-filter: blur(var(--fish-glass-overlay-blur)) saturate(200%) brightness(1.14);
+-  backdrop-filter: blur(var(--fish-glass-overlay-blur)) saturate(200%) brightness(1.14);
++:root[data-fish-glass] body :is(#view-library .lib-head, #view-plugins .pm-head) {
++  background: transparent;
+ }
+diff --git a/internal/gui/assets/i18n.js b/internal/gui/assets/i18n.js
+index f92742e..1ee9b34 100644
+--- a/internal/gui/assets/i18n.js
++++ b/internal/gui/assets/i18n.js
+@@ -4809,6 +4809,7 @@ const I18N = {
+     "{n} of {total}": "{n} / {total}",
+     "Others": "其他",
+     "Clear": "清空",
++    "Reset": "重置",
+     "All {n}": "全部 {n} 个",
+     "Ungroup": "取消分组",
+     "Group": "创建分组",
+diff --git a/internal/gui/assets/navicons.js b/internal/gui/assets/navicons.js
+index 114101c..01e192a 100644
+--- a/internal/gui/assets/navicons.js
++++ b/internal/gui/assets/navicons.js
+@@ -74,6 +74,8 @@ window.NAV_SUB_IC = {
+   },
+   settings: {
+     general: "M3 5h10 M3 11h10 M6 3.5v3 M10 9.5v3",
++    // a drop: the liquid glass this page is about
++    appearance: "M8 2.5c2.4 2.8 3.9 4.9 3.9 6.6a3.9 3.9 0 0 1-7.8 0c0-1.7 1.5-3.8 3.9-6.6z",
+     usage: "M2.5 10.5a5.5 5.5 0 1 1 11 0 M8 10.5l2.5-3",
+     network: "M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z M2.5 8h11 M8 2.5c1.6 1.7 2.3 3.5 2.3 5.5S9.6 11.8 8 13.5 M8 2.5C6.4 4.2 5.7 6 5.7 8s.7 3.8 2.3 5.5",
+     models: "M4.5 4.5h7v7h-7z M6.5 2.5v2 M9.5 2.5v2 M6.5 11.5v2 M9.5 11.5v2 M2.5 6.5h2 M2.5 9.5h2 M11.5 6.5h2 M11.5 9.5h2",
