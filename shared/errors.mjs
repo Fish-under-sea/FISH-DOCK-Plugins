@@ -23,6 +23,11 @@ export const errorMessages = Object.freeze({
  READY_TIMEOUT: '等待服务就绪超时，请检查依赖或端口后重试',
  INVALID_READY_URL: '服务就绪地址无效，请检查适配包与服务版本是否匹配',
  STOP_FAILED: '服务退出尚未完成，请重试停止',
+ // ── 宿主页桥（fish:call）的拒收：宿主自 2.4.4 起立即回码，不再静默丢弃 ──
+ PAYLOAD_TOO_LARGE: '单次请求超过宿主页桥上限（2 MiB）：请把图片压小或分次提交后重试',
+ INVALID_METHOD: '插件页面请求的方法名无效（不能以 host. 或 plugin. 开头）：请更新插件到最新版本后重试',
+ TOO_MANY_REQUESTS: '插件页面同时在途的请求过多（上限 16）：请等上一批操作完成后再试',
+ INVALID_PAYLOAD: '插件页面请求无法序列化为 JSON：请重试；仍失败请打开插件日志查看原因',
  // ── Clash 内核 / 控制器 / 系统代理 / 订阅 ──
  KERNEL_ATTACH_FAILED: '无法接管残留内核：请先停止内核（或结束残留的 mihomo 进程）后重新启动',
  KERNEL_STOP_UNCONFIRMED: '内核是否已退出未能确认：请两秒后刷新；仍显示运行中就在任务管理器结束 mihomo 进程',

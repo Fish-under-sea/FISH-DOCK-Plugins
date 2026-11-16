@@ -118,7 +118,11 @@
   EPERM:'系统拒绝该操作（EPERM）：请检查安全软件或系统策略是否拦截，再重试',
   EBUSY:'文件被占用或资源忙（EBUSY）：请关闭占用该文件的程序后重试',
   // 插件协议层（d.sdk/宿主产生）：不要落到「未识别错误」。
-  COMMAND_FAILED:'这次操作插件没能完成：请重试；仍失败请打开插件日志查看原因',
+  PAYLOAD_TOO_LARGE:'单次请求超过宿主页桥上限（2 MiB）：请把图片压小或分次提交后重试',
+ INVALID_METHOD:'插件页面请求的方法名无效（不能以 host. 或 plugin. 开头）：请更新插件到最新版本后重试',
+ TOO_MANY_REQUESTS:'插件页面同时在途的请求过多（上限 16）：请等上一批操作完成后再试',
+ INVALID_PAYLOAD:'插件页面请求无法序列化为 JSON：请重试；仍失败请打开插件日志查看原因',
+ COMMAND_FAILED:'这次操作插件没能完成：请重试；仍失败请打开插件日志查看原因',
   NOT_ACTIVE:'插件尚未启用：回到插件页启用后重试',
   UNKNOWN_METHOD:'宿主与插件版本不匹配（页面要的方法插件没有）：请更新插件到 2.2.0 后重试',
   CAPABILITY_REQUIRED:'宿主与插件版本不匹配（插件没声明所需能力）：请更新插件到 2.2.0 后重试',
@@ -700,7 +704,7 @@
   ${lookErr?`<p class="banner bad" role="alert">${esc(lookErr)}</p>`:''}
   <div class="look-grid">
    <section class="look-card"><h3>背景图片</h3>
-    <p class="muted small">铺在整张页面之后；换成玻璃后，卡片之间的空隙才看得见它。上限 2 MB，存在插件资料目录里。</p>
+    <p class="muted small">铺在整张页面之后；换成玻璃后，卡片之间的空隙才看得见它。大图会自动压缩后再存进插件资料目录，不用先自己裁。</p>
     <div class="look-wall-row">${wall}
      <button type="button" data-action="look-wall-pick">${a.wallpaper?'更换图片':'选择图片'}</button>
      ${a.wallpaper?button('look-wall-remove','移除'):''}
@@ -746,9 +750,10 @@
    return true;
   }catch(e){lookErr=reason(e);draw();return false}
  }
- // 宿主桥单条消息 512 KiB（extension-page.js:35 静默丢弃超限消息）。
- // base64 约放大 1.37 倍、再加 JSON 包装，所以 data URL 要压到 360 KiB 以内。
- const WALL_MAX_DATA = 360 * 1024;
+ // 宿主页桥的单帧上限自宿主 2.4.4 起是 2 MiB（旧版 512 KiB，超限会被静默丢弃）。
+ // data URL 是 base64，约放大 1.37 倍，加上 JSON 包装，压到 1.5 MiB 以内最稳。
+ // 仍然自动压缩：手机原图直接丢进来也能成，只是压得少一点、画质更好。
+ const WALL_MAX_DATA = 1536 * 1024;
  function loadImageFile(file){
   return new Promise((resolve,reject)=>{
    const url=URL.createObjectURL(file);
@@ -761,14 +766,14 @@
  // 逐级降质、再降尺寸，直到 data URL 进预算；实在不行返回 "".
  async function shrinkWallpaper(file){
   const img=await loadImageFile(file);
-  let scale=Math.min(1,2560/Math.max(img.width,img.height));
+  let scale=Math.min(1,3840/Math.max(img.width,img.height));
   for(let round=0;round<8;round++){
    const w=Math.max(320,Math.round(img.width*scale)), h=Math.max(320,Math.round(img.height*scale));
    const canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
    const g=canvas.getContext("2d");
    if(!g)return "";
    g.drawImage(img,0,0,w,h);
-   for(const q of [0.88,0.8,0.72,0.64,0.56]){
+   for(const q of [0.92,0.86,0.8,0.72,0.64,0.56]){
     const url=canvas.toDataURL("image/jpeg",q);
     if(url.length<=WALL_MAX_DATA)return url;
    }
