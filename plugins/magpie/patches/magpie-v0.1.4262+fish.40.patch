@@ -1,0 +1,227 @@
+diff --git a/internal/gui/appearance.go b/internal/gui/appearance.go
+index 75a1455..a4976a0 100644
+--- a/internal/gui/appearance.go
++++ b/internal/gui/appearance.go
+@@ -103,6 +103,10 @@ func lookCSS(s settings.Settings) string {
+ 			veil := wallVeil
+ 			if s.FishGlass {
+ 				veil = veilGlass(s.FishGlassContent.Fill)
++				// the user's own veil wins over the computed one
++				if s.FishGlassVeil > 0 && s.FishGlassVeil <= 95 {
++					veil = "color-mix(in srgb,var(--bg) " + strconv.Itoa(s.FishGlassVeil) + "%,transparent)"
++				}
+ 			}
+ 			fmt.Fprintf(&b, "html:not(.omarchy) body:not(.panel){background:linear-gradient(%[1]s,%[1]s),url(\"/api/appearance/wallpaper?v=%[2]d\") center/cover no-repeat var(--bg)}\n", veil, s.Wallpaper)
+ 			b.WriteString("html:not(.omarchy) body:not(.panel) .sidebar{background:transparent}\n")
+diff --git a/internal/gui/assets/app.css b/internal/gui/assets/app.css
+index 5764690..b134989 100644
+--- a/internal/gui/assets/app.css
++++ b/internal/gui/assets/app.css
+@@ -477,6 +477,14 @@ body.side-nav #side #nav.hl-on button[data-view]:is(.on, :hover, :active) { back
+ body.side-nav #nav.hl-on button[data-view] { transition: color .22s var(--ease); }
+ body.side-nav #nav.hl-on button[data-view] .nav-ic { transition: color .22s var(--ease); }
+ body.side-nav .nav-ic { display: block; flex: none; color: var(--muted); }
++/* 2.4.3: 侧栏自己滚。资源库展开十几项后整列会超过窗口高度，
++   之前没有内滚，于是把下面的分组和页面一起顶下去。 */
++body.side-nav #side, body.side-nav #nav { min-height: 0; }
++body.side-nav #nav { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain;
++  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.45) transparent; }
++body.side-nav #nav::-webkit-scrollbar { width: 6px; }
++body.side-nav #nav::-webkit-scrollbar-track { background: transparent; }
++body.side-nav #nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,.45); border-radius: 999px; }
+ body.side-nav #prefs svg { flex: none; width: 15px; height: 15px; margin: 0 .5px; color: var(--muted); }
+ /* graphite, as a Mac sidebar is: no colour of its own, the page open in the
+    text's own ink, until an accent of the user's own colours it (--mark) */
+diff --git a/internal/gui/assets/appearance.js b/internal/gui/assets/appearance.js
+index bd69a08..ebc2ff9 100644
+--- a/internal/gui/assets/appearance.js
++++ b/internal/gui/assets/appearance.js
+@@ -131,6 +131,30 @@ function drawGlass(s, keep) {
+     row.append(who, values);
+     return row;
+   }));
++  // 底图遮挡：放同一张卡里，0 就是“跟着内容区自动算”
++  const veilBox = $("#fishGlassVeilRow");
++  if (veilBox) {
++    const row = el("div", "row pref");
++    const who = el("div", "who");
++    who.append(el("div", "name", t("Wallpaper veil")),
++      el("div", "sub", t("How much of the theme's colour lies over the picture: 0 follows the page's own opacity")));
++    const values = el("div", "fish-glass-values");
++    const field = el("label", "fish-glass-slider");
++    field.append(el("span", "", t("Veil")));
++    const range = el("input", "fish-glass-range");
++    range.type = "range"; range.min = "0"; range.max = "95"; range.step = "1";
++    const cur = Number(s.fishGlassVeil || 0);
++    range.value = String(cur);
++    range.setAttribute("aria-label", t("Wallpaper veil"));
++    const out = el("output", "fish-glass-out", cur ? cur + "%" : t("Auto"));
++    range.oninput = () => { out.textContent = Number(range.value) ? range.value + "%" : t("Auto"); };
++    range.onchange = () => { savePrefs({ ...keep, fishGlassVeil: Number(range.value) }); };
++    field.append(range, out);
++    values.append(field);
++    row.append(who, values);
++    veilBox.replaceChildren(row);
++  }
++
+   // the pages' own copy of "is any of this see-through", for the hint line
+   box.dataset.glassOn = String(on);
+ }
+@@ -332,6 +356,16 @@ function openFontPicker(anchor, hex, apply) {
+   fontPicker = { el, onDoc };
+ }
+ 
++// 取色器每拖一像素都会回调，直接 POST 会让颜色慢半拍才变。
++// 先直接写 CSS 变量让画面立刻跟上，落盘在最后一次改动后 250ms 才发。
++let fontSavePending = 0, fontSaveLast = null;
++function scheduleFontSave(prefs) {
++ fontSaveLast = prefs;
++ if (fontSavePending) clearTimeout(fontSavePending);
++ fontSavePending = setTimeout(() => { fontSavePending = 0; if (fontSaveLast) savePrefs(fontSaveLast); }, 250);
++}
++const FONT_ROLE_VARS = { main: "--fg", secondary: "--fg-2", muted: "--muted", faint: "--faint" };
++
+ function drawFontColors(s, keep) {
+   const box = $("#fontColorPick");
+   if (!box) return;
+@@ -370,7 +404,10 @@ function drawFontColors(s, keep) {
+         sw.dataset.color = out; sw.style.setProperty("--fc", out || "transparent");
+         sw.classList.toggle("empty", !out);
+         hex.textContent = out || t("Follows theme");
+-        savePrefs({ ...keep, [field]: next });
++        // 立即生效：拖动时不等服务器回包
++        const v = FONT_ROLE_VARS[role];
++        if (v) { if (out) document.documentElement.style.setProperty(v, out); else document.documentElement.style.removeProperty(v); }
++        scheduleFontSave({ ...keep, [field]: next });
+       });
+       const clear = el("button", "text", t("Clear"));
+       clear.type = "button";
+@@ -382,4 +419,4 @@ function drawFontColors(s, keep) {
+     }
+   }
+   box.replaceChildren(frag);
+-}
+\ No newline at end of file
++}
+diff --git a/internal/gui/assets/fish-glass.css b/internal/gui/assets/fish-glass.css
+index f3c0027..450a54a 100644
+--- a/internal/gui/assets/fish-glass.css
++++ b/internal/gui/assets/fish-glass.css
+@@ -181,4 +181,27 @@
+ .fc-hue-thumb { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 999px; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .45); pointer-events: none; }
+ .fc-picker-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+ .fc-hex-input { flex: 1 1 auto; height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--fg); font: 12px ui-monospace, monospace; }
+-.fc-clear { flex: none; }
+\ No newline at end of file
++.fc-clear { flex: none; }
++/* 2.4.3: 玻璃覆盖补全 -------------------------------------------------
++   排查方式：把 app.css 里所有写死 `background: var(--card|--layer|--bg)` 的
++   选择器列出来逐个看归属。三类要分开处理：
++   1) 与 .list/.card 同级的“面”（表格、订阅卡、KPI、图表）：接内容区变量；
++   2) 套在 .list 里面的小块：父级已经在当玻璃，它就不要再盖一层实底，
++      否则玻璃永远透不下来（这是之前看着“缺玻璃”的主因）；
++   3) 设置页吸顶条、菜单、输入框：分别归 侧栏/浮层/控件。 */
++:root[data-fish-glass] body :is(.qt-wrap, .subscription-card, .kpi, .chart, .stats.empty, .ag-install-row) {
++  background: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++}
++:root[data-fish-glass] body :is(.subscription-acct, .row.stat .us-more, .qt .qt-sub) {
++  background: color-mix(in srgb, var(--card) 45%, transparent);
++}
++/* 设置页吸顶的那条：它自己刷了一层 92% 的背景，会盖掉侧栏与页面的玻璃 */
++:root[data-fish-glass] body:not(.side-nav) #view-settings .set-head::before {
++  background: color-mix(in srgb, var(--bg) var(--fish-glass-content-fill), transparent);
++}
++/* 菜单：与浮层同一区 */
++:root[data-fish-glass] body :is(.row-menu, .us-more.open, .ag-more) {
++  background: color-mix(in srgb, var(--card) var(--fish-glass-overlay-fill), transparent);
++  -webkit-backdrop-filter: blur(var(--fish-glass-overlay-blur)) saturate(200%) brightness(1.14);
++  backdrop-filter: blur(var(--fish-glass-overlay-blur)) saturate(200%) brightness(1.14);
++}
+diff --git a/internal/gui/assets/i18n.js b/internal/gui/assets/i18n.js
+index 7d5bd42..f92742e 100644
+--- a/internal/gui/assets/i18n.js
++++ b/internal/gui/assets/i18n.js
+@@ -2786,6 +2786,21 @@ const I18N = {
+     "no reset left on the account": "这个账号已没有重置卡",
+     "that reset was already used": "这张重置卡已经用过了",
+     "Allowances": "额度",
++  "Reads conversations": "读取对话",
++  "Wallpaper veil": "底图遮挡",
++  "Veil": "遮挡",
++  "Auto": "自动",
++  "How much of the theme's colour lies over the picture: 0 follows the page's own opacity": "主题色压在壁纸上的比例；0 = 跟随页面自身的不透明度自动计算",
++  "Tidies memory": "整理记忆",
++  "Dreams": "做梦",
++  "preset": "预设",
++  "Runs as {name}": "由 {name} 执行",
++  "{name} is what {role} runs as": "{name} 就是 {role} 的执行者",
++  "Add an agent": "添加 Agent",
++  "Bring the presets back": "恢复预设",
++  "The presets are back": "预设已恢复",
++  "Presets: {names}": "预设：{names}",
++  "Reads conversations quiet for 30 minutes, every hour": "每小时读取静默 30 分钟以上的对话",
+     "What is left on the account: the vendor tells only this, so Used / Left leaves it as it is": "账户余额：供应商只提供此数，不受「已用 / 剩余」切换影响",
+     "What is left on the account besides its windows": "账户里除周期额度外的其他余额或积分",
+     "Headers": "请求头",
+diff --git a/internal/gui/assets/index.html b/internal/gui/assets/index.html
+index 692114b..ae04158 100644
+--- a/internal/gui/assets/index.html
++++ b/internal/gui/assets/index.html
+@@ -295,8 +295,6 @@
+         </div>
+       </div>
+     </div>
+-    <div class="row-head set-sub-head"><div class="who"><div class="name" data-t>Font color</div></div></div>
+-    <div class="list prefs"><div id="fontColorPick" class="font-color-panel"></div></div>
+     <div class="row-head set-sub-head"><div class="who"><div class="name" data-t>Liquid glass</div></div></div>
+     <div class="list prefs">
+       <div class="row pref" id="fishGlassRow">
+@@ -304,7 +302,10 @@
+         <div id="fishGlassSegs"></div>
+       </div>
+       <div id="fishGlassRegions"></div>
++      <div id="fishGlassVeilRow"></div>
+     </div>
++    <div class="row-head set-sub-head"><div class="who"><div class="name" data-t>Font color</div></div></div>
++    <div class="list prefs"><div id="fontColorPick" class="font-color-panel"></div></div>
+   </section>
+   <section class="set-page" id="setPage-usage" role="tabpanel" aria-labelledby="setTab-usage">
+     <div class="list prefs">
+diff --git a/internal/settings/settings.go b/internal/settings/settings.go
+index 871d972..467a608 100644
+--- a/internal/settings/settings.go
++++ b/internal/settings/settings.go
+@@ -138,6 +138,10 @@ type Settings struct {
+ 	// Same numbers; solid by default, since a control keeps its own ground
+ 	// unless the reader thins it on purpose.
+ 	FishGlassControl FishGlassRegion `json:"fishGlassControl,omitempty"`
++	// FishGlassVeil is how much of the theme's own colour lies over the
++	// wallpaper while liquid glass is on, 1–95 %; 0 leaves it to
++	// veilGlass, which follows the content region's opacity.
++	FishGlassVeil int `json:"fishGlassVeil,omitzero"`
+ 	// Colorblind switches chart series (--c1…--c7) to an Okabe–Ito palette
+ 	// and gives each quota curve window, and its legend key, a dash of its
+ 	// own (#2073).
+diff --git a/internal/settingsapi/settingsapi.go b/internal/settingsapi/settingsapi.go
+index 5450a81..b1fc6fa 100644
+--- a/internal/settingsapi/settingsapi.go
++++ b/internal/settingsapi/settingsapi.go
+@@ -28,7 +28,7 @@ import (
+ // written.
+ var Keys = []string{
+ 	// Appearance
+-	"theme", "accent", "fontColors", "fontColorsDark", "fontColorsDarkOn", "fishGlass", "fishGlassSidebar", "fishGlassContent", "fishGlassOverlay", "fishGlassControl", "colorblind", "reduceMotion", "noBird", "lang", "uiFont", "codeFont",
++	"theme", "accent", "fontColors", "fontColorsDark", "fontColorsDarkOn", "fishGlass", "fishGlassSidebar", "fishGlassContent", "fishGlassOverlay", "fishGlassControl", "fishGlassVeil", "colorblind", "reduceMotion", "noBird", "lang", "uiFont", "codeFont",
+ 	// the tray, the Dock and this computer
+ 	"tray", "dock", "dockWindow", "dockNever", "lightweight", "keepAwake", "keepAwakeDisplay",
+ 	"noWSLAgents", "sessionTerminal", "signInLinkOnly", "quitNoAsk", "restoreOnQuit",
+@@ -304,6 +304,9 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
+ 	in.CheckinOff = cur.CheckinOff           // set on its own (checkin-account)
+ 	settings.CarryPerModel(&in, &cur)
+ 	in.Wallpaper = cur.Wallpaper // set on its own (appearance/wallpaper)
++	if _, sent := fields["fishGlassVeil"]; !sent {
++		in.FishGlassVeil = cur.FishGlassVeil
++	}
+ 	if _, sent := fields["fishGlass"]; !sent {
+ 		in.FishGlass = cur.FishGlass
+ 	}

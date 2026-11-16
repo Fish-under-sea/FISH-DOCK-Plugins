@@ -3,7 +3,11 @@ const {Plugin,ItemView,Modal,Notice}=require('obsidian');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const http=require('node:http');
-const rules=require('./rules');
+// rules.js 与本文件同目录。手动安装时最容易漏拷它——缺了会让整个插件在
+// 加载阶段就失败（Obsidian 只报「插件加载失败」，不给原因）。这里降级为
+// 可选：拿不到就退化成内置的最简实现，插件仍能打开，只是少了 GC 的辅助函数。
+let rules=null;
+try{ rules=require('./rules'); }catch(error){ console.error('[fish-magpie-memory] rules.js 缺失或损坏：'+(error&&error.message)); }
 const VIEW='fish-magpie-memory';
 
 // The pairing file stays outside the vault. Never persist tokens with saveData().
@@ -64,6 +68,7 @@ async function ownFiles(vault){
 // under the budget. It only ever deletes files rules.ownPath accepts, so a
 // memory, a wiki note or the user's own note in that folder is never taken.
 async function prune(vault){
+ if(!rules)return {deleted:[],kept:[]};
  const plan=rules.budget(await ownFiles(vault));
  const deleted=[];
  for(const p of plan.drop){

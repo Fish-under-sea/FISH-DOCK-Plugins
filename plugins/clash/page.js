@@ -269,24 +269,23 @@
   LB.active={trigger,pop,onOutside,onKey:key,onWheel,onResize};
   popoverRoot.appendChild(pop);
   paint();
-  // 定位：先画再量真实高度，按上下可用空间决定朝哪边开。
-  // 2.4.2 之前用 scrollHeight 估高（空列表时回落 320），比实际高得多，
-  // 于是明明下面是空的也会向上翻，把页签和内核对状态条盖住。
+  // 定位：默认向下开（下拉在触发框下面才符合直觉），只有下方实在不够
+  // 才向上翻；两边都不够时取宽敞的一侧并把高度夹住。
   const r=trigger.getBoundingClientRect?.()??{left:0,bottom:0,top:0,width:0};
   const vw=(window.innerWidth||document.documentElement?.clientWidth||900);
-  const vh=(window.visualViewport?.height||window.innerHeight||document.documentElement?.clientHeight||600);
+  const vh=(window.innerHeight||document.documentElement?.clientHeight||600);
   pop.style.position='fixed';
   pop.style.width=Math.round(r.width||280)+'px';
-  const natural=Math.round(pop.getBoundingClientRect?.().height||pop.scrollHeight||0)||320;
+  const natural=Math.round(pop.getBoundingClientRect?.().height||0)||320;
   const below=vh-r.bottom-8, above=r.top-8;
-  const up=natural>below&&above>below;
-  const maxH=Math.max(120,Math.min(320,up?above:below));
+  const up=below<160&&above>below;
+  const room=Math.max(120,up?above:below);
+  const maxH=Math.min(natural,room);
   pop.style.maxHeight=maxH+'px';
   pop.style.overflowY='auto';
-  const h=Math.min(natural,maxH);
   const width=r.width||280;
   pop.style.left=Math.round(Math.max(8,Math.min(r.left,vw-width-8)))+'px';
-  pop.style.top=Math.round(up?r.top-4-h:r.bottom+4)+'px';
+  pop.style.top=Math.round(up?r.top-4-maxH:r.bottom+4)+'px';
   pop.focus?.();
   document.addEventListener?.('pointerdown',onOutside,true);
   document.addEventListener?.('keydown',key,true);
@@ -747,13 +746,47 @@
    return true;
   }catch(e){lookErr=reason(e);draw();return false}
  }
+ // 宿主桥单条消息 512 KiB（extension-page.js:35 静默丢弃超限消息）。
+ // base64 约放大 1.37 倍、再加 JSON 包装，所以 data URL 要压到 360 KiB 以内。
+ const WALL_MAX_DATA = 360 * 1024;
+ function loadImageFile(file){
+  return new Promise((resolve,reject)=>{
+   const url=URL.createObjectURL(file);
+   const img=new Image();
+   img.onload=()=>{URL.revokeObjectURL(url);resolve(img)};
+   img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error("image decode failed"))};
+   img.src=url;
+  });
+ }
+ // 逐级降质、再降尺寸，直到 data URL 进预算；实在不行返回 "".
+ async function shrinkWallpaper(file){
+  const img=await loadImageFile(file);
+  let scale=Math.min(1,2560/Math.max(img.width,img.height));
+  for(let round=0;round<8;round++){
+   const w=Math.max(320,Math.round(img.width*scale)), h=Math.max(320,Math.round(img.height*scale));
+   const canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
+   const g=canvas.getContext("2d");
+   if(!g)return "";
+   g.drawImage(img,0,0,w,h);
+   for(const q of [0.88,0.8,0.72,0.64,0.56]){
+    const url=canvas.toDataURL("image/jpeg",q);
+    if(url.length<=WALL_MAX_DATA)return url;
+   }
+   scale*=0.75;
+  }
+  return "";
+ }
+
  function readWallpaperFile(file){
   if(!file)return false;
-  if(file.size>2*1024*1024){lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw();return false}
-  const reader=new FileReader();
-  reader.onerror=()=>{lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw()};
-  reader.onload=()=>{void setWallpaper({data:String(reader.result||'')})};
-  reader.readAsDataURL(file);
+  if(!/^image\//.test(file.type||'')){lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw();return false}
+  void (async()=>{
+   try{
+    const data=await shrinkWallpaper(file);
+    if(!data){lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw();return false}
+    await setWallpaper({data});
+   }catch{lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw()}
+  })();
   return true;
  }
  function bindLook(){
