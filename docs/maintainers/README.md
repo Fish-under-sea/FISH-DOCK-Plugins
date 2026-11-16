@@ -2,7 +2,7 @@
 
 2.0.0 把当时的四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉。OFM 已于 2026-10-25 暂停维护，2.3.0 起从官方目录与活动构建链退役，历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线上游 tag 加我们自己的补丁，当前 `v0.1.4262+fish.35`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md)。
 
-**当前版本**（以 `catalog/stable.json` 为唯一权威）：飞书 **2.2.0**、Clash **2.3.6**、Magpie **2.3.8**（宿主 ≥2.3.4；液态玻璃本版不可用、默认关闭）（exe `v0.1.4262+fish.35`）。发行走 `v2.x.y` 之类的总 tag，一个 release 里放当次要发的包——不必三插件同版。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+**当前版本**（以 `catalog/stable.json` 为唯一权威）：飞书 **2.2.0**、Clash **2.3.6**、Magpie **2.3.9**（宿主 ≥2.3.4；2.3.8 起液态玻璃不可用、默认关闭）（exe `v0.1.4262+fish.35`）。发行走 `v2.x.y` 之类的总 tag，一个 release 里放当次要发的包——不必三插件同版。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
 
 ## 身份表
 
@@ -84,7 +84,7 @@ Webhook 测试、系统代理切换、Windhawk 系统安装与应用均为实际
 
 正式打包使用 `tools/build-release.mjs` 生成 `.fish-plugin`（`--only <key>` 只打一个，不动其他包的版本），再使用 `tools/build-npm-packages.mjs` 生成 `npm-plugin-packages-<版本>/{feishu,clash,magpie}` 三个单包目录。每个 npm 包只包含一个对应归档、安装命令和所需许可证；发布前执行 `npm pack --dry-run`，确认没有其他插件、用户数据或构建缓存。GitHub Release 仍使用 `dist/*.fish-plugin`、`dist/stable.json` 和 `dist/SHA256SUMS.txt`。
 
-两个构建工具均要求新的输出目录，不再清空已有目录；正式构建必须提供所选插件需要的运行时。构建后执行 `node tools/verify-release.mjs --dist <绝对 dist 目录> --npm <绝对 npm 输出目录>`，核对归档资源、页面依赖、清单摘要和 npm 字节一致性。此检查不访问远端下载地址，也不替代安装与实机验收。仅准备本地实验材料可使用 `tools/build-local.ps1`（原 `prepare-local-handoff.ps1`，不含 OFM 参数），该脚本不会上传资源或发布 npm。
+两个构建工具均要求新的输出目录，不再清空已有目录；正式构建必须提供所选插件需要的运行时。构建后执行 `node tools/verify-release.mjs --dist <绝对 dist 目录> --npm <绝对 npm 输出目录>`，核对归档资源、页面依赖、清单摘要和 npm 字节一致性；它还会对包内每个 `.mjs` 跑一次 `node --check`，语法坏掉的包发不出去（2.3.8 即因此类问题无法启动）。此检查不访问远端下载地址，也不替代安装与实机验收。仅准备本地实验材料可使用 `tools/build-local.ps1`（原 `prepare-local-handoff.ps1`，不含 OFM 参数），该脚本不会上传资源或发布 npm。
 
 独立补丁使用 `--version <x.y.z> --only magpie`，两个构建工具都需传入。单插件构建输出的 `stable.json` 仅含本次插件；正式商店目录须只替换相应条目，保留其他插件已发布的版本、下载地址和摘要。
 
