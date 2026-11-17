@@ -1,0 +1,2527 @@
+diff --git a/internal/agent/agent.go b/internal/agent/agent.go
+index 673228746dd0d00ed94ae300abad4842b106f5f5..dbbd0b4683ceb77d4646156cdb681ac277197008 100644
+--- a/internal/agent/agent.go
++++ b/internal/agent/agent.go
+@@ -124,15 +124,20 @@ type Field struct {
+ 	Own bool
+ }
+ 
++// OriginObsidianVault marks a vault-resident Obsidian memory workspace agent.
++const OriginObsidianVault = "obsidian-vault"
++
+ // Agent is one supported coding agent.
+ type Agent struct {
+-	ID      string
+-	Name    string
+-	Icon    string // bundled icon name (internal/gui/assets/icons)
+-	Aliases []string
+-	Bin     string // executable name, used for detection
+-	Dir     string // config directory, used for detection
+-	Path    string // config file magpie edits
++	ID       string
++	Name     string
++	Icon     string // bundled icon name (internal/gui/assets/icons)
++	Aliases  []string
++	Bin      string // executable name, used for detection
++	Dir      string // config directory, used for detection
++	Path     string // config file magpie edits
++	Origin   string // agent provenance ("obsidian-vault" for vault workspaces)
++	VaultDir string // knowledge vault root for vault-resident agents
+ 	// Plugin is the spec of the plugin that adds this agent (plugged.go),
+ 	// "" for magpie's own
+ 	Plugin string
+diff --git a/internal/agent/agents.go b/internal/agent/agents.go
+index 070758868831d05490a60eb8eefc60d6d811f0da..a0e616ae06b0037ace322f468380743f1258228a 100644
+--- a/internal/agent/agents.go
++++ b/internal/agent/agents.go
+@@ -385,7 +385,7 @@ func onMachineAll(home, cfg string) []*Agent {
+ 		aionui(),
+ 		cherryStudio(home),
+ 		lody(home),
+-	}, append(append(append(ompProfiles(home), qwenpawAgents(home)...), hermesProfileAgents(home)...), claudeDirAgents(home)...)...)
++	}, append(append(append(append(ompProfiles(home), qwenpawAgents(home)...), hermesProfileAgents(home)...), claudeDirAgents(home)...), obsidianVaultAgents(home, cfg)...)...)
+ }
+ 
+ // ---- accessors -------------------------------------------------------------
+diff --git a/.work/magpie-dev/internal/agent/obsidian_memory.go b/internal/agent/obsidian_memory.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..a21c2681e756f746d51f5565bb70e19c52abf6a7
+--- /dev/null
++++ b/internal/agent/obsidian_memory.go
+@@ -0,0 +1,116 @@
++package agent
++
++import (
++	"path/filepath"
++	"strings"
++
++	"github.com/yetone/magpie/internal/memagent"
++)
++
++// ExtraObsidianVaults returns additional vault folders for tests when needed.
++var ExtraObsidianVaults func() []string
++
++func obsidianVaultAgents(home, cfg string) []*Agent {
++	extra := obsidianVaults(obsidianDirs(home, cfg))
++	if ExtraObsidianVaults != nil {
++		extra = append(extra, ExtraObsidianVaults()...)
++	}
++	wss := memagent.DiscoverObsidianWorkspaces(extra...)
++	if len(wss) == 0 {
++		return nil
++	}
++	out := make([]*Agent, 0, len(wss))
++	for _, ws := range wss {
++		out = append(out, newObsidianVaultAgent(ws))
++	}
++	return out
++}
++
++func newObsidianVaultAgent(ws memagent.ObsidianWorkspace) *Agent {
++	wsDir := ws.Dir
++	cfgPath := filepath.Join(wsDir, memagent.ObsidianConfigName)
++	id := ws.ID
++	name := strings.TrimSpace(ws.Config.Name)
++	if name == "" {
++		name = memagent.ObsidianAgentName
++	}
++
++	readCfg := func() memagent.ObsidianConfig {
++		c, err := memagent.ReadObsidianConfig(wsDir)
++		if err != nil {
++			return ws.Config
++		}
++		return c
++	}
++	writeCfg := func(c memagent.ObsidianConfig) error {
++		return memagent.WriteObsidianConfig(wsDir, c)
++	}
++	pickDefaultRoute := func() string {
++		for _, o := range viaMagpieShared(id, "") {
++			if strings.TrimSpace(o.Value) != "" {
++				return o.Value
++			}
++		}
++		return memagent.DefaultObsidianConfig().Route
++	}
++
++	return &Agent{
++		ID:       id,
++		Name:     name,
++		Icon:     "obsidian",
++		Origin:   OriginObsidianVault,
++		VaultDir: ws.Vault,
++		Dir:      wsDir,
++		Path:     cfgPath,
++		detect:   func() bool { return isFile(cfgPath) },
++		Joined: func() bool {
++			c := readCfg()
++			return c.Enabled && strings.TrimSpace(c.Route) != ""
++		},
++		Routed: func() bool {
++			c := readCfg()
++			return c.Enabled && strings.TrimSpace(c.Route) != ""
++		},
++		Join: func() (bool, error) {
++			c := readCfg()
++			if strings.TrimSpace(c.Route) == "" {
++				if len(viaMagpieShared(id, "")) == 0 {
++					return false, nil
++				}
++				c.Route = pickDefaultRoute()
++			}
++			c.Enabled = true
++			return true, writeCfg(c)
++		},
++		Unwire: func() error {
++			c := readCfg()
++			c.Enabled = false
++			return writeCfg(c)
++		},
++		Fields: []Field{{
++			Key:   "model",
++			Label: "model",
++			Live:  true,
++			Get: func() string {
++				c := readCfg()
++				if !c.Enabled {
++					return ""
++				}
++				return c.Route
++			},
++			Set: func(v string) error {
++				v = strings.TrimSpace(v)
++				if v == "" {
++					return nil
++				}
++				c := readCfg()
++				c.Route = v
++				c.Enabled = true
++				return writeCfg(c)
++			},
++			Options: func(map[string]string) []Option {
++				return viaMagpieShared(id, "")
++			},
++		}},
++	}
++}
+diff --git a/.work/magpie-dev/internal/agent/obsidian_memory_test.go b/internal/agent/obsidian_memory_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..979b3a0afc8deac1c181e82f34ef622bef5c0c10
+--- /dev/null
++++ b/internal/agent/obsidian_memory_test.go
+@@ -0,0 +1,131 @@
++package agent
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/yetone/magpie/internal/fishvault"
++	"github.com/yetone/magpie/internal/memagent"
++	"github.com/yetone/magpie/internal/provider"
++)
++
++func setupTestVault(t *testing.T, root string) {
++	t.Helper()
++	if err := os.MkdirAll(root, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(root, fishvault.Record), []byte(`{"schema":1,"imported":true,"files":[]}`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := memagent.EnsureObsidianWorkspace(root); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func findAgent(list []*Agent, id string) *Agent {
++	for _, a := range list {
++		if a.ID == id {
++			return a
++		}
++	}
++	return nil
++}
++
++func TestObsidianVaultAgentLifecycle(t *testing.T) {
++	syncHome(t)
++	if err := provider.Save(provider.Provider{
++		ID: "oa", Name: "OA", Key: "k", Chat: "http://127.0.0.1:1/v1",
++		Models: []string{"gpt-5.5", "gpt-5.4"},
++	}); err != nil {
++		t.Fatal(err)
++	}
++
++	vault := fishvault.Root()
++	setupTestVault(t, vault)
++
++	// Secondary vault listed in obsidian.json is also discovered with a unique id.
++	vault2 := filepath.Join(t.TempDir(), "NotesVault")
++	setupTestVault(t, vault2)
++	_, cfg := homes()
++	for _, obsCfgDir := range obsidianDirs("", cfg) {
++		if err := os.MkdirAll(obsCfgDir, 0o700); err != nil {
++			t.Fatal(err)
++		}
++		raw, _ := json.Marshal(map[string]any{
++			"vaults": map[string]any{
++				"v2": map[string]any{"path": vault2},
++			},
++		})
++		if err := os.WriteFile(filepath.Join(obsCfgDir, "obsidian.json"), raw, 0o600); err != nil {
++			t.Fatal(err)
++		}
++	}
++
++	list := local()
++	obs := findAgent(list, memagent.ObsidianAgentID)
++	if obs == nil {
++		t.Fatalf("expected %s in local() agents", memagent.ObsidianAgentID)
++	}
++	if obs.Origin != OriginObsidianVault || obs.VaultDir != vault || obs.Icon != "obsidian" || !obs.Detected() || !obs.Wired() || !obs.Joined() {
++		t.Fatalf("unexpected agent metadata: %+v detected=%v wired=%v joined=%v", obs, obs.Detected(), obs.Wired(), obs.Joined())
++	}
++	second := findAgent(list, memagent.ObsidianAgentID+"-notesvault")
++	if second == nil || second.Origin != OriginObsidianVault || second.VaultDir != vault2 {
++		t.Fatalf("expected secondary obsidian vault agent, got %+v", second)
++	}
++
++	// Pick model updates <vault>/.obsidian/magpie-agent/agent.json and memagent.Load().
++	if err := obs.Pick("model", "oa/gpt-5.4"); err != nil {
++		t.Fatalf("Pick model: %v", err)
++	}
++	if !obs.Wired() || !obs.Joined() {
++		t.Fatalf("expected Wired && Joined after Pick, got wired=%v joined=%v", obs.Wired(), obs.Joined())
++	}
++	cfgDisk, err := memagent.ReadObsidianConfig(obs.Dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if cfgDisk.Route != "oa/gpt-5.4" || !cfgDisk.Enabled {
++		t.Fatalf("agent.json = %+v", cfgDisk)
++	}
++	reg, err := memagent.Load()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if ma, ok := reg.Get(memagent.ObsidianAgentID); !ok || ma.Model != "oa/gpt-5.4" {
++		t.Fatalf("memagent registry entry = %+v ok=%v", ma, ok)
++	}
++
++	// Disconnect flips enabled=false while keeping Route intact.
++	if err := obs.Disconnect(); err != nil {
++		t.Fatalf("Disconnect: %v", err)
++	}
++	if obs.Wired() || obs.Joined() {
++		t.Fatalf("expected disconnected state, wired=%v joined=%v", obs.Wired(), obs.Joined())
++	}
++	cfgDisk, err = memagent.ReadObsidianConfig(obs.Dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if cfgDisk.Enabled || cfgDisk.Route != "oa/gpt-5.4" {
++		t.Fatalf("after Disconnect agent.json = %+v", cfgDisk)
++	}
++
++	// ConnectHow re-enables and preserves the route.
++	conn, err := obs.ConnectHow()
++	if err != nil {
++		t.Fatalf("ConnectHow: %v", err)
++	}
++	if conn.How == "" || !obs.Wired() || !obs.Joined() {
++		t.Fatalf("after ConnectHow conn=%+v wired=%v joined=%v", conn, obs.Wired(), obs.Joined())
++	}
++	cfgDisk, err = memagent.ReadObsidianConfig(obs.Dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !cfgDisk.Enabled || cfgDisk.Route != "oa/gpt-5.4" {
++		t.Fatalf("after ConnectHow agent.json = %+v", cfgDisk)
++	}
++}
+diff --git a/internal/gui/api.go b/internal/gui/api.go
+index 22d47e06c0f14b4776cb74a0904654ff9d0c9f86..56ef24c185cb1054f30a0b6b34e16061aac77844 100644
+--- a/internal/gui/api.go
++++ b/internal/gui/api.go
+@@ -193,12 +193,35 @@ type fieldJSON struct {
+ 	List int `json:"list,omitempty"`
+ }
+ 
++type obsidianRunJSON struct {
++	Role  string `json:"role"`
++	Phase string `json:"phase"`
++	Steps int    `json:"steps,omitempty"`
++	Wrote int    `json:"wrote,omitempty"`
++	Saved int    `json:"saved,omitempty"`
++	Ended string `json:"ended,omitempty"`
++	Error string `json:"error,omitempty"`
++}
++
++type obsidianMetaJSON struct {
++	Vault     string           `json:"vault"`
++	Workspace string           `json:"workspace"`
++	Enabled   bool             `json:"enabled"`
++	Route     string           `json:"route,omitempty"`
++	Paired    bool             `json:"paired"`
++	PairError string           `json:"pairError,omitempty"`
++	PairPath  string           `json:"pairPath,omitempty"`
++	LastRun   *obsidianRunJSON `json:"lastRun,omitempty"`
++}
++
+ type agentJSON struct {
+-	ID     string      `json:"id"`
+-	Name   string      `json:"name"`
+-	Icon   string      `json:"icon"`
+-	Path   string      `json:"path"`
+-	Fields []fieldJSON `json:"fields"`
++	ID       string            `json:"id"`
++	Name     string            `json:"name"`
++	Icon     string            `json:"icon"`
++	Origin   string            `json:"origin,omitempty"`
++	Obsidian *obsidianMetaJSON `json:"obsidian,omitempty"`
++	Path     string            `json:"path"`
++	Fields   []fieldJSON       `json:"fields"`
+ 	// Own: the user's own settings of the agent's (agent.Field.Own,
+ 	// Claude Code's permission mode), apart from Fields so no picker on
+ 	// its row draws them: agentcompact.js folds them under Advanced
+@@ -1240,6 +1263,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
+ 	pluginPageRoutes(mux, isWeb(w))
+ 	feedbackRoutes(mux)
+ 	appearanceRoutes(mux)
++	ensureObsidianVaultWorkspace()
+ 	// the app's page closed or hidden: what its pages keep goes soon
+ 	// (awayPage); a write of nothing, so held's Changed passes it by
+ 	mux.HandleFunc("POST /api/page-away", func(rw http.ResponseWriter, r *http.Request) {
+@@ -1608,6 +1632,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
+ 		}
+ 		writeJSON(rw, state())
+ 	})
++	obsidianPairRoute(mux)
+ 	mux.HandleFunc("POST /api/agents/{action}/{id}", func(rw http.ResponseWriter, r *http.Request) {
+ 		a, err := agent.Find(r.PathValue("id"))
+ 		if err != nil {
+@@ -3374,7 +3399,7 @@ func state() stateJSON {
+ 		}
+ 		vals := a.Values()
+ 		now[a.ID] = vals
+-		aj := agentJSON{ID: a.ID, Name: a.Name, Icon: a.Icon, Path: tilde(a.Path), Fields: agentFields(a, vals), Own: ownFields(a, vals)}
++		aj := agentJSON{ID: a.ID, Name: a.Name, Icon: a.Icon, Origin: a.Origin, Obsidian: obsidianAgentMeta(a), Path: tilde(a.Path), Fields: agentFields(a, vals), Own: ownFields(a, vals)}
+ 		aj.Models = agentModelCount(a, aj.Fields)
+ 		aj.Menu = a.ListsModels
+ 		aj.NoNames = a.NoNames
+diff --git a/internal/gui/app.go b/internal/gui/app.go
+index 5c1ac848fbbbcb56de5fbcade59f5a5d5d1d29f5..40dfabfdf5bc525b6832ed10ce0416c3d340c3d2 100644
+--- a/internal/gui/app.go
++++ b/internal/gui/app.go
+@@ -638,6 +638,7 @@ func Run(version string, showMain bool, link string) error {
+ 	if err := memagent.Ensure(); err != nil {
+ 		log.Println("memory agents:", err)
+ 	}
++	ensureObsidianVaultWorkspace()
+ 
+ 	// before the item is made, which starts as hidden as AppKit kept it
+ 	hiddenAtStart := bringTrayBack()
+diff --git a/internal/gui/assets/app.css b/internal/gui/assets/app.css
+index 5764690be617286ca86f4d4cb8c04bfab1be7456..33252d165db5bd1d6b7e3cf276ffdd8a2909c996 100644
+--- a/internal/gui/assets/app.css
++++ b/internal/gui/assets/app.css
+@@ -5280,6 +5280,13 @@ body.window .row + .row.agent.conn > .who { min-height: 41px; } /* the line abov
+ .row.agent.conn > .ag-twin { margin-left: 8px; align-self: center; }
+ .row.agent.conn > .ag-twin + .ag-conn { margin-left: 10px; }
+ .row.agent.conn > .who + .ag-twin { margin-left: auto; }
++.ag-obs-meta { flex: 0 0 100%; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; margin-top: 2px; font-size: 12px; }
++.ag-obs-meta > .ag-st { flex: 0 1 auto; }
++.ag-obs-meta > .ag-quiet { height: 20px; padding: 0 6px; margin: -1px 0; }
++.ag-obs-meta .ag-hint.err { color: var(--red); }
++.ag-obs-detail { display: flex; flex-direction: column; gap: 4px; }
++.ag-obs-detail .ag-vl { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
++.ag-obs-detail code { font-size: 11px; color: var(--fg-2); word-break: break-all; }
+ .row.agent.conn > .ag-conn:disabled { opacity: .4; cursor: default; }
+ /* the model it starts on, beside the switch: one width down the list, so
+    the pickers and the switches line up */
+diff --git a/internal/gui/assets/app.js b/internal/gui/assets/app.js
+index 368b124ef2fe9fdfa9e2268acf4b6601465dcc33..1557d4ae9c161918ea34c5ead09a78872361ece4 100644
+--- a/internal/gui/assets/app.js
++++ b/internal/gui/assets/app.js
+@@ -1568,6 +1568,7 @@ function connectRow(a, row, who, { fields, extras, fieldBtn, sw, kind }) {
+   row.classList.toggle("unplugged", kind === "ok" && !a.wired);
+   who.classList.add("with-models");
+   who.append(connectLine(a, kind));
++  if (mode !== "panel" && a.obsidian) who.append(obsLazy("obsidianRowMeta", a));
+   // a hidden one's Show centred in the row, as its switch is (#842)
+   const back = who.querySelector(":scope > .ag-show");
+   if (back) row.append(back);
+@@ -1989,6 +1990,7 @@ const desktopIsolatedLine = (iso) => agSwitchLine("ag-isolated", !!iso.on, "Clau
+ // isoLazy: Claude Magpie's twin button and its Advanced fold
+ // (#6459), drawn by claudemagpie.js, imported the first time either shows
+ const isoLazy = (f, x, at = el("span")) => (at.hidden = 1, import("./claudemagpie.js").then(() => at.replaceWith(window[f](x)), () => {}), at);
++const obsLazy = (f, x, at = el("span")) => (at.hidden = 1, import("./obsidianagent.js").then(() => at.replaceWith(window[f](x)), () => {}), at);
+ 
+ const desktopLongestLine = () => agSwitchLine("ag-longest", !!state.settings?.desktopLongest, t("Only each model's largest window"), t("A model of 1M or more is listed once, as its 1M entry. Quit and reopen Claude Desktop after a change."), async (on) => {
+   prefs = await writingPrefs(api("settings/desktop-longest", { on }));
+@@ -2207,6 +2209,7 @@ function connectPanel(a, { fields, fieldBtn }) {
+   } else if (AIR_KINDS.has(kindOf(a))) kv(t("In {agent}", { agent: a.name }), ...airSaid(a, line));
+   // Claude Magpie.app (#5671), macOS only
+   if (a.id === "claude-desktop" && a.isolated) kv(t("Separate app"), desktopIsolatedLine(a.isolated), ...(a.isolated.on ? [isoLazy("desktopIsolatedMore", a.isolated)] : []));
++  if (a.obsidian) kv(t("Folder"), obsLazy("obsidianDetail", a));
+   // Hermes' other profiles, each on its own model: lines of the one Hermes
+   // row, which has no row per profile (geekbb on X), yet each profile's model
+   // is still picked here (Norethcy on X: v0.1.4022 lost them)
+diff --git a/.work/magpie-dev/internal/gui/assets/obsidianagent.js b/internal/gui/assets/obsidianagent.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..c9602e136fb35c137b263718d58ed68e4aa52c1f
+--- /dev/null
++++ b/internal/gui/assets/obsidianagent.js
+@@ -0,0 +1,82 @@
++// Obsidian 知识库记忆 Agent 行状态与详情卡片（Usage › Agents 按需懒加载）。
++const obsText = (zh, en) => (/^zh/.test(locale || "") ? zh : en);
++
++function obsPairBtn(a) {
++  const b = el("button", "ag-quiet accent", obsText("重新配对检查", "Check pairing"));
++  b.type = "button";
++  b.onclick = async (e) => {
++    e.stopPropagation();
++    if (b.disabled) return;
++    b.disabled = true;
++    try {
++      state = await api("agents/obsidian-pair/" + a.id, {});
++      renderAgents();
++      const updated = (state.agents || []).find((x) => x.id === a.id);
++      const paired = !!updated?.obsidian?.paired;
++      status(
++        paired
++          ? obsText("Obsidian 配对正常，工作区已就绪", "Obsidian pairing verified")
++          : (updated?.obsidian?.pairError || obsText("尚未检测到有效 Obsidian 配对文件", "Obsidian pairing file missing")),
++        paired ? "ok" : "err"
++      );
++    } catch (err) {
++      status(t(err.message), "err");
++    } finally {
++      b.disabled = false;
++    }
++  };
++  return b;
++}
++
++function obsRunSummary(r) {
++  if (!r) return obsText("尚无运行记录", "No runs yet");
++  const parts = [r.role, r.phase].filter(Boolean);
++  if (r.steps) parts.push(r.steps + obsText(" 步", " steps"));
++  if (r.wrote || r.saved) {
++    parts.push(obsText(`写 ${r.wrote || 0} / 记 ${r.saved || 0}`, `wrote ${r.wrote || 0} · saved ${r.saved || 0}`));
++  }
++  if (r.error) parts.push(r.error);
++  return parts.join(" · ");
++}
++
++window.obsidianRowMeta = function (a) {
++  const meta = a.obsidian;
++  const wrap = el("div", "ag-obs-meta");
++  const st = el("span", "ag-st " + (meta.paired ? "on" : "wait"));
++  st.append(
++    el("span", "ag-dot"),
++    el("span", "", meta.paired ? obsText("Obsidian 已配对", "Obsidian paired") : obsText("Obsidian 未配对", "Obsidian unpaired"))
++  );
++  if (!meta.paired && meta.pairError) st.title = meta.pairError;
++  wrap.append(st);
++  if (!meta.paired) wrap.append(obsPairBtn(a));
++  if (meta.lastRun) {
++    const run = el("span", "ag-hint", obsRunSummary(meta.lastRun));
++    if (meta.lastRun.error) run.classList.add("err");
++    wrap.append(run);
++  }
++  return wrap;
++};
++
++window.obsidianDetail = function (a) {
++  const meta = a.obsidian;
++  const box = el("div", "ag-obs-detail");
++  const wsLine = el("div", "ag-vl");
++  wsLine.append(el("code", "", meta.workspace || ""));
++  box.append(wsLine);
++
++  const pairLine = el("div", "ag-vl " + (meta.paired ? "ag-st on" : "ag-warn"));
++  pairLine.append(
++    el("span", "ag-dot"),
++    el("span", "", meta.paired
++      ? obsText("已配对：", "Paired: ") + (meta.vault || "")
++      : obsText("未配对：", "Unpaired: ") + (meta.pairError || obsText("请在 Obsidian 插件中完成或重新配对", "Complete pairing in Obsidian")))
++  );
++  pairLine.append(obsPairBtn(a));
++  box.append(pairLine);
++
++  const runLine = el("div", "ag-vl");
++  runLine.append(el("span", "ag-hint", obsText("最近运行：", "Last run: ") + obsRunSummary(meta.lastRun)));
++  box.append(runLine);
++  return box;
++};
+diff --git a/internal/gui/assets/plugins/library/client.js b/internal/gui/assets/plugins/library/client.js
+index 014db88cc81cc0ba74125ffe44d6dcb1091c9159..8c91452722af93a43dd60c5b9383053129021867 100644
+--- a/internal/gui/assets/plugins/library/client.js
++++ b/internal/gui/assets/plugins/library/client.js
+@@ -1556,11 +1556,9 @@ magpie.plugin("library", (ctx) => {
+   }
+   // The memory agents (internal/memagent): who reads conversations, tidies
+   // memory and dreams, on which magpie agent and route. The list, what is
+-  // running, and add/change/remove, a role's default and the presets back.
+-  // No model is offered: an entry's route is internal.
++  // defaults, one executor row: defaults.learn/organize/dream point to the
++  // unified Obsidian memory agent (or chosen fallback).
+   let memAgents = null;    // /api/memory/agents
+-  let memAgentDraft = null; // the entry open to add or change, as typed
+-  let memAgentWhat = "";   // "new" or the id being changed
+   let memStatusView = null; // /api/memory/agents/status: the run going
+   let memStatusPoll = 0;
+   async function loadAgents() {
+@@ -1568,15 +1566,12 @@ magpie.plugin("library", (ctx) => {
+   }
+   const agentRoles = () => memAgents?.roles || ["learn", "organize", "dream"];
+   const roleName = (r) => ({ learn: t("Reads conversations"), organize: t("Tidies memory"), dream: t("Dreams") })[r] || r;
+-  // the roles one entry carries out, in the registry's order
+-  const agentRoleSet = (a) => agentRoles().filter((r) => (a.role || "").split("|").some((x) => x.trim() === r));
+   async function agentAct(path, body, said) {
+     try {
+       memAgents = await api(path, body);
+       dist = await api("memory/distill").catch(() => dist);
+       if (said) status(said);
+     } catch (e) { status(e.message, "err", 6000); }
+-    memAgentDraft = null; memAgentWhat = "";
+     render();
+     agentWatch();
+   }
+@@ -1593,10 +1588,6 @@ magpie.plugin("library", (ctx) => {
+       agentWatch();
+     }, 2000);
+   }
+-  function agentRun(role) {
+-    api("memory/agents/" + role + "/run", {}).then((st) => { memStatusView = st; render(); agentWatch(); })
+-      .catch((e) => status(e.message, "err", 6000));
+-  }
+   function agentStop(role) {
+     api("memory/agents/" + role + "/stop", {}).then((st) => { memStatusView = st; render(); agentWatch(); })
+       .catch((e) => status(e.message, "err", 6000));
+@@ -1622,11 +1613,9 @@ magpie.plugin("library", (ctx) => {
+       r.append(glyph(GLYPH.subagent), w, button(t("Stop"), "action lib-agentstop", () => agentStop(st.role)));
+       panel.append(r);
+     }
+-  // 一条就够：同一个记忆 Agent 干读取、整理、做梦三件事。
+-  // 原来按角色各列一行、每行一个 Run，既与上面已有的「立即读取 / 立即整理」重复，
+-  // 再往下还有添加/恢复预设/删除——那套管理界面撤掉，只留「由谁执行」。
++  // 一条就够：同一个记忆 Agent 干读取、整理、做梦三件事，只留「由谁执行」且默认指向 obsidian-memory。
+   const all = memAgents.agents || [];
+-  const cur = all.find((a) => a.id === memAgents.defaults.learn) || all[0];
++  const cur = all.find((a) => a.id === memAgents.defaults.learn) || all.find((a) => a.id === "obsidian-memory") || all[0];
+   const row = el("div", "row lib-row lib-memagent");
+   const who = el("div", "who");
+   who.append(el("div", "name", t("Memory agent")),
+@@ -1647,37 +1636,6 @@ magpie.plugin("library", (ctx) => {
+   panel.append(row);
+     return panel;
+   }
+-  function memAgentForm() {
+-    const d = memAgentDraft;
+-    const box = el("div", "lib-agentform");
+-    const row = el("div", "row lib-row");
+-    const w = el("div", "who");
+-    const idIn = input(d.id, t("An id: letters, digits, - and _"));
+-    idIn.className = "lib-agentid"; idIn.value = d.id; idIn.disabled = memAgentWhat !== "new";
+-    idIn.oninput = () => { d.id = idIn.value; idIn.onkeydown = (e) => e.stopPropagation(); };
+-    const nameIn = input(d.name, t("Its name"));
+-    nameIn.className = "lib-agentname"; nameIn.value = d.name;
+-    nameIn.oninput = () => { d.name = nameIn.value; };
+-    const roleSel = menuButton(agentRoleSet(d).map(roleName).join(" + ") || t("Pick a role"), "lib-agentrole", () =>
+-      openProtoMenu(roleSel, agentRoles().map((r) => ({ v: r, name: roleName(r), literalName: true, note: "" })),
+-        agentRoleSet(d)[0] || "", (v) => {
+-          const set = new Set(agentRoleSet(d)); if (set.has(v)) set.delete(v); else set.add(v);
+-          d.role = agentRoles().filter((r) => set.has(r)).join("|"); render();
+-        }, t("What it does"), "", "left", true));
+-    const modelIn = input(d.model, t("The model route (internal, e.g. group/deepseek)"));
+-    modelIn.className = "lib-agentmodel"; modelIn.value = d.model;
+-    modelIn.oninput = () => { d.model = modelIn.value; };
+-    w.append(idIn, nameIn, roleSel, modelIn);
+-    const acts = el("div", "lib-acts");
+-    const send = () => agentAct(memAgentWhat === "new" ? "memory/agents" : "memory/agents/update",
+-      { id: d.id, name: d.name, role: d.role, model: d.model, schedule: d.schedule },
+-      t("{name} is saved", { name: d.name || d.id }));
+-    acts.append(button(t("Save"), "action lib-agentsave", send));
+-    acts.append(button(t("Cancel"), "action lib-agentcancel", () => { memAgentDraft = null; render(); }));
+-    row.append(w, acts);
+-    box.append(row);
+-    return box;
+-  }
+   // Search by meaning (memembed): a small model on this computer reads
+   // each memory once, and the search finds what means the same in other
+   // words or another language. Switched off, the model is deleted.
+@@ -3343,7 +3301,7 @@ magpie.plugin("library", (ctx) => {
+   const mpick = menuButton(t("Pick an agent"), "lib-mempick", async () => {
+     const now = await api("memory/agents").catch(() => null);
+     if (!now || !(now.agents || []).length) { status(t("No memory agent yet"), "err", 6000); return; }
+-    const cur = now.agents.find((a) => a.id === now.defaults.learn) || now.agents[0];
++    const cur = now.agents.find((a) => a.id === now.defaults.learn) || now.agents.find((a) => a.id === "obsidian-memory") || now.agents[0];
+     openProtoMenu(mpick, now.agents.map((a) => ({ v: a.id, name: a.name, literalName: true, note: "" })), cur.id,
+       async (v) => {
+         for (const role of agentRoles()) await agentAct("memory/agents/default", { role, id: v }, "").catch(() => {});
+diff --git a/internal/gui/core_budget_test.go b/internal/gui/core_budget_test.go
+index 6c752f89dab198e3d07b76807e8a13557eb538ef..3f685b7e5a71d24e4cde1fe9956b833843dc1449 100644
+--- a/internal/gui/core_budget_test.go
++++ b/internal/gui/core_budget_test.go
+@@ -17,8 +17,8 @@ import (
+ // never what pays for a change (#5918); the history of each number is in
+ // `git log -L` of this file.
+ const (
+-	appScriptBudget  = 1_088_093 // +732 for independent fishGlassColor tint, per-region backdrop filter toggle at blur=0, and full-transparent sidebar edge control in applyGlass/prefsKeep; +543 for the Font color panel in app.js (applyFontColors writes the per-level stylesheet); app.js: 1,080,614 at 8016205e3, with the 5,653 of room it had; +123 for a sidebar list folded from its page's row (hkwok06 on X), its chevron and fold in navicons.js, imported with the first list; +57 for each account of a provider's Usage card in a card of its own (normalcoder_ on X), past the 24 of room left; +17 for an allowance card's wallet line under its rings (apple_test_src on X), the one filter shared with its text line; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
+-	coreScriptBudget = 1_274_368 // +732 for independent glass colour tint and true blur=0/fill=0 full-transparent sidebar/header controls in core app.js; +783 for the Font color panel (per-level rows, the dark toggle and applyFontColors); +66 for the Font color row (a colour picker, its reset, and applying --fg); +54 for the See-through preset and opacity 0 support (a fifth preset row and the fill floor at 0); +59 for the Controls region (a fourth pair in the Liquid glass rows: buttons, fields and dropdowns); +1,766 for Settings › Appearance (the Liquid glass three-region rows, its presets and the live slider preview in appearance.js, and the Appearance tab the nine look rows moved to): they draw on every Settings view, so there is no page to move them to; every core script at 8016205e3, the old measure 682 over its cap there (#5918); +367 for the model test on a chosen account (tmr11235), no page left to move it to; +151 for the provider menu's "Only on this device" item and its four translations; +458 for Settings › About's Report a problem row and its translations; +113 for withScheme, the one rule every typed address goes through (eachg0 on X), cut to the shortest form that keeps it whole; +10 for the kept whole's tooltip (Musikrv77852 on X), the past-cycle line reused for it, no page left to move it to; +1,112 for Codex's Open button and its Open Codex with menu (Yink88564391 on X), packed to the shortest form, no page left to move them to; +168 for Discover's long lists drawn in part (the owner, 11-13), after the rest of its hook moved into plugingrid.js, imported when Plugins first draws; +296 for the cap toggle and Smart sentences that say what they do and the Sign in on another computer row (Wing8Aqua on X), packed to the shortest form, no page left to move them to; +333 for In turn's figure in a provider's editor and its words naming the message that goes round (Wing8Aqua on X), the figure itself in rotfig.js, imported when In turn is first shown, the hook packed to the shortest form; +236 for a lone capped Codex account's row saying its turns go to the fallbacks when Codex is connected (not_4O4 on X), the two helpers inlined, no page left to move it to; +717 for omp's advisor (Awad_Yoo on X, #6408): its three rows moved into ompadvisor.js, imported when an omp's settings show, and what is left is the import, the role's " · off" and the Settings line's name, packed to the shortest form; +468 for a plugin's own file import (auth.import) in the import sheet, in the plugin's words (marchen_cc on X), packed to one statement; importSay is read as the Providers rows draw, so it has no lazy page to go to, and nothing else was moved out; +180 for Claude Magpie's own Claude Code folder (xMopf7RF on X, #6459): its Advanced fold in claudemagpie.js, imported when it first shows, and what is left is the import and the fold's place in the Separate app line, 216 bytes packed to the shortest form, less the 36 of room there was; +81 for the Use Claude Magpie button on Claude Desktop's row (xMopf7RF on X), drawn by claudemagpie.js too, what is left the one line that places it (#2710); +225 for the Hermes row's Other profiles lines (Norethcy on X), which 1d60b165c took out while each profile had a row and c96f33d65 left with no place at all, packed to the shortest form; the dead hermes# Default note went with it, and the Agents rows draw it, so there is no page to move it to; +397 for a key's own price rate (tnt12231 on X): its lines, check and placeholder in keyrates.js, imported when a provider with two or more keys opens, and what is left is the import, the draft's copy, Advanced opening for it, the save's one line and proxyLines drawing another kind of line; +316 for an image or video model's chip saying what it makes from its right-click (iceloon on X): the chat chip's Makes… now shared with it, and the media chip's Copy model ID left out, packed to the shortest form; the provider's editor draws it, so there is no page to move it to; +67 for the Claude Code · Claude Magpie row saying it is on magpie through Claude Magpie (xMopf7RF on X), one line in connectLine with the shortest words that say it; the Agents rows draw it, so there is no page to move it to; +12 for AIGoCode's logo in pngIcons (MindfulReturn on X), the list every drawn icon is looked up in; +491 for each cost in the tray panel's and Requests' chart and ranking in its own provider's currency (onkashiko on X): ledProv and the provider passed through, packed to the shortest form; drawLedColumns and drawLedRank are shared by the panel, so there is no page to move it to; +326 for the Qwen AI platform's Token Plan sign-in (imthe99galaxy on X): its field, sign-in and wait in qianwenplan.js, imported when such a provider's editor opens, and what is left is the import and one quotaError line for its two refusals, packed to the shortest form; quotaError reads every card's error, so there is no page to move it to; +72 for Copy all keys (emilochen on X): its row in keyrates.js, imported when a provider with two or more keys opens through keyRateField, now told which of its parts to draw, and what is left is the one line that places it; +83 for the page saying it has gone from view, so what its Sessions and Usage pages keep goes in 30 s and not 7 minutes (P0 memory): folded into the visibilitychange listener every window has, packed to the shortest form, so there is no page to move it to; +270 for Providers' Select, to remove several at once (eiyuuzaki2333 on X): its rows, bar, removal and keys in pvpick.js, imported when Select is first clicked, and what is left is pvSel, the button's click and two lines in renderProviders, which draws the list, so there is no page to move it to; +81 for each account of a provider's Usage card in a card of its own (normalcoder_ on X): one line that makes the box, its brief look left to CSS, and renderQuotas, which draws every card, so there is no page to move it to; +17 for Kimi Code's booster balance under an allowance card's rings in the tray panel (apple_test_src on X): the card's text line and the wallet line share one filter, packed to the shortest form; panelQuotaCard draws every card, so there is no page to move it to; +51 for what a failed plugin install left in plugins/, listed under Installed with a Remove (CHENGJIAHEGOXIS on X): its section in plugininstalled.js as pmLeftovers, imported when Plugins first draws, and what is left is the one call after drawInstalled; draw is what draws the page, so there is no page to move it to; +123 for a sidebar list folded from its page's row (hkwok06 on X): the chevron, its click and the fold kept per page in navicons.js, imported with the first list, and what is left is the folded list read beside the hidden pages' (navList, which navMine now shares) and the two rows' clicks asking navFold first; navSubs draws every list, so there is no page to move it to; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
++	appScriptBudget  = 1_088_386 // +293 for obsLazy hook placing Obsidian vault memory agent row badge & Folder detail panel from lazy obsidianagent.js; +732 for independent fishGlassColor tint, per-region backdrop filter toggle at blur=0, and full-transparent sidebar edge control in applyGlass/prefsKeep; +543 for the Font color panel in app.js (applyFontColors writes the per-level stylesheet); app.js: 1,080,614 at 8016205e3, with the 5,653 of room it had; +123 for a sidebar list folded from its page's row (hkwok06 on X), its chevron and fold in navicons.js, imported with the first list; +57 for each account of a provider's Usage card in a card of its own (normalcoder_ on X), past the 24 of room left; +17 for an allowance card's wallet line under its rings (apple_test_src on X), the one filter shared with its text line; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
++	coreScriptBudget = 1_274_661 // +293 for obsLazy hook (Obsidian vault memory agent row meta & detail in lazy obsidianagent.js); +732 for independent glass colour tint and true blur=0/fill=0 full-transparent sidebar/header controls in core app.js; +783 for the Font color panel (per-level rows, the dark toggle and applyFontColors); +66 for the Font color row (a colour picker, its reset, and applying --fg); +54 for the See-through preset and opacity 0 support (a fifth preset row and the fill floor at 0); +59 for the Controls region (a fourth pair in the Liquid glass rows: buttons, fields and dropdowns); +1,766 for Settings › Appearance (the Liquid glass three-region rows, its presets and the live slider preview in appearance.js, and the Appearance tab the nine look rows moved to): they draw on every Settings view, so there is no page to move them to; every core script at 8016205e3, the old measure 682 over its cap there (#5918); +367 for the model test on a chosen account (tmr11235), no page left to move it to; +151 for the provider menu's "Only on this device" item and its four translations; +458 for Settings › About's Report a problem row and its translations; +113 for withScheme, the one rule every typed address goes through (eachg0 on X), cut to the shortest form that keeps it whole; +10 for the kept whole's tooltip (Musikrv77852 on X), the past-cycle line reused for it, no page left to move it to; +1,112 for Codex's Open button and its Open Codex with menu (Yink88564391 on X), packed to the shortest form, no page left to move them to; +168 for Discover's long lists drawn in part (the owner, 11-13), after the rest of its hook moved into plugingrid.js, imported when Plugins first draws; +296 for the cap toggle and Smart sentences that say what they do and the Sign in on another computer row (Wing8Aqua on X), packed to the shortest form, no page left to move them to; +333 for In turn's figure in a provider's editor and its words naming the message that goes round (Wing8Aqua on X), the figure itself in rotfig.js, imported when In turn is first shown, the hook packed to the shortest form; +236 for a lone capped Codex account's row saying its turns go to the fallbacks when Codex is connected (not_4O4 on X), the two helpers inlined, no page left to move it to; +717 for omp's advisor (Awad_Yoo on X, #6408): its three rows moved into ompadvisor.js, imported when an omp's settings show, and what is left is the import, the role's " · off" and the Settings line's name, packed to the shortest form; +468 for a plugin's own file import (auth.import) in the import sheet, in the plugin's words (marchen_cc on X), packed to one statement; importSay is read as the Providers rows draw, so it has no lazy page to go to, and nothing else was moved out; +180 for Claude Magpie's own Claude Code folder (xMopf7RF on X, #6459): its Advanced fold in claudemagpie.js, imported when it first shows, and what is left is the import and the fold's place in the Separate app line, 216 bytes packed to the shortest form, less the 36 of room there was; +81 for the Use Claude Magpie button on Claude Desktop's row (xMopf7RF on X), drawn by claudemagpie.js too, what is left the one line that places it (#2710); +225 for the Hermes row's Other profiles lines (Norethcy on X), which 1d60b165c took out while each profile had a row and c96f33d65 left with no place at all, packed to the shortest form; the dead hermes# Default note went with it, and the Agents rows draw it, so there is no page to move it to; +397 for a key's own price rate (tnt12231 on X): its lines, check and placeholder in keyrates.js, imported when a provider with two or more keys opens, and what is left is the import, the draft's copy, Advanced opening for it, the save's one line and proxyLines drawing another kind of line; +316 for an image or video model's chip saying what it makes from its right-click (iceloon on X): the chat chip's Makes… now shared with it, and the media chip's Copy model ID left out, packed to the shortest form; the provider's editor draws it, so there is no page to move it to; +67 for the Claude Code · Claude Magpie row saying it is on magpie through Claude Magpie (xMopf7RF on X), one line in connectLine with the shortest words that say it; the Agents rows draw it, so there is no page to move it to; +12 for AIGoCode's logo in pngIcons (MindfulReturn on X), the list every drawn icon is looked up in; +491 for each cost in the tray panel's and Requests' chart and ranking in its own provider's currency (onkashiko on X): ledProv and the provider passed through, packed to the shortest form; drawLedColumns and drawLedRank are shared by the panel, so there is no page to move it to; +326 for the Qwen AI platform's Token Plan sign-in (imthe99galaxy on X): its field, sign-in and wait in qianwenplan.js, imported when such a provider's editor opens, and what is left is the import and one quotaError line for its two refusals, packed to the shortest form; quotaError reads every card's error, so there is no page to move it to; +72 for Copy all keys (emilochen on X): its row in keyrates.js, imported when a provider with two or more keys opens through keyRateField, now told which of its parts to draw, and what is left is the one line that places it; +83 for the page saying it has gone from view, so what its Sessions and Usage pages keep goes in 30 s and not 7 minutes (P0 memory): folded into the visibilitychange listener every window has, packed to the shortest form, so there is no page to move it to; +270 for Providers' Select, to remove several at once (eiyuuzaki2333 on X): its rows, bar, removal and keys in pvpick.js, imported when Select is first clicked, and what is left is pvSel, the button's click and two lines in renderProviders, which draws the list, so there is no page to move it to; +81 for each account of a provider's Usage card in a card of its own (normalcoder_ on X): one line that makes the box, its brief look left to CSS, and renderQuotas, which draws every card, so there is no page to move it to; +17 for Kimi Code's booster balance under an allowance card's rings in the tray panel (apple_test_src on X): the card's text line and the wallet line share one filter, packed to the shortest form; panelQuotaCard draws every card, so there is no page to move it to; +51 for what a failed plugin install left in plugins/, listed under Installed with a Remove (CHENGJIAHEGOXIS on X): its section in plugininstalled.js as pmLeftovers, imported when Plugins first draws, and what is left is the one call after drawInstalled; draw is what draws the page, so there is no page to move it to; +123 for a sidebar list folded from its page's row (hkwok06 on X): the chevron, its click and the fold kept per page in navicons.js, imported with the first list, and what is left is the folded list read beside the hidden pages' (navList, which navMine now shares) and the two rows' clicks asking navFold first; navSubs draws every list, so there is no page to move it to; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
+ )
+ 
+ // codeBytes is how many bytes of b are code: its blank lines, its lines
+diff --git a/internal/gui/fish_vault.go b/internal/gui/fish_vault.go
+index 0c22261be718eb4ef892873d8f6c16359ab0c9ff..f52930624068fe8807e01a5114bb1a5b4ab3ad90 100644
+--- a/internal/gui/fish_vault.go
++++ b/internal/gui/fish_vault.go
+@@ -4,17 +4,22 @@ import (
+ 	"crypto/subtle"
+ 	"encoding/json"
+ 	"errors"
++	"log"
+ 	"net"
+ 	"net/http"
+ 	"net/url"
+ 	"os"
+ 	"path/filepath"
++	"runtime"
+ 	"slices"
+ 	"strings"
++	"time"
+ 
++	"github.com/yetone/magpie/internal/agent"
+ 	"github.com/yetone/magpie/internal/appdir"
+ 	"github.com/yetone/magpie/internal/fishvault"
+ 	"github.com/yetone/magpie/internal/gateway"
++	"github.com/yetone/magpie/internal/memagent"
+ 	"github.com/yetone/magpie/internal/memory"
+ )
+ 
+@@ -67,27 +72,131 @@ func fishKnowledge() *fishKnowledgeView {
+ 	return &fishKnowledgeView{Root: fishvault.Root(), URL: fishvault.URI(fishvault.Root(), "")}
+ }
+ 
+-// These narrow desktop routes need the private pairing token in addition to
+-// the GUI's normal cookie. Dock's cookie-injecting embed proxy cannot grant it.
+-func fishBridgeAllowed(r *http.Request) bool {
+-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+-	if err != nil || host != "127.0.0.1" || r.Header.Get("Origin") != "" {
++type fishPairingConfig struct {
++	Token string `json:"token"`
++	Vault string `json:"vault"`
++}
++
++func sameVaultPath(a, b string) bool {
++	ca, cb := filepath.Clean(strings.TrimSpace(a)), filepath.Clean(strings.TrimSpace(b))
++	if ca == "" || cb == "" {
+ 		return false
+ 	}
+-	file := filepath.Join(appdir.Config(), "fish-obsidian-connection.json")
++	if runtime.GOOS == "windows" {
++		return strings.EqualFold(ca, cb)
++	}
++	return ca == cb
++}
++
++func readFishPairing(vaultDir string) (fishPairingConfig, string, string) {
++	cfgDir := appdir.Config()
++	file := filepath.Join(cfgDir, "fish-obsidian-connection.json")
++	targetVault := strings.TrimSpace(vaultDir)
++	if targetVault == "" {
++		if !fishvault.Present(cfgDir) {
++			return fishPairingConfig{}, file, "knowledge vault is not configured"
++		}
++		targetVault = fishvault.RootAt(cfgDir)
++	}
+ 	info, err := os.Lstat(file)
+-	if err != nil || !info.Mode().IsRegular() || info.Size() > 8192 {
+-		return false
++	if err != nil {
++		return fishPairingConfig{}, file, "obsidian pairing file not found"
++	}
++	if !info.Mode().IsRegular() || info.Size() > 8192 {
++		return fishPairingConfig{}, file, "obsidian pairing file invalid"
+ 	}
+ 	b, err := os.ReadFile(file)
+ 	if err != nil {
+-		return false
++		return fishPairingConfig{}, file, "cannot read obsidian pairing file"
++	}
++	var cfg fishPairingConfig
++	if json.Unmarshal(b, &cfg) != nil || len(cfg.Token) != 64 {
++		return fishPairingConfig{}, file, "obsidian pairing token invalid"
++	}
++	if !sameVaultPath(cfg.Vault, targetVault) {
++		return fishPairingConfig{}, file, "pairing file points to another vault"
++	}
++	return cfg, file, ""
++}
++
++func ensureObsidianVaultWorkspace() {
++	cfgDir := appdir.Config()
++	if !fishvault.Present(cfgDir) || fishvault.Validate(cfgDir) != nil {
++		return
++	}
++	if _, err := memagent.EnsureObsidianWorkspace(fishvault.RootAt(cfgDir)); err != nil {
++		log.Println("obsidian workspace:", err)
++		return
++	}
++	if err := memagent.SyncObsidianDefault(); err != nil {
++		log.Println("obsidian default:", err)
++	}
++}
++
++func obsidianAgentMeta(a *agent.Agent) *obsidianMetaJSON {
++	if a == nil || a.Origin != agent.OriginObsidianVault {
++		return nil
+ 	}
+-	var cfg struct {
+-		Token string `json:"token"`
+-		Vault string `json:"vault"`
++	_, pairPath, pairErr := readFishPairing(a.VaultDir)
++	meta := &obsidianMetaJSON{
++		Vault:     tilde(a.VaultDir),
++		Workspace: tilde(a.Dir),
++		Paired:    pairErr == "",
++		PairError: pairErr,
++		PairPath:  tilde(pairPath),
+ 	}
+-	if json.Unmarshal(b, &cfg) != nil || len(cfg.Token) != 64 || filepath.Clean(cfg.Vault) != filepath.Clean(fishvault.Root()) {
++	if cfg, err := memagent.ReadObsidianConfig(a.Dir); err == nil {
++		meta.Enabled = cfg.Enabled
++		meta.Route = cfg.Route
++	}
++	st := memagent.StatusOf("")
++	if (st.Phase != "" || st.Running) && (st.Agent == a.ID || (st.Agent == memagent.DefaultAgent && a.ID == memagent.ObsidianAgentID)) {
++		ended := ""
++		if !st.Ended.IsZero() {
++			ended = st.Ended.UTC().Format(time.RFC3339)
++		}
++		meta.LastRun = &obsidianRunJSON{
++			Role:  st.Role,
++			Phase: st.Phase,
++			Steps: st.Steps,
++			Wrote: st.Wrote,
++			Saved: st.Saved,
++			Ended: ended,
++			Error: st.Error,
++		}
++	}
++	return meta
++}
++
++func obsidianPairRoute(mux *http.ServeMux) {
++	mux.HandleFunc("POST /api/agents/obsidian-pair/{id}", func(rw http.ResponseWriter, r *http.Request) {
++		a, err := agent.Find(r.PathValue("id"))
++		if err != nil {
++			fail(rw, err)
++			return
++		}
++		if a.Origin != agent.OriginObsidianVault || strings.TrimSpace(a.VaultDir) == "" {
++			fail(rw, errors.New("agent is not an obsidian vault workspace"))
++			return
++		}
++		if _, err := memagent.EnsureObsidianWorkspace(a.VaultDir); err != nil {
++			fail(rw, err)
++			return
++		}
++		_ = memagent.SyncObsidianDefault()
++		writeJSON(rw, state())
++	})
++}
++
++// These narrow desktop routes need the private pairing token in addition to
++// the GUI's normal cookie. Dock's cookie-injecting embed proxy cannot grant it.
++func fishBridgeAllowed(r *http.Request) bool {
++	host, _, err := net.SplitHostPort(r.RemoteAddr)
++	if err != nil || host != "127.0.0.1" || r.Header.Get("Origin") != "" {
++		return false
++	}
++	cfg, _, pairErr := readFishPairing("")
++	if pairErr != "" {
+ 		return false
+ 	}
+ 	token := r.Header.Get("X-Fish-Obsidian-Token")
+@@ -97,7 +206,12 @@ func fishVaultRoutes(mux *http.ServeMux) {
+ 	guard := func(fn http.HandlerFunc) http.HandlerFunc {
+ 		return func(w http.ResponseWriter, r *http.Request) {
+ 			if !fishBridgeAllowed(r) {
+-				http.Error(w, "private desktop pairing required", http.StatusForbidden)
++				w.Header().Set("Content-Type", "application/json")
++				w.WriteHeader(http.StatusForbidden)
++				_ = json.NewEncoder(w).Encode(map[string]any{
++					"error":  "private desktop pairing required",
++					"paired": false,
++				})
+ 				return
+ 			}
+ 			if err := fishvault.Validate(appdir.Config()); err != nil {
+@@ -107,6 +221,13 @@ func fishVaultRoutes(mux *http.ServeMux) {
+ 			fn(w, r)
+ 		}
+ 	}
++	mux.HandleFunc("GET /api/fish-vault/status", guard(func(w http.ResponseWriter, r *http.Request) {
++		writeJSON(w, map[string]any{
++			"connected": true,
++			"paired":    true,
++			"vault":     fishvault.Root(),
++		})
++	}))
+ 	mux.HandleFunc("GET /api/fish-vault/models", guard(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, map[string]any{"models": servedModels()}) }))
+ 	mux.HandleFunc("POST /api/fish-vault/search", guard(func(w http.ResponseWriter, r *http.Request) {
+ 		var in struct {
+diff --git a/internal/gui/fish_vault_test.go b/internal/gui/fish_vault_test.go
+index ff2745acffc7de45b33f3771d4d9fe7a9eff26f8..9738da4207e4216ed7d904fb07f98c23236d0197 100644
+--- a/internal/gui/fish_vault_test.go
++++ b/internal/gui/fish_vault_test.go
+@@ -9,8 +9,10 @@ import (
+ 	"strings"
+ 	"testing"
+ 
++	"github.com/yetone/magpie/internal/agent"
+ 	"github.com/yetone/magpie/internal/appdir"
+ 	"github.com/yetone/magpie/internal/fishvault"
++	"github.com/yetone/magpie/internal/memagent"
+ 	"github.com/yetone/magpie/internal/memory"
+ )
+ 
+@@ -89,3 +91,85 @@ func TestFishVaultSearchSeesNativeMemoryAndLongKnowledge(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestFishVaultStatusJSONAndObsidianAgentMetadata(t *testing.T) {
++	cfg := t.TempDir()
++	t.Setenv("APPDATA", cfg)
++	t.Setenv("HOME", cfg)
++	t.Setenv("USERPROFILE", cfg)
++	root, token := guiFishVault(t)
++	mux := http.NewServeMux()
++	memoryRoutes(mux)
++	obsidianPairRoute(mux)
++
++	// 403 returns structured JSON {error, paired:false}.
++	req := httptest.NewRequest("GET", "/api/fish-vault/status", nil)
++	req.RemoteAddr = "127.0.0.1:5"
++	rec := httptest.NewRecorder()
++	mux.ServeHTTP(rec, req)
++	if rec.Code != http.StatusForbidden {
++		t.Fatalf("unpaired status = %d %s", rec.Code, rec.Body.String())
++	}
++	var errBody struct {
++		Error  string `json:"error"`
++		Paired bool   `json:"paired"`
++	}
++	if json.Unmarshal(rec.Body.Bytes(), &errBody) != nil || errBody.Error == "" || errBody.Paired {
++		t.Fatalf("expected structured JSON 403, got %s", rec.Body.String())
++	}
++
++	// Paired status returns 200 JSON {connected:true, paired:true, vault:root}.
++	req = httptest.NewRequest("GET", "/api/fish-vault/status", nil)
++	req.RemoteAddr = "127.0.0.1:5"
++	req.Header.Set("X-Fish-Obsidian-Token", token)
++	rec = httptest.NewRecorder()
++	mux.ServeHTTP(rec, req)
++	if rec.Code != http.StatusOK {
++		t.Fatalf("paired status = %d %s", rec.Code, rec.Body.String())
++	}
++	var okBody struct {
++		Connected bool   `json:"connected"`
++		Paired    bool   `json:"paired"`
++		Vault     string `json:"vault"`
++	}
++	if json.Unmarshal(rec.Body.Bytes(), &okBody) != nil || !okBody.Connected || !okBody.Paired || filepath.Clean(okBody.Vault) != filepath.Clean(root) {
++		t.Fatalf("unexpected /status payload: %s", rec.Body.String())
++	}
++
++	// Workspace initialization + state metadata + re-pair endpoint.
++	ensureObsidianVaultWorkspace()
++	st := state()
++	var found *agentJSON
++	for i := range st.Agents {
++		if st.Agents[i].ID == memagent.ObsidianAgentID {
++			found = &st.Agents[i]
++			break
++		}
++	}
++	if found == nil || found.Origin != agent.OriginObsidianVault || found.Obsidian == nil || !found.Obsidian.Paired {
++		t.Fatalf("expected paired obsidian agent in state(): %+v", found)
++	}
++
++	// Removing pairing file flips Paired to false cleanly without crashing /api/agents/obsidian-pair/{id}.
++	_ = os.Remove(filepath.Join(appdir.Config(), "fish-obsidian-connection.json"))
++	pairReq := httptest.NewRequest("POST", "/api/agents/obsidian-pair/"+memagent.ObsidianAgentID, strings.NewReader("{}"))
++	pairRec := httptest.NewRecorder()
++	mux.ServeHTTP(pairRec, pairReq)
++	if pairRec.Code != http.StatusOK {
++		t.Fatalf("obsidian-pair = %d %s", pairRec.Code, pairRec.Body.String())
++	}
++	var refreshed stateJSON
++	if err := json.Unmarshal(pairRec.Body.Bytes(), &refreshed); err != nil {
++		t.Fatal(err)
++	}
++	var after *agentJSON
++	for i := range refreshed.Agents {
++		if refreshed.Agents[i].ID == memagent.ObsidianAgentID {
++			after = &refreshed.Agents[i]
++			break
++		}
++	}
++	if after == nil || after.Obsidian == nil || after.Obsidian.Paired || after.Obsidian.PairError == "" {
++		t.Fatalf("expected unpaired obsidian metadata after removing connection file: %+v", after)
++	}
++}
+diff --git a/.work/magpie-dev/internal/library/obsidian_agent_test.go b/internal/library/obsidian_agent_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..ad2da0f0fe3f300ea8e0fa6bfec3e5a7d623a760
+--- /dev/null
++++ b/internal/library/obsidian_agent_test.go
+@@ -0,0 +1,86 @@
++package library
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/yetone/magpie/internal/appdir"
++	"github.com/yetone/magpie/internal/fishvault"
++	"github.com/yetone/magpie/internal/memagent"
++)
++
++func setupObsidianVaultTarget(t *testing.T) (home, wsDir string) {
++	t.Helper()
++	h := sandbox(t)
++	root := fishvault.RootAt(appdir.Config())
++	if err := os.MkdirAll(root, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(root, fishvault.Record), []byte(`{"schema":1,"imported":true,"files":[]}`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	wsDir, err := memagent.EnsureObsidianWorkspace(root)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return h, wsDir
++}
++
++func TestObsidianVaultAgentLibrarySync(t *testing.T) {
++	h, wsDir := setupObsidianVaultTarget(t)
++	tg := targetByID(memagent.ObsidianAgentID)
++	if tg == nil {
++		t.Fatalf("%s is not in library Targets(): %v", memagent.ObsidianAgentID, ids(Targets()))
++	}
++	if tg.Instructions != filepath.Join(wsDir, "AGENTS.md") || tg.Skills != filepath.Join(wsDir, "skills") || tg.MCP == nil || tg.MCP.Path != filepath.Join(wsDir, "mcp.json") {
++		t.Fatalf("unexpected target paths: %+v mcp=%+v", tg, tg.MCP)
++	}
++
++	// 1. Instructions: preserves existing DefaultObsidianInstructions while inserting managed block.
++	shared := "Follow vault tag hierarchy."
++	ok(t)(SaveInstructions(InstructionsChange{Shared: &shared, Agents: []string{memagent.ObsidianAgentID}}))
++	instrText := read(t, filepath.Join(wsDir, "AGENTS.md"))
++	if !strings.Contains(instrText, "Obsidian 记忆 Agent") || !strings.Contains(instrText, "Follow vault tag hierarchy.") {
++		t.Fatalf("unexpected AGENTS.md contents:\n%s", instrText)
++	}
++
++	// 2. Skills: installs skill into <vault>/.obsidian/magpie-agent/skills and loads via memagent.LoadHomeAt.
++	src := filepath.Join(h, "src", "skills")
++	skill(t, filepath.Join(src, "vault-lint"), "vault-lint", "Validate Obsidian frontmatter")
++	ok(t)(InstallSkills(src, []string{"vault-lint"}, []string{memagent.ObsidianAgentID}))
++	loaded, err := memagent.LoadHomeAt(wsDir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(loaded.Skills) != 1 || loaded.Skills[0].Name != "vault-lint" {
++		t.Fatalf("memagent.LoadHomeAt skills = %+v", loaded.Skills)
++	}
++
++	// 3. MCP: writes stdio and http servers into <vault>/.obsidian/magpie-agent/mcp.json (mcpServers).
++	agents := []string{memagent.ObsidianAgentID}
++	stdio := Server{Name: "notes-idx", Transport: "stdio", Command: "npx", Args: []string{"-y", "@mcp/notes"}, Agents: agents}
++	httpSrv := Server{Name: "remote-kb", Transport: "http", URL: "https://kb.example/mcp", Agents: agents}
++	ok(t)(SaveServer("", stdio))
++	ok(t)(SaveServer("", httpSrv))
++
++	var parsed struct {
++		MCPServers map[string]map[string]any `json:"mcpServers"`
++	}
++	if err := json.Unmarshal([]byte(read(t, filepath.Join(wsDir, "mcp.json"))), &parsed); err != nil {
++		t.Fatal(err)
++	}
++	if parsed.MCPServers["notes-idx"]["command"] != "npx" || parsed.MCPServers["remote-kb"]["url"] != "https://kb.example/mcp" {
++		t.Fatalf("unexpected mcp.json: %+v", parsed.MCPServers)
++	}
++
++	loaded, err = memagent.LoadHomeAt(wsDir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(loaded.Servers) != 2 {
++		t.Fatalf("memagent.LoadHomeAt servers = %+v", loaded.Servers)
++	}
++}
+diff --git a/internal/library/targets.go b/internal/library/targets.go
+index 5e7d7f8bc6228d88d274d98bd5cec9c3a8856555..1cd596cf3ca6b4df49fa8ab9ef966718f76c9784 100644
+--- a/internal/library/targets.go
++++ b/internal/library/targets.go
+@@ -171,6 +171,15 @@ func targetOf(a *agent.Agent) *Target {
+ 		t.MCP = &mcpFile{Path: mcp, Format: fmtClaude}
+ 		return t
+ 	}
++	if a.Origin == agent.OriginObsidianVault {
++		// Vault-resident Obsidian memory agent: <vault>/.obsidian/magpie-agent/
++		// owns AGENTS.md, skills/ and mcp.json (Pi-native mcpServers shape).
++		t.Instructions = filepath.Join(a.Dir, "AGENTS.md")
++		t.Skills = filepath.Join(a.Dir, "skills")
++		t.MCP = &mcpFile{Path: filepath.Join(a.Dir, "mcp.json"), Format: fmtPiNative}
++		t.Copy = skipsJunctions(a.ID)
++		return t
++	}
+ 	if n := a.SharedName(); n != a.Name {
+ 		// the files are another app's too (the Cursor editor's ~/.cursor):
+ 		// named for both, not for the CLI alone
+diff --git a/internal/memagent/audit.go b/internal/memagent/audit.go
+index 9a39cf10fa4bc266ce8f27e6580263537e1d5284..9cbeeb304bbe275dd69ca65aa4dbeea1af4921f1 100644
+--- a/internal/memagent/audit.go
++++ b/internal/memagent/audit.go
+@@ -243,6 +243,36 @@ func LogConflict(sb *Sandbox, role string, c *ConflictError, action string) erro
+ 	return sb.Append(ConflictsPath, []byte(b.String()))
+ }
+ 
++// LogViolation appends a sandbox boundary violation to logs/memory-conflicts.md
++// and leaves an audit line in memory-audit.jsonl.
++func LogViolation(sb *Sandbox, role, agentName, op, target string, err error) error {
++	if strings.TrimSpace(agentName) == "" {
++		agentName = AgentID
++	}
++	msg := ""
++	if err != nil {
++		msg = err.Error()
++	}
++	LogAudit(Audit{
++		Action: "vault_" + op,
++		Role:   role,
++		Agent:  agentName,
++		Result: "refused",
++		Error:  redact(oneLine(target+": "+msg), 400),
++	})
++	if sb == nil {
++		return errors.New("no vault to write a violation into")
++	}
++	var b strings.Builder
++	fmt.Fprintf(&b, "\n## %s\n\n", now().UTC().Format(time.RFC3339))
++	fmt.Fprintf(&b, "- action: vault_%s\n", op)
++	fmt.Fprintf(&b, "- role: %s\n", role)
++	fmt.Fprintf(&b, "- agent: %s\n", mdEscape(agentName))
++	fmt.Fprintf(&b, "- target: %s\n", mdEscape(redact(oneLine(target), 300)))
++	fmt.Fprintf(&b, "- why refused: %s\n", mdEscape(redact(oneLine(msg), 300)))
++	return sb.AppendConflict(ConflictsPath, []byte(b.String()))
++}
++
+ // mdEscape keeps a value on one line in the note, and out of the Markdown's
+ // own syntax: a memory's words are text, never a heading or a list.
+ func mdEscape(s string) string {
+diff --git a/internal/memagent/dispatch.go b/internal/memagent/dispatch.go
+index 0b417a0ecf9fd4da51da30ad39fcaf7ac94f1d8c..d587bcc78d45dc4c5be325a4d16fd9f57b1bd6b5 100644
+--- a/internal/memagent/dispatch.go
++++ b/internal/memagent/dispatch.go
+@@ -63,6 +63,8 @@ type Input struct {
+ 	MaxSteps    int
+ 	Timeout     time.Duration
+ 	TurnTimeout time.Duration
++	// SandboxPolicy restricts vault read/write paths; nil uses Default.
++	SandboxPolicy *Policy
+ }
+ 
+ // Dispatch picks the agent a role runs as, builds its task and runs it. A
+@@ -73,7 +75,7 @@ func Dispatch(ctx context.Context, in Input) (Result, error) {
+ 	if !slices.Contains(Roles, role) {
+ 		return Result{}, fmt.Errorf("role %q isn't one of %s", in.Role, strings.Join(Roles, ", "))
+ 	}
+-	r, err := Load()
++	r, err := LoadFor(in.Vault)
+ 	if err != nil {
+ 		return Result{}, err
+ 	}
+@@ -87,6 +89,38 @@ func Dispatch(ctx context.Context, in Input) (Result, error) {
+ 	if !a.HasRole(role) {
+ 		return Result{}, fmt.Errorf("memory agent %q is %s, not %s", a.ID, a.Role, role)
+ 	}
++	home := in.Home
++	policy := in.SandboxPolicy
++	maxSteps := in.MaxSteps
++	timeout := in.Timeout
++	if ws, isObsidian := FindObsidianWorkspace(a.ID, in.Vault); isObsidian {
++		if !ws.Config.Enabled {
++			return Result{}, fmt.Errorf("memory agent %q is disabled in %s", ws.Config.Name, ws.Dir)
++		}
++		if !ws.Config.HasRole(role) {
++			return Result{}, fmt.Errorf("memory agent %q does %s, not %s", ws.ID, strings.Join(ws.Config.Roles, "|"), role)
++		}
++		if strings.TrimSpace(in.Model) == "" && strings.TrimSpace(ws.Config.Route) != "" {
++			a.Model = ws.Config.Route
++		}
++		if home == nil {
++			h, err := LoadHomeAt(ws.Dir)
++			if err != nil {
++				return Result{}, err
++			}
++			home = &h
++		}
++		if policy == nil {
++			p := ws.Config.SandboxPolicy()
++			policy = &p
++		}
++		if maxSteps == 0 && ws.Config.Budget.MaxSteps > 0 {
++			maxSteps = ws.Config.Budget.MaxSteps
++		}
++		if timeout == 0 && ws.Config.Budget.RunTimeoutMinutes > 0 {
++			timeout = time.Duration(ws.Config.Budget.RunTimeoutMinutes) * time.Minute
++		}
++	}
+ 	model := strings.TrimSpace(in.Model)
+ 	if model == "" {
+ 		model = a.Model
+@@ -102,8 +136,9 @@ func Dispatch(ctx context.Context, in Input) (Result, error) {
+ 	return Run(ctx, Task{
+ 		Role: role, Agent: agentID(a), Model: model, Effort: effort, Prompt: prompt,
+ 	}, Options{
+-		Ask: in.Ask, Vault: in.Vault, RunID: in.RunID, Home: in.Home,
+-		MaxSteps: in.MaxSteps, Timeout: in.Timeout, TurnTimeout: in.TurnTimeout,
++		Ask: in.Ask, Vault: in.Vault, RunID: in.RunID, Home: home,
++		MaxSteps: maxSteps, Timeout: timeout, TurnTimeout: in.TurnTimeout,
++		SandboxPolicy: policy,
+ 	})
+ }
+ 
+diff --git a/internal/memagent/home.go b/internal/memagent/home.go
+index bddbcda04a4b3107430b66477aea78cce62e8a75..f7eab25c898f1bd3cc7f3a6958d159bef2913b0e 100644
+--- a/internal/memagent/home.go
++++ b/internal/memagent/home.go
+@@ -56,7 +56,12 @@ var HomeDir = func() string { return appdir.Join(appdir.Config(), HomeName) }
+ // the same. A file that is there and can't be read is an error: a run is
+ // never given other instructions than the ones written.
+ func LoadHome() (Home, error) {
+-	h := Home{Dir: HomeDir()}
++	return LoadHomeAt(HomeDir())
++}
++
++// LoadHomeAt reads an agent workspace at dir (AGENTS.md, mcp.json, skills/).
++func LoadHomeAt(dir string) (Home, error) {
++	h := Home{Dir: dir}
+ 	b, err := os.ReadFile(filepath.Join(h.Dir, InstructionsName))
+ 	switch {
+ 	case err == nil:
+@@ -189,7 +194,10 @@ func loadSkills(dir string) ([]Skill, error) {
+ 	out := []Skill{}
+ 	for _, e := range entries {
+ 		if !e.IsDir() {
+-			continue
++			fi, err := os.Stat(filepath.Join(dir, e.Name()))
++			if err != nil || !fi.IsDir() {
++				continue
++			}
+ 		}
+ 		file := filepath.Join(dir, e.Name(), "SKILL.md")
+ 		b, err := os.ReadFile(file)
+@@ -257,6 +265,11 @@ func unquote(s string) string {
+ // tools are given to the model as tools, so the text says what they are for
+ // rather than repeating their schemas.
+ func (h Home) System() string {
++	return h.SystemWith(nil)
++}
++
++// SystemWith builds system instructions describing the active vault sandbox bounds.
++func (h Home) SystemWith(sb *Sandbox) string {
+ 	var b strings.Builder
+ 	if s := strings.TrimSpace(h.Instructions); s != "" {
+ 		b.WriteString(s)
+@@ -264,8 +277,20 @@ func (h Home) System() string {
+ 	}
+ 	b.WriteString("## What this run may use\n\n")
+ 	fmt.Fprintf(&b, "- The memory tools: %s, %s, %s, %s.\n", ToolMemorySearch, ToolMemorySave, ToolMemoryForget, ToolMemoryContext)
++	readDesc := strings.Join(Readable, ", ")
++	writeDesc := strings.Join(Writable, ", ")
++	if sb != nil {
++		if sb.readAll {
++			readDesc = "the vault (excluding " + strings.Join(sb.deny, ", ") + ")"
++		} else if len(sb.readAllow) > 0 {
++			readDesc = strings.Join(sb.readAllow, ", ")
++		}
++		if len(sb.writeAllow) > 0 {
++			writeDesc = strings.Join(sb.writeAllow, ", ")
++		}
++	}
+ 	fmt.Fprintf(&b, "- The knowledge vault: %s and %s read under %s; %s writes under %s. Nothing else in it, and nothing outside it, is reachable.\n",
+-		ToolVaultList, ToolVaultRead, strings.Join(Readable, ", "), ToolVaultWrite, strings.Join(Writable, ", "))
++		ToolVaultList, ToolVaultRead, readDesc, ToolVaultWrite, writeDesc)
+ 	fmt.Fprintf(&b, "- A scratch folder of this run's own (%s, %s), dropped when the run ends.\n", ToolScratchWrite, ToolScratchRead)
+ 	if len(h.Servers) > 0 {
+ 		var names []string
+diff --git a/internal/memagent/loop.go b/internal/memagent/loop.go
+index ef7069ab84b24949fc14120eb8e33a71c29363b3..6fd3bac6f52ec24fd27c0d89e276b75c8a9da682 100644
+--- a/internal/memagent/loop.go
++++ b/internal/memagent/loop.go
+@@ -106,6 +106,8 @@ type Options struct {
+ 	MaxSteps    int
+ 	Timeout     time.Duration
+ 	TurnTimeout time.Duration
++	// SandboxPolicy limits readable/writable vault paths; nil uses default.
++	SandboxPolicy *Policy
+ }
+ 
+ // Result is what a run did.
+@@ -166,7 +168,15 @@ func Run(ctx context.Context, t Task, opts Options) (Result, error) {
+ 	if vault == "" {
+ 		return Result{}, ErrNoVault
+ 	}
+-	sb, err := OpenSandbox(vault)
++	var (
++		sb  *Sandbox
++		err error
++	)
++	if opts.SandboxPolicy != nil {
++		sb, err = OpenSandboxWith(vault, *opts.SandboxPolicy)
++	} else {
++		sb, err = OpenSandbox(vault)
++	}
+ 	if err != nil {
+ 		return Result{}, err
+ 	}
+@@ -212,7 +222,7 @@ func Run(ctx context.Context, t Task, opts Options) (Result, error) {
+ 		home = &h
+ 	}
+ 	if strings.TrimSpace(t.System) == "" {
+-		t.System = home.System()
++		t.System = home.SystemWith(sb)
+ 	}
+ 	extra := slices.Clone(opts.Tools)
+ 	if len(home.Servers) > 0 {
+@@ -220,7 +230,7 @@ func Run(ctx context.Context, t Task, opts Options) (Result, error) {
+ 		defer closeAll()
+ 		extra = append(mcpTools, extra...)
+ 	}
+-	set, err := toolsFor(sb, sc, t.Role, log, extra)
++	set, err := toolsForAgent(sb, sc, t.Role, t.Agent, log, extra)
+ 	if err != nil {
+ 		log.failed(err)
+ 		end(PhaseFailed, err)
+diff --git a/.work/magpie-dev/internal/memagent/obsidian.go b/internal/memagent/obsidian.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..c776a2cc4d3b468260b87d358f8a1c9ee6f11a0b
+--- /dev/null
++++ b/internal/memagent/obsidian.go
+@@ -0,0 +1,416 @@
++package memagent
++
++import (
++	"bytes"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"slices"
++	"strings"
++
++	"github.com/yetone/magpie/internal/appdir"
++	"github.com/yetone/magpie/internal/fishvault"
++	"github.com/yetone/magpie/internal/steady"
++)
++
++const (
++	// ObsidianAgentID is the built-in vault-resident memory agent id.
++	ObsidianAgentID = "obsidian-memory"
++	// ObsidianAgentName is its display name across Agents, Library and Obsidian.
++	ObsidianAgentName = "Obsidian 记忆 Agent"
++	// ObsidianRelDir is the workspace directory inside a vault's .obsidian folder.
++	ObsidianRelDir = ".obsidian/magpie-agent"
++	// ObsidianConfigName is the manifest inside the workspace folder.
++	ObsidianConfigName = "agent.json"
++)
++
++// DefaultObsidianInstructions seeds <vault>/.obsidian/magpie-agent/AGENTS.md on first setup.
++const DefaultObsidianInstructions = `# Obsidian 记忆 Agent
++
++你是驻留在 Obsidian 知识库中的记忆维护 Agent，负责三项工作：
++1. **学习对话（learn）**：提炼对话中值得长期保留的事实、偏好、规则与经验，调用记忆工具写入长期记忆。
++2. **整理记忆（organize）**：合并重复记忆与灵感，清理过时条目；按主题整理到白名单目录。
++3. **跨笔记做梦（dream）**：跨笔记与记忆寻找深层关联与未解问题，形成灵感卡片。
++
++## 纪律与边界
++- 仅在授权的白名单目录内读写，严禁触碰 .obsidian/、.git/、credentials/ 及库外任何路径。
++- 绝不覆盖或篡改用户手写（origin=user 或用户编辑过）的记忆；存在冲突时追加候选并在 logs/memory-conflicts.md 记录。
++`
++
++// ObsidianSandboxConfig declares the vault paths configured in agent.json.
++type ObsidianSandboxConfig struct {
++	Read  []string `json:"read"`
++	Write []string `json:"write"`
++	Deny  []string `json:"deny"`
++}
++
++// ObsidianBudgetConfig bounds steps, run duration and scratch cache.
++type ObsidianBudgetConfig struct {
++	MaxSteps          int `json:"maxSteps"`
++	RunTimeoutMinutes int `json:"runTimeoutMinutes"`
++	ScratchMB         int `json:"scratchMB"`
++}
++
++// ObsidianConfig matches <vault>/.obsidian/magpie-agent/agent.json.
++type ObsidianConfig struct {
++	Schema  int                   `json:"schema"`
++	ID      string                `json:"id"`
++	Name    string                `json:"name"`
++	Roles   []string              `json:"roles"`
++	Route   string                `json:"route"`
++	Enabled bool                  `json:"enabled"`
++	Sandbox ObsidianSandboxConfig `json:"sandbox"`
++	Budget  ObsidianBudgetConfig  `json:"budget"`
++}
++
++// ObsidianWorkspace is one discovered <vault>/.obsidian/magpie-agent workspace.
++type ObsidianWorkspace struct {
++	ID     string
++	Vault  string
++	Dir    string
++	Config ObsidianConfig
++}
++
++// VaultRoots returns extra Obsidian vault paths to scan alongside fishvault.Root().
++var VaultRoots func() []string
++
++// DefaultObsidianConfig returns the baseline configuration for agent.json.
++func DefaultObsidianConfig() ObsidianConfig {
++	return ObsidianConfig{
++		Schema:  1,
++		ID:      ObsidianAgentID,
++		Name:    ObsidianAgentName,
++		Roles:   []string{Learn, Organize, Dream},
++		Route:   "group/deepseek",
++		Enabled: true,
++		Sandbox: ObsidianSandboxConfig{
++			Read:  []string{"."},
++			Write: []string{"Magpie 对话/", "memories/", "inspirations/", "_digests/", "logs/"},
++			Deny:  []string{".obsidian/", ".git/", "credentials/"},
++		},
++		Budget: ObsidianBudgetConfig{
++			MaxSteps:          MaxSteps,
++			RunTimeoutMinutes: int(RunTimeout.Minutes()),
++			ScratchMB:         20,
++		},
++	}
++}
++
++// ObsidianWorkspaceDir returns <vault>/.obsidian/magpie-agent.
++func ObsidianWorkspaceDir(vaultRoot string) string {
++	return filepath.Join(vaultRoot, ".obsidian", "magpie-agent")
++}
++
++// HasRole checks if the workspace config allows running role.
++func (c ObsidianConfig) HasRole(role string) bool {
++	role = strings.ToLower(strings.TrimSpace(role))
++	for _, r := range c.Roles {
++		if strings.ToLower(strings.TrimSpace(r)) == role {
++			return true
++		}
++	}
++	return false
++}
++
++// SandboxPolicy converts ObsidianSandboxConfig to a normalized Sandbox Policy.
++func (c ObsidianConfig) SandboxPolicy() Policy {
++	def := DefaultObsidianConfig().Sandbox
++	read := slices.Clone(c.Sandbox.Read)
++	if len(read) == 0 {
++		read = def.Read
++	}
++	write := slices.Clone(c.Sandbox.Write)
++	if len(write) == 0 {
++		write = def.Write
++	}
++	deny := slices.Clone(c.Sandbox.Deny)
++	if len(deny) == 0 {
++		deny = def.Deny
++	}
++	return Policy{Read: read, Write: write, Deny: deny}
++}
++
++func (c ObsidianConfig) asRegistryAgent() Agent {
++	roles := make([]string, 0, len(c.Roles))
++	for _, r := range c.Roles {
++		r = strings.ToLower(strings.TrimSpace(r))
++		if slices.Contains(Roles, r) && !slices.Contains(roles, r) {
++			roles = append(roles, r)
++		}
++	}
++	if len(roles) == 0 {
++		roles = slices.Clone(Roles)
++	}
++	route := strings.TrimSpace(c.Route)
++	if route == "" {
++		route = "group/deepseek"
++	}
++	name := strings.TrimSpace(c.Name)
++	if name == "" {
++		name = ObsidianAgentName
++	}
++	id := strings.TrimSpace(c.ID)
++	if id == "" {
++		id = ObsidianAgentID
++	}
++	return Agent{
++		ID:       id,
++		Name:     name,
++		Agent:    id,
++		Role:     strings.Join(roles, "|"),
++		Model:    route,
++		Effort:   "high",
++		Schedule: "daily 22:00",
++		Scopes:   []string{"global", "project:*"},
++		Builtin:  true,
++	}
++}
++
++// EnsureObsidianWorkspace initializes <vault>/.obsidian/magpie-agent/{agent.json,AGENTS.md,mcp.json,skills}
++// without overwriting existing user-edited files.
++func EnsureObsidianWorkspace(vaultRoot string) (string, error) {
++	vaultRoot = strings.TrimSpace(vaultRoot)
++	if vaultRoot == "" {
++		return "", errors.New("obsidian agent workspace requires a vault root")
++	}
++	info, err := os.Lstat(vaultRoot)
++	if err != nil {
++		return "", err
++	}
++	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
++		return "", fmt.Errorf("%s is not an independent folder", vaultRoot)
++	}
++	dir := ObsidianWorkspaceDir(vaultRoot)
++	if err := os.MkdirAll(filepath.Join(dir, SkillsName), 0o700); err != nil {
++		return "", err
++	}
++	cfgPath := filepath.Join(dir, ObsidianConfigName)
++	if _, err := os.Lstat(cfgPath); errors.Is(err, os.ErrNotExist) {
++		if err := WriteObsidianConfig(dir, DefaultObsidianConfig()); err != nil {
++			return "", err
++		}
++	}
++	instrPath := filepath.Join(dir, InstructionsName)
++	if _, err := os.Lstat(instrPath); errors.Is(err, os.ErrNotExist) {
++		if err := steady.WriteFile(instrPath, []byte(DefaultObsidianInstructions), 0o600); err != nil {
++			return "", err
++		}
++	}
++	mcpPath := filepath.Join(dir, MCPName)
++	if _, err := os.Lstat(mcpPath); errors.Is(err, os.ErrNotExist) {
++		if err := steady.WriteFile(mcpPath, []byte("{\"mcpServers\":{}}\n"), 0o600); err != nil {
++			return "", err
++		}
++	}
++	return dir, nil
++}
++
++// ReadObsidianConfig parses <dir>/agent.json and fills default fields if omitted.
++func ReadObsidianConfig(dir string) (ObsidianConfig, error) {
++	b, err := os.ReadFile(filepath.Join(dir, ObsidianConfigName))
++	if err != nil {
++		return ObsidianConfig{}, err
++	}
++	cfg := DefaultObsidianConfig()
++	raw := map[string]any{}
++	trimmed := bytes.TrimPrefix(b, []byte("\xef\xbb\xbf"))
++	if err := json.Unmarshal(trimmed, &cfg); err != nil {
++		return ObsidianConfig{}, err
++	}
++	_ = json.Unmarshal(trimmed, &raw)
++	def := DefaultObsidianConfig()
++	if cfg.Schema == 0 {
++		cfg.Schema = def.Schema
++	}
++	if strings.TrimSpace(cfg.ID) == "" {
++		cfg.ID = def.ID
++	}
++	if strings.TrimSpace(cfg.Name) == "" {
++		cfg.Name = def.Name
++	}
++	if len(cfg.Roles) == 0 {
++		cfg.Roles = def.Roles
++	}
++	if strings.TrimSpace(cfg.Route) == "" {
++		cfg.Route = def.Route
++	}
++	if _, hasEnabled := raw["enabled"]; !hasEnabled {
++		cfg.Enabled = def.Enabled
++	}
++	if len(cfg.Sandbox.Read) == 0 {
++		cfg.Sandbox.Read = def.Sandbox.Read
++	}
++	if len(cfg.Sandbox.Write) == 0 {
++		cfg.Sandbox.Write = def.Sandbox.Write
++	}
++	if len(cfg.Sandbox.Deny) == 0 {
++		cfg.Sandbox.Deny = def.Sandbox.Deny
++	}
++	if cfg.Budget.MaxSteps <= 0 {
++		cfg.Budget.MaxSteps = def.Budget.MaxSteps
++	}
++	if cfg.Budget.RunTimeoutMinutes <= 0 {
++		cfg.Budget.RunTimeoutMinutes = def.Budget.RunTimeoutMinutes
++	}
++	if cfg.Budget.ScratchMB <= 0 {
++		cfg.Budget.ScratchMB = def.Budget.ScratchMB
++	}
++	return cfg, nil
++}
++
++// WriteObsidianConfig atomically writes agent.json into dir.
++func WriteObsidianConfig(dir string, cfg ObsidianConfig) error {
++	if err := os.MkdirAll(dir, 0o700); err != nil {
++		return err
++	}
++	def := DefaultObsidianConfig()
++	if cfg.Schema == 0 {
++		cfg.Schema = def.Schema
++	}
++	if strings.TrimSpace(cfg.ID) == "" {
++		cfg.ID = def.ID
++	}
++	if strings.TrimSpace(cfg.Name) == "" {
++		cfg.Name = def.Name
++	}
++	if len(cfg.Roles) == 0 {
++		cfg.Roles = def.Roles
++	}
++	if strings.TrimSpace(cfg.Route) == "" {
++		cfg.Route = def.Route
++	}
++	if len(cfg.Sandbox.Read) == 0 {
++		cfg.Sandbox.Read = def.Sandbox.Read
++	}
++	if len(cfg.Sandbox.Write) == 0 {
++		cfg.Sandbox.Write = def.Sandbox.Write
++	}
++	if len(cfg.Sandbox.Deny) == 0 {
++		cfg.Sandbox.Deny = def.Sandbox.Deny
++	}
++	if cfg.Budget.MaxSteps <= 0 {
++		cfg.Budget.MaxSteps = def.Budget.MaxSteps
++	}
++	if cfg.Budget.RunTimeoutMinutes <= 0 {
++		cfg.Budget.RunTimeoutMinutes = def.Budget.RunTimeoutMinutes
++	}
++	if cfg.Budget.ScratchMB <= 0 {
++		cfg.Budget.ScratchMB = def.Budget.ScratchMB
++	}
++	b, err := json.MarshalIndent(cfg, "", "  ")
++	if err != nil {
++		return err
++	}
++	b = append(b, '\n')
++	return steady.WriteFile(filepath.Join(dir, ObsidianConfigName), b, 0o600)
++}
++
++// DiscoverObsidianWorkspaces finds initialized <vault>/.obsidian/magpie-agent folders.
++func DiscoverObsidianWorkspaces(extra ...string) []ObsidianWorkspace {
++	var candidates []string
++	data := appdir.Config()
++	if fishvault.Present(data) {
++		candidates = append(candidates, fishvault.RootAt(data))
++	}
++	if VaultRoots != nil {
++		candidates = append(candidates, VaultRoots()...)
++	}
++	candidates = append(candidates, extra...)
++
++	seen := map[string]bool{}
++	seenIDs := map[string]bool{}
++	var out []ObsidianWorkspace
++	for _, root := range candidates {
++		root = strings.TrimSpace(root)
++		if root == "" {
++			continue
++		}
++		clean := filepath.Clean(root)
++		key := strings.ToLower(clean)
++		if seen[key] {
++			continue
++		}
++		seen[key] = true
++		info, err := os.Lstat(clean)
++		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
++			continue
++		}
++		wsDir := ObsidianWorkspaceDir(clean)
++		cfg, err := ReadObsidianConfig(wsDir)
++		if err != nil {
++			continue
++		}
++		id := cfg.ID
++		if seenIDs[id] {
++			slug := strings.Map(func(r rune) rune {
++				if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
++					return r
++				}
++				return '-'
++			}, strings.ToLower(filepath.Base(clean)))
++			slug = strings.Trim(slug, "-")
++			if slug == "" {
++				slug = fmt.Sprintf("%d", len(out)+1)
++			}
++			id = ObsidianAgentID + "-" + slug
++			if len(id) > 40 {
++				id = id[:40]
++			}
++		}
++		seenIDs[id] = true
++		out = append(out, ObsidianWorkspace{
++			ID:     id,
++			Vault:  clean,
++			Dir:    wsDir,
++			Config: cfg,
++		})
++	}
++	return out
++}
++
++// FindObsidianWorkspace looks up a discovered obsidian agent workspace by id.
++func FindObsidianWorkspace(id string, extra ...string) (ObsidianWorkspace, bool) {
++	id = strings.TrimSpace(id)
++	if id == "" {
++		return ObsidianWorkspace{}, false
++	}
++	for _, ws := range DiscoverObsidianWorkspaces(extra...) {
++		if ws.ID == id || ws.Config.ID == id {
++			return ws, true
++		}
++	}
++	return ObsidianWorkspace{}, false
++}
++
++// SyncObsidianDefault ensures an untouched built-in memory-agents.json points
++// default roles to obsidian-memory once the vault workspace is initialized.
++func SyncObsidianDefault(extra ...string) error {
++	wss := DiscoverObsidianWorkspaces(extra...)
++	if len(wss) == 0 {
++		return nil
++	}
++	primary := wss[0]
++	_, err := change(func(r *Registry) error {
++		onlyBuiltins := true
++		for _, a := range r.Agents {
++			if !a.Builtin {
++				onlyBuiltins = false
++				break
++			}
++		}
++		if onlyBuiltins && r.Defaults[Learn] == "memory-curator" && r.Defaults[Organize] == "memory-curator" && r.Defaults[Dream] == "dreamer" {
++			if r.Defaults == nil {
++				r.Defaults = map[string]string{}
++			}
++			for _, role := range Roles {
++				if primary.Config.HasRole(role) {
++					r.Defaults[role] = primary.ID
++				}
++			}
++		}
++		return nil
++	})
++	return err
++}
+diff --git a/.work/magpie-dev/internal/memagent/obsidian_test.go b/internal/memagent/obsidian_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..ba5bbfe5e227236bd50a83c591c75e37a08a41cd
+--- /dev/null
++++ b/internal/memagent/obsidian_test.go
+@@ -0,0 +1,242 @@
++package memagent
++
++import (
++	"encoding/json"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func isolateVaultTestEnv(t *testing.T, vaultDir string) {
++	t.Helper()
++	cfg := t.TempDir()
++	t.Setenv("APPDATA", cfg)
++	t.Setenv("XDG_CONFIG_HOME", cfg)
++	t.Setenv("HOME", cfg)
++	oldPath := Path
++	oldAudit := AuditPath
++	oldRoots := VaultRoots
++	Path = func() string { return filepath.Join(cfg, "memory-agents.json") }
++	AuditPath = func() string { return filepath.Join(cfg, "memory-audit.jsonl") }
++	if vaultDir != "" {
++		VaultRoots = func() []string { return []string{vaultDir} }
++	} else {
++		VaultRoots = nil
++	}
++	t.Cleanup(func() {
++		Path = oldPath
++		AuditPath = oldAudit
++		VaultRoots = oldRoots
++	})
++}
++
++func TestEnsureObsidianWorkspacePreservesUserFiles(t *testing.T) {
++	vault := t.TempDir()
++	wsDir, err := EnsureObsidianWorkspace(vault)
++	if err != nil {
++		t.Fatalf("EnsureObsidianWorkspace: %v", err)
++	}
++	wantDir := filepath.Join(vault, ".obsidian", "magpie-agent")
++	if wsDir != wantDir {
++		t.Fatalf("dir = %q, want %q", wsDir, wantDir)
++	}
++	for _, rel := range []string{"agent.json", "AGENTS.md", "mcp.json", "skills"} {
++		if _, err := os.Stat(filepath.Join(wsDir, rel)); err != nil {
++			t.Fatalf("missing %s: %v", rel, err)
++		}
++	}
++
++	customPrompt := "# Custom Vault Rules\nAlways keep citations.\n"
++	if err := os.WriteFile(filepath.Join(wsDir, "AGENTS.md"), []byte(customPrompt), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := EnsureObsidianWorkspace(vault); err != nil {
++		t.Fatalf("second EnsureObsidianWorkspace: %v", err)
++	}
++	got, err := os.ReadFile(filepath.Join(wsDir, "AGENTS.md"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if string(got) != customPrompt {
++		t.Fatalf("AGENTS.md overwritten: %q", string(got))
++	}
++}
++
++func TestObsidianWorkspaceDiscoveryAndRegistryDefaults(t *testing.T) {
++	vault := t.TempDir()
++	isolateVaultTestEnv(t, vault)
++
++	if _, err := EnsureObsidianWorkspace(vault); err != nil {
++		t.Fatal(err)
++	}
++	if err := SyncObsidianDefault(); err != nil {
++		t.Fatalf("SyncObsidianDefault: %v", err)
++	}
++	r, err := Load()
++	if err != nil {
++		t.Fatalf("Load: %v", err)
++	}
++	obs, ok := r.Get(ObsidianAgentID)
++	if !ok {
++		t.Fatalf("expected %s in registry: %+v", ObsidianAgentID, r.Agents)
++	}
++	if obs.Name != ObsidianAgentName {
++		t.Fatalf("name = %q", obs.Name)
++	}
++	for _, role := range Roles {
++		def, ok := r.Default(role)
++		if !ok || def.ID != ObsidianAgentID {
++			t.Fatalf("default(%s) = %+v (ok=%v)", role, def, ok)
++		}
++	}
++
++	// Secondary vault with duplicate id in agent.json gets a unique valid registry ID.
++	vault2 := t.TempDir()
++	if _, err := EnsureObsidianWorkspace(vault2); err != nil {
++		t.Fatal(err)
++	}
++	wss := DiscoverObsidianWorkspaces(vault2)
++	if len(wss) != 2 || wss[0].ID == wss[1].ID {
++		t.Fatalf("expected two distinct workspaces, got %+v", wss)
++	}
++	if !idPattern(wss[1].ID) {
++		t.Fatalf("secondary workspace id %q violates idPattern", wss[1].ID)
++	}
++}
++
++func TestObsidianDispatchUsesWorkspaceAndEnforcesSandbox(t *testing.T) {
++	vault := runAt(t)
++	isolateVaultTestEnv(t, vault)
++	if err := os.MkdirAll(filepath.Join(vault, "Notes"), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(vault, "Notes", "idea.md"), []byte("Idea body"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.MkdirAll(filepath.Join(vault, ".git"), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(vault, ".git", "config"), []byte("[core]\n"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.MkdirAll(filepath.Join(vault, "credentials"), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(vault, "credentials", "secret.json"), []byte(`{"token":"nope"}`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++
++	wsDir, err := EnsureObsidianWorkspace(vault)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(wsDir, InstructionsName), []byte("# Custom Obsidian\nSpeak concisely in Chinese."), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	cfg, err := ReadObsidianConfig(wsDir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	cfg.Enabled = false
++	cfg.Route = "custom/route"
++	if err := WriteObsidianConfig(wsDir, cfg); err != nil {
++		t.Fatal(err)
++	}
++
++	a := &asker{replies: []Turn{{Text: "ok"}}}
++	if _, err := Dispatch(t.Context(), Input{
++		Role: Learn, Agent: ObsidianAgentID, Vault: vault, Ask: a.ask,
++		Conversations: []Conversation{{Agent: "codex", Session: "s1", Text: "User: remember X"}},
++	}); err == nil || !strings.Contains(err.Error(), "disabled") {
++		t.Fatalf("expected disabled error, got %v", err)
++	}
++
++	cfg.Enabled = true
++	if err := WriteObsidianConfig(wsDir, cfg); err != nil {
++		t.Fatal(err)
++	}
++	res, err := Dispatch(t.Context(), Input{
++		Role: Learn, Agent: ObsidianAgentID, Vault: vault, Ask: a.ask,
++		Conversations: []Conversation{{Agent: "codex", Session: "s1", Text: "User: remember X"}},
++	})
++	if err != nil || res.Phase != PhaseDone {
++		t.Fatalf("Dispatch failed: res=%+v err=%v", res, err)
++	}
++	if len(a.asked) != 1 {
++		t.Fatalf("asked = %d", len(a.asked))
++	}
++	req := a.asked[0]
++	if req.Model != "custom/route" {
++		t.Fatalf("model = %q, want custom/route", req.Model)
++	}
++	if !strings.Contains(req.System, "Speak concisely in Chinese.") {
++		t.Fatalf("AGENTS.md rule missing from system prompt: %q", req.System)
++	}
++	if !strings.Contains(req.System, "Magpie 对话") {
++		t.Fatalf("sandbox write folder missing from system prompt: %q", req.System)
++	}
++
++	// Verify sandbox read/write/deny and violation logging directly through toolsForAgent.
++	sb, err := OpenSandboxWith(vault, cfg.SandboxPolicy())
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sb.Close()
++	set, err := toolsForAgent(sb, nil, Learn, ObsidianAgentID, &runLog{}, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	runTool := func(name string, args map[string]any) (string, error) {
++		tool, ok := set.Get(name)
++		if !ok {
++			t.Fatalf("missing tool %s", name)
++		}
++		b, _ := json.Marshal(args)
++		return tool.Call(t.Context(), b)
++	}
++
++	if out, err := runTool(ToolVaultList, map[string]any{"path": "."}); err != nil {
++		t.Fatalf("vault_list root: %v", err)
++	} else {
++		if strings.Contains(out, ".obsidian") || strings.Contains(out, ".git") || strings.Contains(out, "credentials") {
++			t.Fatalf("denied dirs leaked into vault_list: %q", out)
++		}
++		if !strings.Contains(out, "Notes/") {
++			t.Fatalf("expected Notes/ in root listing: %q", out)
++		}
++	}
++	if out, err := runTool(ToolVaultRead, map[string]any{"path": "Notes/idea.md"}); err != nil || out != "Idea body" {
++		t.Fatalf("vault_read Notes/idea.md = (%q, %v)", out, err)
++	}
++	for _, forbidden := range []string{".obsidian/magpie-agent/agent.json", ".git/config", "credentials/secret.json", "../escape.md"} {
++		if _, err := runTool(ToolVaultRead, map[string]any{"path": forbidden}); !errors.Is(err, ErrOutside) {
++			t.Fatalf("expected ErrOutside reading %q, got %v", forbidden, err)
++		}
++	}
++	if _, err := runTool(ToolVaultWrite, map[string]any{"path": "Notes/unallowed.md", "text": "no"}); !errors.Is(err, ErrOutside) {
++		t.Fatalf("expected ErrOutside writing Notes/unallowed.md, got %v", err)
++	}
++	if _, err := runTool(ToolVaultWrite, map[string]any{"path": ".obsidian/evil.md", "text": "no"}); !errors.Is(err, ErrOutside) {
++		t.Fatalf("expected ErrOutside writing .obsidian/evil.md, got %v", err)
++	}
++	if out, err := runTool(ToolVaultWrite, map[string]any{"path": "Magpie 对话/2026-11-17.md", "text": "# Digest\n"}); err != nil || !strings.Contains(out, "Magpie 对话/2026-11-17.md") {
++		t.Fatalf("vault_write allowlisted dir: (%q, %v)", out, err)
++	}
++
++	conflicts, err := os.ReadFile(filepath.Join(vault, ConflictsPath))
++	if err != nil {
++		t.Fatalf("missing conflicts log: %v", err)
++	}
++	if !strings.Contains(string(conflicts), "credentials/secret.json") || !strings.Contains(string(conflicts), "Notes/unallowed.md") {
++		t.Fatalf("conflicts log missing violation records: %q", string(conflicts))
++	}
++	auditBytes, err := os.ReadFile(AuditPath())
++	if err != nil {
++		t.Fatalf("missing audit log: %v", err)
++	}
++	if !strings.Contains(string(auditBytes), `"result":"refused"`) || !strings.Contains(string(auditBytes), ObsidianAgentID) {
++		t.Fatalf("audit log missing refused violation trace: %q", string(auditBytes))
++	}
++}
+diff --git a/internal/memagent/registry.go b/internal/memagent/registry.go
+index 4434ce7cdd65244b7e7f9cbce871a011ec452d0d..d97bf4ce76706b70d67b0329aac55eb2e2ec395d 100644
+--- a/internal/memagent/registry.go
++++ b/internal/memagent/registry.go
+@@ -178,12 +178,23 @@ func valid(b []byte) bool {
+ 	return err == nil
+ }
+ 
+-// Load reads memory-agents.json; a missing file is the built-in presets. One
+-// that can't be run is an error, never the presets: a change isn't written
+-// over it. A file there that isn't valid gives its last good generation, the
+-// recovery noted for the GUI and the log (lastgood.Read); with none either,
+-// the error names the file and what is wrong with it, so it can be repaired.
++// Load reads memory-agents.json and merges dynamically discovered Obsidian
++// vault agent workspaces (.obsidian/magpie-agent/agent.json).
+ func Load() (Registry, error) {
++	return LoadFor()
++}
++
++// LoadFor reads memory-agents.json and overlays Obsidian vault agent workspaces
++// discovered from the active vault plus extraVaults.
++func LoadFor(extraVaults ...string) (Registry, error) {
++	r, err := loadDisk()
++	if err != nil {
++		return Registry{}, err
++	}
++	return overlayObsidianWorkspaces(r, extraVaults...), nil
++}
++
++func loadDisk() (Registry, error) {
+ 	p := Path()
+ 	b, err := lastgood.Read(p, valid)
+ 	if errors.Is(err, os.ErrNotExist) {
+@@ -199,6 +210,37 @@ func Load() (Registry, error) {
+ 	return r, nil
+ }
+ 
++func overlayObsidianWorkspaces(r Registry, extraVaults ...string) Registry {
++	wss := DiscoverObsidianWorkspaces(extraVaults...)
++	if len(wss) == 0 {
++		return r
++	}
++	byID := make(map[string]int, len(r.Agents))
++	for i := range r.Agents {
++		byID[r.Agents[i].ID] = i
++	}
++	var prepend []Agent
++	for _, ws := range wss {
++		entry := ws.Config.asRegistryAgent()
++		entry.ID = ws.ID
++		entry.Agent = ws.ID
++		if idx, ok := byID[ws.ID]; ok {
++			existing := r.Agents[idx]
++			existing.Name = entry.Name
++			existing.Role = entry.Role
++			existing.Model = entry.Model
++			existing.Agent = entry.Agent
++			r.Agents[idx] = existing
++			continue
++		}
++		prepend = append(prepend, entry)
++	}
++	if len(prepend) > 0 {
++		r.Agents = append(prepend, r.Agents...)
++	}
++	return r
++}
++
+ // Ensure writes the built-in presets when memory-agents.json isn't there yet,
+ // so the GUI and CLI start from two agents. An existing (even unreadable)
+ // file is left as it is.
+@@ -287,7 +329,7 @@ func change(fn func(*Registry) error) (Registry, error) {
+ 		return Registry{}, errors.New("memory-agents.json is held by another magpie")
+ 	}
+ 	defer unlock()
+-	r, err := Load()
++	r, err := loadDisk()
+ 	if err != nil {
+ 		return r, err
+ 	}
+@@ -542,8 +584,15 @@ func SetDefault(role, id string) (Registry, error) {
+ 	if !slices.Contains(Roles, role) {
+ 		return Registry{}, fmt.Errorf("role %q isn't one of %s", role, strings.Join(Roles, ", "))
+ 	}
+-	return change(func(r *Registry) error {
++	r, err := change(func(r *Registry) error {
+ 		a, ok := r.Get(id)
++		if !ok {
++			if ws, found := FindObsidianWorkspace(id); found {
++				a = ws.Config.asRegistryAgent()
++				a.ID = ws.ID
++				ok = true
++			}
++		}
+ 		if !ok {
+ 			return fmt.Errorf("no memory agent with id %q", id)
+ 		}
+@@ -556,4 +605,8 @@ func SetDefault(role, id string) (Registry, error) {
+ 		r.Defaults[role] = id
+ 		return nil
+ 	})
++	if err != nil {
++		return r, err
++	}
++	return overlayObsidianWorkspaces(r), nil
+ }
+diff --git a/internal/memagent/sandbox.go b/internal/memagent/sandbox.go
+index fda215ca8e582b691c90dc327c31394d697293bb..254db5a2e2c3eceabe14e7a591472ef6b07e70c4 100644
+--- a/internal/memagent/sandbox.go
++++ b/internal/memagent/sandbox.go
+@@ -41,18 +41,55 @@ const (
+ // folders it may read or write, or reached through a link.
+ var ErrOutside = errors.New("outside the folders a memory agent may use")
+ 
++// Policy configures readable, writable and explicitly denied vault subpaths.
++type Policy struct {
++	Read  []string
++	Write []string
++	Deny  []string
++}
++
++func cleanPolicyList(in []string) ([]string, bool) {
++	var out []string
++	all := false
++	for _, raw := range in {
++		s := strings.TrimSpace(filepath.ToSlash(raw))
++		s = strings.TrimPrefix(s, "./")
++		s = strings.Trim(s, "/")
++		if s == "" {
++			continue
++		}
++		if s == "." {
++			all = true
++			continue
++		}
++		if !slices.Contains(out, s) {
++			out = append(out, s)
++		}
++	}
++	return out, all
++}
++
+ // Sandbox confines one run's file access to a vault's allowlisted folders.
+ // Every name goes through an os.Root opened on the vault, so one that
+ // leaves it is refused by the kernel, and every component is checked for a
+ // link first, so a link that stays inside the vault is refused too.
+ type Sandbox struct {
+-	root    *os.Root
+-	dir     string
+-	written int64
++	root       *os.Root
++	dir        string
++	written    int64
++	readAllow  []string
++	readAll    bool
++	writeAllow []string
++	deny       []string
+ }
+ 
+ // OpenSandbox opens the knowledge vault at dir for one run.
+ func OpenSandbox(dir string) (*Sandbox, error) {
++	return OpenSandboxWith(dir, Policy{})
++}
++
++// OpenSandboxWith opens the knowledge vault at dir constrained by policy.
++func OpenSandboxWith(dir string, policy Policy) (*Sandbox, error) {
+ 	if strings.TrimSpace(dir) == "" {
+ 		return nil, errors.New("no knowledge vault to work in")
+ 	}
+@@ -67,7 +104,17 @@ func OpenSandbox(dir string) (*Sandbox, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return &Sandbox{root: root, dir: dir}, nil
++	readList, readAll := cleanPolicyList(policy.Read)
++	writeList, _ := cleanPolicyList(policy.Write)
++	denyList, _ := cleanPolicyList(policy.Deny)
++	return &Sandbox{
++		root:       root,
++		dir:        dir,
++		readAllow:  readList,
++		readAll:    readAll,
++		writeAllow: writeList,
++		deny:       denyList,
++	}, nil
+ }
+ 
+ // Dir is the vault the sandbox is opened on.
+@@ -91,12 +138,12 @@ type Entry struct {
+ 	Size int64  `json:"size,omitempty"`
+ }
+ 
+-// Read is the note at name, a path inside the vault under one of Readable.
++// Read is the note at name, a path inside the vault under allowed read folders.
+ func (s *Sandbox) Read(name string) ([]byte, error) {
+ 	if s == nil || s.root == nil {
+ 		return nil, errors.New("no knowledge vault to read from")
+ 	}
+-	rel, err := s.relName(name, Readable)
++	rel, err := s.relNameRead(name)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -120,16 +167,26 @@ func (s *Sandbox) List(name string) ([]Entry, error) {
+ 		return nil, errors.New("no knowledge vault to read from")
+ 	}
+ 	name = strings.TrimSpace(name)
+-	if name == "" {
+-		out := make([]Entry, 0, len(Readable))
+-		for _, d := range Readable {
++	if name == "" || (s.readAll && (name == "." || name == "./")) {
++		if s.readAll {
++			return s.listRoot("")
++		}
++		allow := s.readAllow
++		if len(allow) == 0 {
++			allow = Readable
++		}
++		out := make([]Entry, 0, len(allow))
++		for _, d := range allow {
++			if s.isDenied(d) {
++				continue
++			}
+ 			if _, err := s.root.Lstat(d); err == nil {
+ 				out = append(out, Entry{Name: d, Dir: true})
+ 			}
+ 		}
+ 		return out, nil
+ 	}
+-	rel, err := s.relName(name, Readable)
++	rel, err := s.relNameRead(name)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -140,7 +197,15 @@ func (s *Sandbox) List(name string) ([]Entry, error) {
+ 	if !info.IsDir() {
+ 		return nil, fmt.Errorf("%w: %q isn't a folder", ErrOutside, rel)
+ 	}
+-	entries, err := fs.ReadDir(s.root.FS(), rel)
++	return s.listRoot(rel)
++}
++
++func (s *Sandbox) listRoot(rel string) ([]Entry, error) {
++	target := rel
++	if target == "" {
++		target = "."
++	}
++	entries, err := fs.ReadDir(s.root.FS(), target)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -149,9 +214,16 @@ func (s *Sandbox) List(name string) ([]Entry, error) {
+ 		if len(out) >= MaxListed {
+ 			break
+ 		}
+-		fi, err := s.root.Lstat(path.Join(rel, e.Name()))
++		childRel := e.Name()
++		if rel != "" {
++			childRel = path.Join(rel, e.Name())
++		}
++		if s.isDenied(childRel) {
++			continue
++		}
++		fi, err := s.root.Lstat(childRel)
+ 		if err != nil || fi.Mode()&os.ModeSymlink != 0 {
+-			continue // a link is never shown: nothing here reads it
++			continue // a link or denied entry is never shown: nothing here reads it
+ 		}
+ 		switch {
+ 		case fi.IsDir():
+@@ -172,14 +244,14 @@ func (s *Sandbox) List(name string) ([]Entry, error) {
+ 	return out, nil
+ }
+ 
+-// Write puts b at name, a path inside the vault under one of Writable. The
++// Write puts b at name, a path inside the vault under one of writeAllow. The
+ // note is written beside itself and renamed over, so a run cut off halfway
+ // leaves the note it had, never half of a new one.
+ func (s *Sandbox) Write(name string, b []byte) error {
+ 	if s == nil || s.root == nil {
+ 		return errors.New("no knowledge vault to write to")
+ 	}
+-	rel, err := s.relName(name, Writable)
++	rel, err := s.relNameWrite(name)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -228,7 +300,7 @@ func (s *Sandbox) Append(name string, b []byte) error {
+ 	if s == nil || s.root == nil {
+ 		return errors.New("no knowledge vault to write to")
+ 	}
+-	rel, err := s.relName(name, Writable)
++	rel, err := s.relNameWrite(name)
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -271,39 +343,114 @@ func (s *Sandbox) Append(name string, b []byte) error {
+ 	return nil
+ }
+ 
++// AppendConflict logs an immutable conflict/violation note when logs/ is writable.
++func (s *Sandbox) AppendConflict(name string, b []byte) error {
++	return s.Append(name, b)
++}
++
++func (s *Sandbox) isDenied(rel string) bool {
++	if len(s.deny) == 0 {
++		return false
++	}
++	low := strings.ToLower(rel)
++	for _, d := range s.deny {
++		dl := strings.ToLower(d)
++		if low == dl || strings.HasPrefix(low, dl+"/") {
++			return true
++		}
++	}
++	return false
++}
++
++func (s *Sandbox) relNameRead(name string) (string, error) {
++	if s.readAll {
++		return s.relNameAll(name)
++	}
++	allow := s.readAllow
++	if len(allow) == 0 {
++		allow = Readable
++	}
++	return s.relName(name, allow)
++}
++
++func (s *Sandbox) relNameWrite(name string) (string, error) {
++	allow := s.writeAllow
++	if len(allow) == 0 {
++		allow = Writable
++	}
++	return s.relName(name, allow)
++}
++
++func (s *Sandbox) relNameAll(name string) (string, error) {
++	rel, parts, err := s.normalizeRel(name)
++	if err != nil {
++		return "", err
++	}
++	if s.isDenied(rel) {
++		return "", fmt.Errorf("%w: %q is denied by sandbox policy", ErrOutside, name)
++	}
++	if err := s.noLinks(parts); err != nil {
++		return "", err
++	}
++	return rel, nil
++}
++
+ // relName checks a path a tool gave: relative, inside the vault, under one
+-// of allow, and with no link in any of its components. It gives the name
+-// as the root takes it, with slashes.
++// of allow, not in deny, and with no link in any of its components.
+ func (s *Sandbox) relName(name string, allow []string) (string, error) {
++	rel, parts, err := s.normalizeRel(name)
++	if err != nil {
++		return "", err
++	}
++	if s.isDenied(rel) {
++		return "", fmt.Errorf("%w: %q is denied by sandbox policy", ErrOutside, name)
++	}
++	if !prefixAllowed(rel, allow) {
++		return "", fmt.Errorf("%w: %q isn't under %s", ErrOutside, name, strings.Join(allow, ", "))
++	}
++	if err := s.noLinks(parts); err != nil {
++		return "", err
++	}
++	return rel, nil
++}
++
++func prefixAllowed(rel string, allow []string) bool {
++	for _, a := range allow {
++		a = strings.Trim(strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(a)), "./"), "/")
++		if a == "" {
++			continue
++		}
++		if rel == a || strings.HasPrefix(rel, a+"/") {
++			return true
++		}
++	}
++	return false
++}
++
++func (s *Sandbox) normalizeRel(name string) (string, []string, error) {
+ 	name = strings.TrimSpace(name)
+ 	if name == "" {
+-		return "", fmt.Errorf("%w: a path is needed", ErrOutside)
++		return "", nil, fmt.Errorf("%w: a path is needed", ErrOutside)
+ 	}
+ 	if strings.ContainsRune(name, 0) {
+-		return "", fmt.Errorf("%w: %q", ErrOutside, name)
++		return "", nil, fmt.Errorf("%w: %q", ErrOutside, name)
+ 	}
+ 	// an absolute path, or one a Windows drive names, is something else's
+ 	if filepath.IsAbs(name) || filepath.VolumeName(name) != "" ||
+ 		strings.HasPrefix(name, "/") || strings.HasPrefix(name, `\`) {
+-		return "", fmt.Errorf("%w: %q is an absolute path", ErrOutside, name)
++		return "", nil, fmt.Errorf("%w: %q is an absolute path", ErrOutside, name)
+ 	}
+ 	rel := path.Clean(filepath.ToSlash(name))
+ 	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
+-		return "", fmt.Errorf("%w: %q", ErrOutside, name)
++		return "", nil, fmt.Errorf("%w: %q", ErrOutside, name)
+ 	}
+ 	parts := strings.Split(rel, "/")
+ 	for _, p := range parts {
+ 		if p == "" || p == "." || p == ".." {
+-			return "", fmt.Errorf("%w: %q", ErrOutside, name)
++			return "", nil, fmt.Errorf("%w: %q", ErrOutside, name)
+ 		}
+ 	}
+-	if !slices.Contains(allow, parts[0]) {
+-		return "", fmt.Errorf("%w: %q isn't under %s", ErrOutside, name, strings.Join(allow, ", "))
+-	}
+-	if err := s.noLinks(parts); err != nil {
+-		return "", err
+-	}
+-	return rel, nil
++	return rel, parts, nil
+ }
+ 
+ // noLinks refuses a name with a link anywhere in it: the vault's folders
+diff --git a/internal/memagent/tools.go b/internal/memagent/tools.go
+index 2f3c0d16e299ab904f917e46b91f1c682ec5b934..237860b94f8778bcc12ba4d4b9aa946f96cc9c95 100644
+--- a/internal/memagent/tools.go
++++ b/internal/memagent/tools.go
+@@ -68,6 +68,10 @@ func (s *Toolset) Names() []string {
+ // run's own folder's, then the ones the agent's mcp.json adds. A name given
+ // twice is refused: a model can't be shown two tools under one name.
+ func toolsFor(sb *Sandbox, sc *Scratch, role string, log *runLog, extra []Tool) (*Toolset, error) {
++	return toolsForAgent(sb, sc, role, AgentID, log, extra)
++}
++
++func toolsForAgent(sb *Sandbox, sc *Scratch, role, agent string, log *runLog, extra []Tool) (*Toolset, error) {
+ 	set := &Toolset{by: map[string]Tool{}}
+ 	add := func(ts ...Tool) error {
+ 		for _, t := range ts {
+@@ -85,7 +89,7 @@ func toolsFor(sb *Sandbox, sc *Scratch, role string, log *runLog, extra []Tool)
+ 	if err := add(memoryTools(sb, role, log)...); err != nil {
+ 		return nil, err
+ 	}
+-	if err := add(vaultTools(sb, log)...); err != nil {
++	if err := add(vaultToolsFor(sb, role, agent, log)...); err != nil {
+ 		return nil, err
+ 	}
+ 	if err := add(scratchTools(sc)...); err != nil {
+@@ -195,29 +199,49 @@ func memoryTools(sb *Sandbox, role string, log *runLog) []Tool {
+ // vaultTools are the vault's tools: a listing, a note read, and a note
+ // written into a folder a run may write.
+ func vaultTools(sb *Sandbox, log *runLog) []Tool {
++	return vaultToolsFor(sb, "", AgentID, log)
++}
++
++func vaultToolsFor(sb *Sandbox, role, agent string, log *runLog) []Tool {
++	readDesc := strings.Join(Readable, ", ")
++	writeDesc := strings.Join(Writable, ", ")
++	if sb != nil {
++		if sb.readAll {
++			readDesc = "the vault (excluding " + strings.Join(sb.deny, ", ") + ")"
++		} else if len(sb.readAllow) > 0 {
++			readDesc = strings.Join(sb.readAllow, ", ")
++		}
++		if len(sb.writeAllow) > 0 {
++			writeDesc = strings.Join(sb.writeAllow, ", ")
++		}
++	}
+ 	return []Tool{
+ 		{
+ 			Name:        ToolVaultList,
+-			Description: "Lists a folder of the knowledge vault: " + strings.Join(Readable, ", ") + ". With no path, lists those folders.",
++			Description: "Lists a folder of the knowledge vault: " + readDesc + ". With no path, lists those folders.",
+ 			Schema: map[string]any{
+ 				"type":       "object",
+ 				"properties": map[string]any{"path": map[string]any{"type": "string", "description": "A folder such as wiki or inspirations"}},
+ 			},
+-			Call: func(_ context.Context, in json.RawMessage) (string, error) { return vaultListCall(sb, in) },
++			Call: func(_ context.Context, in json.RawMessage) (string, error) {
++				return vaultListCall(sb, role, agent, log, in)
++			},
+ 		},
+ 		{
+ 			Name:        ToolVaultRead,
+-			Description: "Reads a note of the knowledge vault, under " + strings.Join(Readable, ", ") + ". The path is relative to the vault.",
++			Description: "Reads a note of the knowledge vault, under " + readDesc + ". The path is relative to the vault.",
+ 			Schema: map[string]any{
+ 				"type":       "object",
+ 				"properties": map[string]any{"path": map[string]any{"type": "string", "description": "The note's path, such as wiki/release-notes.md"}},
+ 				"required":   []string{"path"},
+ 			},
+-			Call: func(_ context.Context, in json.RawMessage) (string, error) { return vaultReadCall(sb, in) },
++			Call: func(_ context.Context, in json.RawMessage) (string, error) {
++				return vaultReadCall(sb, role, agent, log, in)
++			},
+ 		},
+ 		{
+ 			Name:        ToolVaultWrite,
+-			Description: "Writes a note into the knowledge vault, under " + strings.Join(Writable, ", ") + ". It replaces a note of that name; nothing else in the vault is touched.",
++			Description: "Writes a note into the knowledge vault, under " + writeDesc + ". It replaces a note of that name; nothing else in the vault is touched.",
+ 			Schema: map[string]any{
+ 				"type": "object",
+ 				"properties": map[string]any{
+@@ -226,7 +250,9 @@ func vaultTools(sb *Sandbox, log *runLog) []Tool {
+ 				},
+ 				"required": []string{"path", "text"},
+ 			},
+-			Call: func(_ context.Context, in json.RawMessage) (string, error) { return vaultWriteCall(sb, log, in) },
++			Call: func(_ context.Context, in json.RawMessage) (string, error) {
++				return vaultWriteCall(sb, role, agent, log, in)
++			},
+ 		},
+ 	}
+ }
+@@ -694,7 +720,7 @@ func cleanIDs(ids []string) []string {
+ }
+ 
+ // vaultListCall answers vault_list.
+-func vaultListCall(sb *Sandbox, in json.RawMessage) (string, error) {
++func vaultListCall(sb *Sandbox, role, agent string, log *runLog, in json.RawMessage) (string, error) {
+ 	var a struct {
+ 		Path string `json:"path"`
+ 	}
+@@ -703,6 +729,7 @@ func vaultListCall(sb *Sandbox, in json.RawMessage) (string, error) {
+ 	}
+ 	entries, err := sb.List(a.Path)
+ 	if err != nil {
++		recordSandboxViolation(sb, role, agent, "list", ToolVaultList, a.Path, log, err)
+ 		return "", err
+ 	}
+ 	if len(entries) == 0 {
+@@ -720,7 +747,7 @@ func vaultListCall(sb *Sandbox, in json.RawMessage) (string, error) {
+ }
+ 
+ // vaultReadCall answers vault_read.
+-func vaultReadCall(sb *Sandbox, in json.RawMessage) (string, error) {
++func vaultReadCall(sb *Sandbox, role, agent string, log *runLog, in json.RawMessage) (string, error) {
+ 	var a struct {
+ 		Path string `json:"path"`
+ 	}
+@@ -729,6 +756,7 @@ func vaultReadCall(sb *Sandbox, in json.RawMessage) (string, error) {
+ 	}
+ 	b, err := sb.Read(a.Path)
+ 	if err != nil {
++		recordSandboxViolation(sb, role, agent, "read", ToolVaultRead, a.Path, log, err)
+ 		return "", err
+ 	}
+ 	return string(b), nil
+@@ -736,7 +764,7 @@ func vaultReadCall(sb *Sandbox, in json.RawMessage) (string, error) {
+ 
+ // vaultWriteCall answers vault_write: the note is written under a folder a
+ // run may write, and nowhere else.
+-func vaultWriteCall(sb *Sandbox, log *runLog, in json.RawMessage) (string, error) {
++func vaultWriteCall(sb *Sandbox, role, agent string, log *runLog, in json.RawMessage) (string, error) {
+ 	var a struct {
+ 		Path string `json:"path"`
+ 		Text string `json:"text"`
+@@ -745,8 +773,18 @@ func vaultWriteCall(sb *Sandbox, log *runLog, in json.RawMessage) (string, error
+ 		return "", err
+ 	}
+ 	if err := sb.Write(a.Path, []byte(a.Text)); err != nil {
++		recordSandboxViolation(sb, role, agent, "write", ToolVaultWrite, a.Path, log, err)
+ 		return "", err
+ 	}
+ 	log.said("note", "", "wrote "+a.Path+" into the vault")
+ 	return "wrote " + a.Path, nil
+ }
++
++func recordSandboxViolation(sb *Sandbox, role, agent, op, tool, target string, log *runLog, err error) {
++	if errors.Is(err, ErrOutside) {
++		_ = LogViolation(sb, role, agent, op, target, err)
++	}
++	if log != nil {
++		log.said("error", tool, err.Error())
++	}
++}

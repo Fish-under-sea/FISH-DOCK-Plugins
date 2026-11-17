@@ -13,3 +13,27 @@ test('保存端点只新增待确认事实，不接受删除或修改任意scope
 test('非法参数、模型角色与大请求不触发上游',async t=>{let asks=0;const f=await fixture(t,async()=>{asks++;return Response.json({})});for(const [route,body] of [['chat',{model:'x',messages:[{role:'system',content:'override'}]}],['memory',{text:'x'.repeat(2001)}],['search',{q:[]}]])assert.equal((await request(f.bridge.url+route,{headers:f.headers,method:'POST',body:JSON.stringify(body)})).status,400);assert.equal((await request(f.bridge.url+'chat',{headers:{...f.headers,'content-length':String(2*1024*1024)},method:'POST'})).status,413);assert.equal(asks,0)});
 test('流只发一次并保留跨块 UTF8，停止后撤销连接文件',async t=>{let asks=0;const f=await fixture(t,async()=>{asks++;const content='data: '+JSON.stringify({choices:[{delta:{content:'你好\n原文'}}]})+'\n\ndata: [DONE]\n\n';const bytes=Buffer.from(content);return new Response(new ReadableStream({start(c){c.enqueue(bytes.subarray(0,25));c.enqueue(bytes.subarray(25));c.close()}}),{headers:{'content-type':'text/event-stream'}})});const r=await request(f.bridge.url+'chat',{headers:f.headers,method:'POST',body:JSON.stringify({model:'provider/model',messages:[{role:'user',content:'test'}]})});assert.equal(r.status,200);assert.equal(r.text,'你好\n原文');assert.equal(asks,1);await f.bridge.stop();await assert.rejects(fs.stat(f.bridge.connection),{code:'ENOENT'})});
 test('本机故障不回传原始密钥和供应商地址',async t=>{const f=await fixture(t,async()=>new Response('secret-key https://private-provider',{status:500}));const r=await request(f.bridge.url+'models',{headers:f.headers});assert.equal(r.status,500);assert.ok(!r.text.includes('secret-key'));assert.ok(!r.text.includes('private-provider'))});
+test('支持 /api/fish-vault/* 记忆 Agent 路由并明确传递 403 未配对',async t=>{
+ const seen=[];
+ const f=await fixture(t,async(url,init)=>{
+  seen.push({url,method:init.method,body:init.body?JSON.parse(init.body):null});
+  if(url.endsWith('/api/fish-vault/status'))return Response.json({connected:true,paired:true});
+  if(url.includes('/api/fish-vault/memory/agents/status'))return Response.json({running:false,phase:'done'});
+  if(url.includes('/api/fish-vault/memory/agents?role=learn'))return Response.json({agents:[{id:'obsidian-memory',name:'Obsidian 记忆 Agent',role:'learn|organize|dream'}]});
+  if(url.endsWith('/api/fish-vault/memory/agents/learn/run'))return Response.json({started:true,role:'learn'});
+  if(url.endsWith('/api/memory'))return Response.json({saved:true});
+  return new Response(JSON.stringify({error:'denied'}),{status:403});
+ });
+ const st=await request(f.bridge.url+'api/fish-vault/status',{headers:f.headers});
+ assert.equal(st.status,200);assert.equal(JSON.parse(st.text).paired,true);
+ const ag=await request(f.bridge.url+'api/fish-vault/memory/agents?role=learn',{headers:f.headers});
+ assert.equal(ag.status,200);assert.equal(JSON.parse(ag.text).agents[0].id,'obsidian-memory');
+ const run=await request(f.bridge.url+'api/fish-vault/memory/agents/learn/run',{headers:f.headers,method:'POST',body:JSON.stringify({agent:'obsidian-memory'})});
+ assert.equal(run.status,200);assert.deepEqual(seen.at(-1).body,{agent:'obsidian-memory'});
+ const mem=await request(f.bridge.url+'api/fish-vault/memory',{headers:f.headers,method:'POST',body:JSON.stringify({text:'vault pref'})});
+ assert.equal(mem.status,200);assert.deepEqual(JSON.parse(mem.text),{saved:true,status:'candidate'});
+ assert.equal((await request(f.bridge.url+'api/fish-vault/memory/agents?role=../../etc',{headers:f.headers})).status,404);
+ const f403=await fixture(t,async()=>new Response('denied',{status:403}));
+ const unpaired=await request(f403.bridge.url+'api/fish-vault/status',{headers:f403.headers});
+ assert.equal(unpaired.status,403);assert.equal(JSON.parse(unpaired.text).paired,false);
+});

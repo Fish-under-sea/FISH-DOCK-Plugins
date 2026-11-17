@@ -6,6 +6,30 @@ import {vaultPaths} from './knowledge-vault.mjs';
 
 const MAX_BODY=1024*1024;
 const methods={status:'GET',models:'GET',search:'POST',chat:'POST',memory:'POST'};
+function resolveBridgeRoute(rawUrl){
+ const url=String(rawUrl||'');
+ let m=url.match(/^\/(status|models|search|chat|memory)$/);
+ if(m){
+  const kind=m[1];
+  return {route:kind,method:methods[kind],native:kind==='status'?null:kind==='memory'?'/api/memory':`/api/fish-vault/${kind}`};
+ }
+ m=url.match(/^\/api\/fish-vault\/(status|models|search|chat|memory)$/);
+ if(m){
+  const kind=m[1];
+  return {route:kind==='status'?'vault-status':kind,method:methods[kind],native:kind==='memory'?'/api/memory':`/api/fish-vault/${kind}`};
+ }
+ if(/^\/api\/fish-vault\/memory\/agents(?:\?role=[a-z|]+)?$/.test(url)){
+  return {route:'agents',method:'GET',native:url};
+ }
+ if(/^\/api\/fish-vault\/memory\/agents\/status(?:\?role=[a-z|]+)?$/.test(url)){
+  return {route:'agents-status',method:'GET',native:url};
+ }
+ m=url.match(/^\/api\/fish-vault\/memory\/agents\/(?:learn|organize|dream)\/(run|stop)$/);
+ if(m){
+  return {route:`agents-${m[1]}`,method:'POST',native:url};
+ }
+ return null;
+}
 async function jsonBody(req){
  let size=0;const chunks=[];
  for await(const chunk of req){size+=chunk.length;if(size>MAX_BODY)throw Object.assign(Error('请求内容过长'),{status:413});chunks.push(chunk)}
@@ -25,6 +49,11 @@ function validate(route,body){
   if(typeof body.model!=='string'||!body.model||body.model.length>300||!Array.isArray(body.messages)||!body.messages.length||body.messages.length>200)bad();
   return {model:body.model,messages:body.messages.map(m=>{if(!m||!['user','assistant'].includes(m.role)||typeof m.content!=='string'||m.content.length>60000)bad();return {role:m.role,content:m.content}}),stream:true};
  }
+ if(route==='agents-run'){
+  if(body.agent!==undefined&&(typeof body.agent!=='string'||body.agent.length>80))bad();
+  return body.agent?{agent:body.agent}:{};
+ }
+ if(route==='agents-stop')return {};
  return undefined;
 }
 async function textStream(reply,res,signal){
@@ -61,9 +90,10 @@ export async function startObsidianBridge({data,upstreamPort,key,fetcher=fetch})
   if(req.socket.remoteAddress!=='127.0.0.1'||req.headers.host!==host||req.headers.origin!==undefined||req.headers['sec-fetch-site']!==undefined){fail(403,'只允许本机桌面连接');return}
   const provided=Buffer.from(String(req.headers.authorization||'')),want=Buffer.from(`Bearer ${token}`);
   if(provided.length!==want.length||!timingSafeEqual(provided,want)){fail(401,'需要 Magpie 配对');return}
-  if(!/^\/(status|models|search|chat|memory)$/.test(req.url)){fail(404,'未知操作');return}
-  const route=req.url.slice(1);
-  if(req.method!==methods[route]){fail(405,'方法不支持');return}
+  const target=resolveBridgeRoute(req.url);
+  if(!target){fail(404,'未知操作');return}
+  const {route,method,native}=target;
+  if(req.method!==method){fail(405,'方法不支持');return}
   if(active>=8){fail(429,'请求过多，请稍后重试');return}
   const controller=new AbortController();controllers.add(controller);active++;
   req.once('aborted',()=>controller.abort());res.once('close',()=>controller.abort());
@@ -71,13 +101,23 @@ export async function startObsidianBridge({data,upstreamPort,key,fetcher=fetch})
    if(Number(req.headers['content-length'])>MAX_BODY){fail(413,'请求内容过长');return}
    let body;if(req.method==='POST')body=validate(route,await jsonBody(req));
    if(route==='status'){res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify({connected:true,vault}));return}
-   const native=route==='memory'?'/api/memory':`/api/fish-vault/${route}`;
    const reply=await fetcher(`http://127.0.0.1:${upstreamPort}${native}`,{
     method:req.method,redirect:'error',signal:AbortSignal.any([controller.signal,AbortSignal.timeout(10*60*1000)]),
     headers:{cookie:`magpie_web_${upstreamPort}=${key}`,'x-fish-obsidian-token':token,...(body?{'content-type':'application/json'}:{})},
     body:body?JSON.stringify(body):undefined,
    });
-   if(!reply.ok){await reply.body?.cancel();fail(reply.status>=400&&reply.status<600?reply.status:502,'Magpie 无法完成请求，请在 Dock 检查服务与模型配置');return}
+   if(!reply.ok){
+    await reply.body?.cancel();
+    if(reply.status===401||reply.status===403){
+     if(res.headersSent){res.destroy();return}
+     req.resume();
+     res.writeHead(reply.status,{'content-type':'application/json','cache-control':'no-store'});
+     res.end(JSON.stringify({error:'未与本机 Magpie 配对或配对已失效，请重新配对后重试',paired:false}));
+     return;
+    }
+    fail(reply.status>=400&&reply.status<600?reply.status:502,'Magpie 无法完成请求，请在 Dock 检查服务与模型配置');
+    return;
+   }
    if(route==='chat'){await textStream(reply,res,controller.signal);return}
    let size=0;const parts=[];for await(const chunk of reply.body){size+=chunk.length;if(size>4*1024*1024)throw Error('本机响应过大');parts.push(chunk)}
    const result=JSON.parse(Buffer.concat(parts).toString('utf8'));

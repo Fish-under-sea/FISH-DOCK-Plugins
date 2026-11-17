@@ -15,19 +15,19 @@ async function connection(vault){
  const root=vault.adapter.getBasePath?.();
  if(!root)throw Error('仅支持本机文件知识库');
  const filename=path.resolve(root,'..','..','fish-obsidian-connection.json');
- const info=await fs.lstat(filename);
- if(!info.isFile()||info.isSymbolicLink()||info.size>8192)throw Error('Magpie 连接配置无效');
+ let info;try{info=await fs.lstat(filename)}catch(e){if(e?.code==='ENOENT')throw Object.assign(Error('未配对：未找到本机 Magpie 配对文件'),{pairingError:true});throw e}
+ if(!info.isFile()||info.isSymbolicLink()||info.size>8192)throw Object.assign(Error('未配对：Magpie 连接配置无效'),{pairingError:true});
  const cfg=JSON.parse(await fs.readFile(filename,'utf8'));
  const url=new URL(cfg.url);
- if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw Error('只允许本机 Magpie 连接');
- if(typeof cfg.token!=='string'||!/^[a-f0-9]{64}$/.test(cfg.token))throw Error('Magpie 配对令牌无效');
- if(path.resolve(await fs.realpath(root)).toLowerCase()!==path.resolve(cfg.vault).toLowerCase())throw Error('当前库没有与 Magpie 配对');
+ if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw Object.assign(Error('只允许本机 Magpie 连接'),{pairingError:true});
+ if(typeof cfg.token!=='string'||!/^[a-f0-9]{64}$/.test(cfg.token))throw Object.assign(Error('未配对：Magpie 配对令牌无效'),{pairingError:true});
+ if(path.resolve(await fs.realpath(root)).toLowerCase()!==path.resolve(cfg.vault).toLowerCase())throw Object.assign(Error('未配对：当前库未绑定到此 Magpie'),{pairingError:true});
  return cfg;
 }
 // The routes this plugin may call: the chat bridge (a model is picked there,
 // it is a conversation), the memory bridge (agents are picked there, never a
 // model), and the pairing check.
-const ROUTES=[/^\/api\/fish-vault\/(?:models|search|chat|memory)$/,/^\/api\/fish-vault\/memory\/agents(?:\/status)?(?:\?role=[a-z|]+)?$/,/^\/api\/fish-vault\/memory\/agents\/(?:learn|organize|dream)\/(?:run|stop)$/];
+const ROUTES=[/^\/api\/fish-vault\/(?:status|models|search|chat|memory)$/,/^\/api\/fish-vault\/memory\/agents(?:\/status)?(?:\?role=[a-z|]+)?$/,/^\/api\/fish-vault\/memory\/agents\/(?:learn|organize|dream)\/(?:run|stop)$/];
 async function call(vault,route,body,{signal,onText}={}){
  const cfg=await connection(vault);
  if(!ROUTES.some(r=>r.test(route)))throw Error('未知 Magpie 操作');
@@ -39,7 +39,7 @@ async function call(vault,route,body,{signal,onText}={}){
     res.on('data',chunk=>{size+=Buffer.byteLength(chunk);if(size>8*1024*1024){req.destroy(Error('Magpie 回复过长'));return}text+=chunk;if(res.statusCode===200&&onText)onText(chunk)});
     res.on('error',reject);
     res.on('end',()=>{
-     if(res.statusCode!==200){let message;try{message=JSON.parse(text).error}catch{}reject(Error(message||`Magpie 请求失败（${res.statusCode}）`));return}
+     if(res.statusCode!==200){let message;try{message=JSON.parse(text).error}catch{}const err=Error(message||`Magpie 请求失败（${res.statusCode}）`);err.statusCode=res.statusCode;err.pairingError=res.statusCode===401||res.statusCode===403;reject(err);return}
      if(onText){resolve(text);return}
      try{resolve(JSON.parse(text))}catch{reject(Error('Magpie 响应格式无效'))}
     });
@@ -106,6 +106,7 @@ class MagpieView extends ItemView{
   for(const [v,t] of [['learn','学习对话'],['organize','整理记忆'],['dream','做梦']])this.roleSel.createEl('option',{text:t,value:v});
   this.agentSel=agentRow.createEl('select',{attr:{'aria-label':'记忆 Agent'}});
   this.button(agentRow,'刷新 Agent',()=>this.loadAgents());
+  this.button(agentRow,'重新配对检查',()=>this.checkPairing());
   this.log=root.createDiv({cls:'fish-messages',attr:{'aria-label':'对话与检索结果','aria-live':'polite'}});
   this.input=root.createEl('textarea',{attr:{placeholder:'输入问题或要查找的记忆','aria-label':'问题或记忆关键词'}});
   const actions=root.createDiv({cls:'fish-controls'});
@@ -124,7 +125,23 @@ class MagpieView extends ItemView{
   await this.pollStatus();
  }
  button(parent,text,fn){const b=parent.createEl('button',{text});b.addEventListener('click',()=>Promise.resolve().then(fn).catch(e=>this.showError(e)));return b}
- showError(e){this.status.setText(e.name==='AbortError'?'已停止，本次未完成的回复不加入对话':`${e.message}。请确认 Dock 中 Magpie 已启动，再刷新重试。`)}
+ showError(e){
+  if(e?.name==='AbortError'){this.status.setText('已停止，本次未完成的回复不加入对话');return}
+  if(e?.pairingError||e?.statusCode===401||e?.statusCode===403||e?.code==='ENOENT'){
+   this.status.setText(`未配对：${e.message}。请在 Dock / Magpie 完成知识库配对后点击「重新配对检查」。`);
+   return;
+  }
+  this.status.setText(`${e.message}。请确认 Dock 中 Magpie 已启动，再刷新重试。`);
+ }
+ async checkPairing(){
+  if(this.controller)return;
+  try{
+   const st=await call(this.app.vault,'/api/fish-vault/status');
+   if(!st?.connected){this.status.setText('未配对：Magpie 桥接暂未就绪');return}
+   await Promise.all([this.loadModels(),this.loadAgents()]);
+   this.status.setText('已配对并连接本机 Magpie');
+  }catch(e){this.showError(e)}
+ }
  async loadModels(){
   if(this.controller)return;
   try{const result=await call(this.app.vault,'/api/fish-vault/models');this.select.empty();for(const m of result.models||[]){const id=typeof m==='string'?m:m.id;if(!id)continue;this.select.createEl('option',{text:m.name||id,value:id})}this.model=this.select.value;this.status.setText(this.model?'已连接本机 Magpie':'没有可用模型，请在 Magpie 中配置供应商或路由')}
