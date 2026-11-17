@@ -396,6 +396,28 @@ test('内核运行时 TUN 开关仍可点，并说明会重启内核',async()=>{
  assert.equal(b.disabled,false);
  assert.ok(f.root.innerHTML.includes('切换会重启内核'));
 });
+test('内核未运行时禁止独立开启 TUN，已启用 TUN 仍允许关闭；切换 TUN 期间锁住启停与系统代理',async()=>{
+ const f=fixture();await flush();
+ f.row.running=false;f.row.tun={enable:false,stack:'mixed'};f.row.tunService={installed:true,state:'stopped',canElevate:true};
+ f.click('view');await flush();
+ let tunBtn=f.buttons().find(b=>b.dataset.action==='tun-toggle');
+ assert.equal(tunBtn.disabled,true,'未运行内核时禁止独立打开 TUN');
+ assert.ok(f.root.innerHTML.includes('内核未运行，无法开启 TUN 模式'));
+ f.row.tun={enable:true,stack:'mixed'};f.click('view');await flush();
+ tunBtn=f.buttons().find(b=>b.dataset.action==='tun-toggle');
+ assert.equal(tunBtn.disabled,false,'未运行但 TUN 处于开启状态时允许关闭复位');
+ f.row.running=true;f.row.tunSwitching=true;f.click('view');await flush();
+ const kernelBtn=f.buttons().find(b=>b.dataset.action==='stop'||b.dataset.action==='start');
+ const proxyBtn=f.buttons().find(b=>b.dataset.action==='proxy');
+ tunBtn=f.buttons().find(b=>b.dataset.action==='tun-toggle');
+ assert.equal(kernelBtn.disabled,true,'切换 TUN 期间锁定内核启停');
+ assert.equal(proxyBtn.disabled,true,'切换 TUN 期间锁定系统代理开关');
+ assert.equal(tunBtn.disabled,true);
+ // 未安装 TUN 服务时在内核设置禁用 #tunEnable
+ f.row.running=false;f.row.tunSwitching=false;f.row.tun={enable:false,stack:'mixed'};f.row.tunService={installed:false,state:'absent',canElevate:true};
+ f.click('view');await flush();f.click('section-settings');
+ assert.ok(/id="tunEnable"[^>]*disabled/.test(f.root.innerHTML),'未安装服务时设置页禁止勾选启用 TUN');
+});
 test('概览只显示当前节点所用订阅，其余折叠成一行',async()=>{
  const f=fixture();await flush();f.row.running=true;
  const second='sub-00000000-0000-0000-0000-000000000002';

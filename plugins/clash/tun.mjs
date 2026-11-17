@@ -2,7 +2,7 @@
 // 权限面收敛：服务只按安装时写入的 service.ini 里的固定 kernel/home 启动，
 // 运行期用户只能改 job.ini（config 路径 + enabled），且路径被限制在 home 内。
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile, stat, rm } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -55,24 +55,45 @@ export function createTun({ context, programData, exec = runExec, platform = pro
   const readIni = io?.readIni ? io.readIni : async () => { try { return iniRead(await readFile(ini, 'utf8')); } catch { return null; } };
   const readJob = io?.readJob ? io.readJob : async () => { try { return iniRead(await readFile(job, 'utf8')); } catch { return null; } };
   const readLog = io?.readLog ? io.readLog : async () => { try { return await readFile(log, 'utf8'); } catch { return ''; } };
-  const writeJob = io?.writeJob ? io.writeJob : async text => { await mkdir(root, { recursive: true }); await writeFile(job, text, 'utf8'); };
+  const writeJob = io?.writeJob ? io.writeJob : async text => {
+    const body = Buffer.from(String(text ?? ''), 'utf8');
+    await mkdir(root, { recursive: true }).catch(() => {});
+    const staged = `${job}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      // 目录可写时用临时文件 + rename 避免被 FileSystemWatcher 读到半截空文件；
+      // 普通用户对 ProgramData 目录只有只读权限（仅对 job.ini 有写权限）时，原子回退为单次覆写。
+      await writeFile(staged, body);
+      await rename(staged, job);
+    } catch {
+      await rm(staged, { force: true }).catch(() => {});
+      await writeFile(job, body);
+    }
+  };
   // C7：宿主租约写/删；注入后单测不碰真实数据目录。
   const writeHost = io?.writeHost ? io.writeHost : async (path, value) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, value, 'utf8'); };
   const removeHost = io?.removeHost ? io.removeHost : async path => { await rm(path, { force: true }); };
   const isFile = io?.isFile ? io.isFile : async p => { try { return (await stat(p)).isFile(); } catch { return false; } };
 
+  async function queryServiceState() {
+    if (platform !== 'win32') return 'absent';
+    const q = await exec('sc.exe', ['query', SERVICE_ID]).catch(() => ({ code: 1, stdout: '' }));
+    const text = `${q?.stdout || ''}`.toLowerCase();
+    if (/1060|does not exist|指定的服务|不存在/.test(text)) return 'absent';
+    if (/running/.test(text)) return 'running';
+    if (/stopped/.test(text)) return 'stopped';
+    return q?.code === 0 ? 'unknown' : 'absent';
+  }
+
+  async function writeLease(source, hostPid) {
+    if (!Number.isInteger(hostPid) || hostPid <= 0 || !source) return false;
+    await writeHost(hostLeasePath(source), JSON.stringify({ pid: hostPid, at: Date.now() }));
+    return true;
+  }
+
   async function status() {
     const cfg = await readIni();
     const task = await readJob();
-    let serviceState = 'absent';
-    if (platform === 'win32') {
-      const q = await exec('sc.exe', ['query', SERVICE_ID]);
-      const text = `${q.stdout || ''}`.toLowerCase();
-      if (/1060|does not exist|指定的服务|不存在/.test(text)) serviceState = 'absent';
-      else if (/running/.test(text)) serviceState = 'running';
-      else if (/stopped/.test(text)) serviceState = 'stopped';
-      else serviceState = q.code === 0 ? 'unknown' : 'absent';
-    }
+    const serviceState = await queryServiceState();
     const tail = String(await readLog() || '').split(/\r?\n/).filter(Boolean).slice(-6).join('\n');
     return {
       platform, installed: serviceState !== 'absent', state: serviceState, executable: await isFile(exe),
@@ -132,20 +153,21 @@ export function createTun({ context, programData, exec = runExec, platform = pro
   async function enable({ config, home, hostPid } = {}) {
     const source = home || (await readIni())?.home;
     const target = validateJob({ config, home: source });
-    if (platform === 'win32') {
-      const q = await exec('sc.exe', ['query', SERVICE_ID]).catch(() => ({ stdout: '' }));
-      if (/stopped/i.test(String(q?.stdout || ''))) {
-        await exec('sc.exe', ['start', SERVICE_ID]).catch(() => {});
-      }
+    if (await queryServiceState() === 'stopped') {
+      await exec('sc.exe', ['start', SERVICE_ID]).catch(() => {});
     }
     const beforeLog = String(await readLog() || '');
     // C7：宿主租约——服务侧 Tick 靠它判断「宿主还在不在」。只在拿到有效 pid 时写：
     // 写一个无效 pid 会让服务把正常内核当成「宿主崩了」撤掉，比不写更糟。
-    if (Number.isInteger(hostPid) && hostPid > 0 && source) {
-      await writeHost(hostLeasePath(source), JSON.stringify({ pid: hostPid, at: Date.now() }));
-    }
+    await writeLease(source, hostPid);
     await writeJob(iniText({ enabled: 1, config: target }));
     return waitFor('start', beforeLog);
+  }
+
+  // 插件 Worker 重启后重新接管正在运行的服务态内核：只续签宿主 pid，不改 job.ini，不断流。
+  async function refreshLease(hostPid = process.pid) {
+    const source = (await readIni())?.home || context?.dataDirectory;
+    return writeLease(source, hostPid);
   }
 
   async function disable() {
@@ -154,6 +176,8 @@ export function createTun({ context, programData, exec = runExec, platform = pro
     const home = (await readIni())?.home;
     if (home) await removeHost(hostLeasePath(home)).catch(() => {});
     await writeJob(iniText({ enabled: 0 }));
+    const serviceState = await queryServiceState();
+    if (platform === 'win32' && (serviceState === 'stopped' || serviceState === 'absent')) return true;
     return waitFor('stop', beforeLog);
   }
 
@@ -175,7 +199,7 @@ export function createTun({ context, programData, exec = runExec, platform = pro
     return false;
   }
 
-  return { status, install, uninstall, enable, disable };
+  return { status, install, uninstall, enable, disable, refreshLease };
 }
 
 function ps(value) { return String(value ?? '').replace(/'/g, "''"); }
