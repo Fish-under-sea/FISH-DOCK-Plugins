@@ -24,10 +24,12 @@ public sealed class FishClashTunService : ServiceBase
     private string logPath;
     private string kernel;
     private string home;
+    private FileSystemWatcher jobWatcher;
     private string lastJob = "";
+    private long lastHostGoneAt = -1;
     private int restarts;
     private DateTime lastStart = DateTime.MinValue;
-    // C7：宿主已经没了。一旦认定，本次服务生命周期内不再拉起内核。
+    // C7：宿主已经没了。只在当前 host.json 对应的进程退出时抑制旧任务；一旦新宿主上线，立刻恢复。
     private bool hostGone;
     // 已经决定退休（插件包没了）：不再拉起内核，也不再重复撤自己。
     private bool retiring;
@@ -52,12 +54,23 @@ public sealed class FishClashTunService : ServiceBase
         if (!LoadServiceIni()) { Log("service.ini missing or invalid; service idle"); }
         else { Log("kernel=" + kernel + " home=" + home); }
         Apply();
+        try
+        {
+            jobWatcher = new FileSystemWatcher(baseDir, "job.ini");
+            jobWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.Size;
+            jobWatcher.Changed += (_, __) => Tick();
+            jobWatcher.Created += (_, __) => Tick();
+            jobWatcher.Renamed += (_, __) => Tick();
+            jobWatcher.EnableRaisingEvents = true;
+        }
+        catch (Exception error) { Log("job watcher disabled: " + error.Message); }
         watchdog = new Timer(_ => Tick(), null, 1500, 1500);
     }
 
     protected override void OnStop()
     {
         Log("service stopping");
+        if (jobWatcher != null) { jobWatcher.Dispose(); jobWatcher = null; }
         if (watchdog != null) { watchdog.Dispose(); watchdog = null; }
         KillChild();
     }
@@ -71,11 +84,11 @@ public sealed class FishClashTunService : ServiceBase
             if (!File.Exists(serviceIniPath)) return false;
             foreach (var raw in File.ReadAllLines(serviceIniPath))
             {
-                var line = raw.Trim();
+                var line = raw.Trim().TrimStart('\uFEFF');
                 if (line.Length == 0 || line.StartsWith("#")) continue;
                 var at = line.IndexOf('=');
                 if (at <= 0) continue;
-                var key = line.Substring(0, at).Trim();
+                var key = line.Substring(0, at).Trim().TrimStart('\uFEFF');
                 var value = line.Substring(at + 1).Trim().Trim('"');
                 if (key == "kernel") kernel = value;
                 else if (key == "home") home = value;
@@ -94,11 +107,11 @@ public sealed class FishClashTunService : ServiceBase
             if (!File.Exists(jobPath)) return false;
             foreach (var raw in File.ReadAllLines(jobPath))
             {
-                var line = raw.Trim();
+                var line = raw.Trim().TrimStart('\uFEFF');
                 if (line.Length == 0 || line.StartsWith("#")) continue;
                 var at = line.IndexOf('=');
                 if (at <= 0) continue;
-                var key = line.Substring(0, at).Trim();
+                var key = line.Substring(0, at).Trim().TrimStart('\uFEFF');
                 var value = line.Substring(at + 1).Trim().Trim('"');
                 if (key == "config") config = value;
                 else if (key == "enabled") enabled = value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase);
@@ -114,8 +127,11 @@ public sealed class FishClashTunService : ServiceBase
         return true;
     }
 
+    private readonly object tickLock = new object();
+
     private void Tick()
     {
+        if (!Monitor.TryEnter(tickLock)) return;
         try
         {
             // C7：宿主不在了就自己撤——TUN 服务是 SYSTEM 托管、独立于宿主的 Job，
@@ -125,10 +141,26 @@ public sealed class FishClashTunService : ServiceBase
             // 插件包被卸载或换了版本：service.ini 里登记的内核已经不在了，这套服务再留着
             // 只会每次开机刷一条「内核找不到」。空闲（没在用）就整体退休，连目录一起清掉。
             if (ShouldRetire()) { Retire(); return; }
-            if (hostGone) return;
-            if (!string.IsNullOrEmpty(home) && HostIsGone())
+            long leaseAt = 0;
+            bool gone = !string.IsNullOrEmpty(home) && HostIsGone(out leaseAt);
+            if (hostGone)
+            {
+                // 只要看到新的存活宿主更新了租约，或者 lease 被清掉，就解除旧挂起，允许重新接管。
+                if (!gone && leaseAt != lastHostGoneAt)
+                {
+                    hostGone = false;
+                    lastHostGoneAt = -1;
+                    Log("host resumed: tun service ready");
+                }
+                else
+                {
+                    return;
+                }
+            }
+            if (gone)
             {
                 hostGone = true;
+                lastHostGoneAt = leaseAt;
                 Log("host is gone: taking the tun down");
                 KillChild();
                 try { File.WriteAllText(jobPath, "enabled=0" + Environment.NewLine); lastJob = "0|"; }
@@ -154,6 +186,7 @@ public sealed class FishClashTunService : ServiceBase
             Launch(config);
         }
         catch (Exception error) { Log("watchdog error: " + error.Message); }
+        finally { Monitor.Exit(tickLock); }
     }
 
     // 插件包没了、内核文件也就不在：service.ini 是安装时写死的绝对路径，升级换目录、
@@ -202,8 +235,9 @@ public sealed class FishClashTunService : ServiceBase
 
     // C7：宿主租约（插件在 TUN 接管期间写的 <home>/host.json）。没有租约就不据此
     // 动手——老调用方、还没接管的机器都不该被这个判据误伤。
-    private bool HostIsGone()
+    private bool HostIsGone(out long at)
     {
+        at = 0;
         try
         {
             var lease = Path.Combine(home, "host.json");
@@ -213,7 +247,6 @@ public sealed class FishClashTunService : ServiceBase
             if (!pidMatch.Success) return false;
             int pid;
             if (!int.TryParse(pidMatch.Groups[1].Value, out pid) || pid <= 0) return false;
-            long at = 0;
             var atMatch = Regex.Match(text, "\"at\"\\s*:\\s*([0-9]+)");
             if (atMatch.Success) long.TryParse(atMatch.Groups[1].Value, out at);
             try

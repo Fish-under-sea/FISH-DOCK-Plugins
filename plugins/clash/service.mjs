@@ -366,7 +366,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         ?coded('CONTROLLER_TIMEOUT','mihomo 控制器请求超时，请稍后重试')
         :coded('CONTROLLER_UNREACHABLE','mihomo 控制器不可达，请检查内核是否在运行');
     }
-    if(!response.ok)throw coded('CONTROLLER_UNREACHABLE','mihomo 控制器请求失败');
+    if(!response.ok){
+      if(response.status===400||response.status===404)throw serviceError('NODE_STALE');
+      throw coded('CONTROLLER_UNREACHABLE','mihomo 控制器请求失败');
+    }
     if(response.status===204)return {};
     const reader=response.body.getReader();let size=0;const chunks=[];
     try{for(;;){const {done,value}=await reader.read();if(done)break;
@@ -408,7 +411,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       state.version=version.version;state.mode=status.mode;
       state.rulesCount=Array.isArray(rules?.rules)?rules.rules.length:null;
       state.groups=Object.entries(proxies.proxies||{}).filter(([name,p])=>isProxyGroup(name,p)).map(([name,p])=>({
-        name,selected:p.now,nodes:p.all.map(name=>sourceNode(name,proxies.proxies))}));
+        name,type:p.type??null,selected:p.now,nodes:p.all.map(name=>sourceNode(name,proxies.proxies))}));
     }catch(error){
       // 「内核在跑但控制器不可达」与「内核根本没起」是两件事，页面要能分开显示。
       state.error='控制器暂未响应，请刷新或停止内核';
@@ -766,7 +769,9 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function shutdown(){closing=true;return stop()}
   async function select({group,name}) {
     if(!alive())throw serviceError('KERNEL_NOT_RUNNING');const state=await view();
-    if(!state.groups.some(g=>g.name===group&&g.nodes.some(n=>n.name===name)))throw serviceError('NODE_STALE');
+    const target=state.groups.find(g=>g.name===group);
+    if(!target||!target.nodes.some(n=>n.name===name))throw serviceError('NODE_STALE');
+    if(target.type&&target.type!=='Selector')throw coded('GROUP_NOT_SELECTABLE',`代理组「${group}」为自动策略，不支持手动切换节点`);
     await request(`/proxies/${encodeURIComponent(group)}`,{method:'PUT',body:{name}});
     // 出口 IP 跟着节点走：缓存还留着旧节点的结果就是「换了节点 IP 还是上一个」（#14 现象 D）。
     ipCache=null;
@@ -913,18 +918,30 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const info=await runtime.tun.status();
       if(!info.installed)throw serviceError('TUN_NOT_INSTALLED');
     }
+    const nextTun={enable,stack:old.tun?.stack??defaultTun.stack};
     const wasRunning=alive();
+    if(!wasRunning){
+      operationError='';
+      await save({kernel:old.kernel,mixedPort:old.mixedPort,controllerPort:old.controllerPort,tun:nextTun});
+      return view({controller:false});
+    }
     tunBusy=true;operationError='';
     void (async()=>{
+      let savedNew=false;
       try{
-        if(wasRunning)await stop();
-        await save({kernel:old.kernel,mixedPort:old.mixedPort,controllerPort:old.controllerPort,
-          tun:{enable,stack:old.tun?.stack??defaultTun.stack}});
-        if(wasRunning)await start();
-      }catch(error){operationError=error?.message||'切换 TUN 失败，请检查内核与服务状态'}
+        await stop();
+        await save({kernel:old.kernel,mixedPort:old.mixedPort,controllerPort:old.controllerPort,tun:nextTun});
+        savedNew=true;
+        await start();
+      }catch(error){
+        if(savedNew)await save({kernel:old.kernel,mixedPort:old.mixedPort,controllerPort:old.controllerPort,tun:old.tun}).catch(()=>{});
+        operationError=error?.message||'切换 TUN 失败，请检查内核与服务状态';
+      }
       finally{tunBusy=false}
     })();
-    return view({controller:false});
+    const out=await view({controller:false});
+    out.tun=nextTun;
+    return out;
   }
   return {view,save,tunSwitch,subscriptionSave,subscriptionToggle,subscriptionRemove,start,stop,shutdown,select,mode,reload,proxy,details,nodeTest,
     tunService,installTunService,uninstallTunService,ipInfo,siteTest};

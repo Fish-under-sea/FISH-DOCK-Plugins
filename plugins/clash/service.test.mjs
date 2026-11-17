@@ -834,6 +834,25 @@ test('校验错误统一挂码：无节点、组失效、未启动路径都带 c
  await assert.rejects(f.service.mode({mode:'rule'}),error=>error.code==='KERNEL_NOT_RUNNING');
  await assert.rejects(f.service.mode({mode:'sideways'}),error=>error.code==='KERNEL_NOT_RUNNING');
 });
+test('tunSwitch 停机时同步落盘，运行中启动失败时回滚 tun.enable 并暴露错误',async()=>{
+ const f=fixture();await f.service.save(kernel);
+ await f.runtime.tun.install({kernel:kernel.kernel});
+ const offline=await f.service.tunSwitch({enable:true});
+ assert.equal(offline.tun.enable,true,'停机切换立即返回新状态并已落盘');
+ assert.equal(offline.tunSwitching,false);
+ assert.equal(JSON.parse(f.disk.get('config/clash.json')).tun.enable,true);
+ // 恢复 false 再开机验证失败回滚
+ await f.service.tunSwitch({enable:false});
+ await f.service.start();
+ f.refuseStart(true);
+ const immediate=await f.service.tunSwitch({enable:true});
+ assert.equal(immediate.tun.enable,true,'即时响应反映目标 TUN 状态');
+ assert.equal(immediate.tunSwitching,true);
+ const settled=await settledTun(f.service);
+ assert.equal(settled.tun.enable,false,'后台重启失败后必须回滚 clash.json 里的 tun.enable');
+ assert.ok(settled.error,'错误必须保留给页面展示');
+ assert.equal(JSON.parse(f.disk.get('config/clash.json')).tun.enable,false);
+});
 
 
 

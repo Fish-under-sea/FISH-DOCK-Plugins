@@ -23,7 +23,7 @@ export function iniText(rows) {
 }
 export function iniRead(text) {
   const out = {};
-  for (const raw of String(text ?? '').split(/\r?\n/)) {
+  for (const raw of String(text ?? '').replace(/^\uFEFF/, '').split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const at = line.indexOf('=');
@@ -92,8 +92,9 @@ export function createTun({ context, programData, exec = runExec, platform = pro
       `$root='${ps(root)}'; $ini='${ps(ini)}'; $job='${ps(job)}'`,
       `New-Item -ItemType Directory -Force -Path $root | Out-Null`,
       `Copy-Item -LiteralPath '${ps(SERVICE_EXE)}' -Destination '${ps(exe)}' -Force`,
-      `Set-Content -LiteralPath $ini -Encoding UTF8 -Value ('kernel=${kernel}','home=${home}')`,
-      `if(-not (Test-Path -LiteralPath $job)){Set-Content -LiteralPath $job -Encoding UTF8 -Value ('enabled=0')}`,
+      `$utf8=New-Object System.Text.UTF8Encoding($false)`,
+      `[System.IO.File]::WriteAllLines($ini,[string[]]@('${ps(`kernel=${kernel}`)}','${ps(`home=${home}`)}'),$utf8)`,
+      `if(-not (Test-Path -LiteralPath $job)){[System.IO.File]::WriteAllLines($job,[string[]]@('enabled=0'),$utf8)}`,
       // 普通用户只能写 job.ini：目录给读+遍历，service.ini 只读，job.ini 单独可改。
       `icacls $root /grant '*S-1-5-32-545:(OI)(CI)(RX)' | Out-Null`,
       `icacls $ini /inheritance:r /grant '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' '*S-1-5-32-545:(R)' | Out-Null`,
@@ -101,10 +102,11 @@ export function createTun({ context, programData, exec = runExec, platform = pro
       `$sc=Join-Path $env:SystemRoot 'System32\\sc.exe'`,
       `& $sc stop ${SERVICE_ID} 2>$null | Out-Null`,
       `& $sc delete ${SERVICE_ID} 2>$null | Out-Null`,
-      `Start-Sleep -Milliseconds 400`,
+      `$w=0; while($w -lt 20){ & $sc query ${SERVICE_ID} 2>$null | Out-Null; if($LASTEXITCODE -eq 1060){ break }; Start-Sleep -Milliseconds 150; $w++ }`,
       `& $sc create ${SERVICE_ID} binPath= ('"' + '${ps(exe)}' + '"') start= auto DisplayName= 'FISH Dock Clash TUN' | Out-Null`,
       `& $sc description ${SERVICE_ID} 'FISH Dock 的 TUN 内核托管服务；只运行安装时登记的内核。' | Out-Null`,
-      `& $sc start ${SERVICE_ID} | Out-Null`
+      `& $sc start ${SERVICE_ID} | Out-Null`,
+      `$s=0; while($s -lt 16){ $q=(& $sc query ${SERVICE_ID} 2>$null | Out-String); if($q -match 'RUNNING'){ break }; Start-Sleep -Milliseconds 150; $s++ }`
     ].join('; ');
     const result = await elevate(script);
     if (result.code !== 0) throw Error(result.message || '安装 TUN 服务失败');
@@ -130,30 +132,44 @@ export function createTun({ context, programData, exec = runExec, platform = pro
   async function enable({ config, home, hostPid } = {}) {
     const source = home || (await readIni())?.home;
     const target = validateJob({ config, home: source });
+    if (platform === 'win32') {
+      const q = await exec('sc.exe', ['query', SERVICE_ID]).catch(() => ({ stdout: '' }));
+      if (/stopped/i.test(String(q?.stdout || ''))) {
+        await exec('sc.exe', ['start', SERVICE_ID]).catch(() => {});
+      }
+    }
+    const beforeLog = String(await readLog() || '');
     // C7：宿主租约——服务侧 Tick 靠它判断「宿主还在不在」。只在拿到有效 pid 时写：
     // 写一个无效 pid 会让服务把正常内核当成「宿主崩了」撤掉，比不写更糟。
     if (Number.isInteger(hostPid) && hostPid > 0 && source) {
       await writeHost(hostLeasePath(source), JSON.stringify({ pid: hostPid, at: Date.now() }));
     }
     await writeJob(iniText({ enabled: 1, config: target }));
-    return waitFor('start');
+    return waitFor('start', beforeLog);
   }
 
   async function disable() {
+    const beforeLog = String(await readLog() || '');
     // 先撤租约再停内核：服务看到租约没了只会停，不会把它当成「宿主崩了」又拉起来。
     const home = (await readIni())?.home;
     if (home) await removeHost(hostLeasePath(home)).catch(() => {});
     await writeJob(iniText({ enabled: 0 }));
-    return waitFor('stop');
+    return waitFor('stop', beforeLog);
   }
 
-  // 等服务侧生效：读 service.log 里是否出现本次动作的关键行。
-  async function waitFor(kind, timeout = 6000) {
+  // 等服务侧生效：对带时间戳的真实 service.log 从写入前偏移开始扫描，避免被历史日志秒判命中。
+  async function waitFor(kind, beforeLog = '', timeout = 8000) {
     const deadline = Date.now() + timeout;
+    const hasTimestamps = /^\d{4}-\d{2}-\d{2} /m.test(beforeLog);
+    const anchor = beforeLog.slice(0, Math.min(64, beforeLog.length));
     while (Date.now() < deadline) {
       const raw = String(await readLog() || '');
-      if (kind === 'start' && /kernel started/.test(raw)) return true;
-      if (kind === 'stop' && /tun idle|kernel stopped/.test(raw)) return true;
+      const offset = hasTimestamps && raw.length >= beforeLog.length && (!anchor || raw.startsWith(anchor))
+        ? beforeLog.length
+        : 0;
+      const appended = raw.slice(offset);
+      if (kind === 'start' && /kernel started/.test(appended)) return true;
+      if (kind === 'stop' && /tun idle|kernel stopped/.test(appended)) return true;
       await new Promise(r => setTimeout(r, 150));
     }
     return false;

@@ -110,3 +110,39 @@ test('非 Windows 平台安装直接报错，服务名固定', async () => {
   await assert.rejects(tun.install({ kernel: 'x', home: HOME }), /仅支持 Windows/);
   assert.equal(SERVICE_ID, 'FishClashTun');
 });
+
+test('iniRead 自动剥离 UTF-8 BOM', () => {
+  assert.deepEqual(iniRead('\uFEFFkernel=C:/k/mihomo.exe\r\nhome=D:/h\r\n'), {
+    kernel: 'C:/k/mihomo.exe',
+    home: 'D:/h'
+  });
+});
+
+test('带时间戳的历史 service.log 不会让 enable/disable 误判秒过，且会尝试唤醒已停止的服务', async () => {
+  const execCalls = [];
+  let logText = '2026-11-17 06:40:31  kernel started pid=11\n2026-11-17 06:41:00  tun idle\n';
+  let reads = 0;
+  const f = fixture({ ini: { kernel: 'C:/k/mihomo.exe', home: HOME } });
+  const tun = createTun({
+    programData: 'C:/ProgramData',
+    platform: 'win32',
+    exec: async (cmd, args) => {
+      execCalls.push([cmd, ...args]);
+      return { code: 0, stdout: 'STATE : 1  STOPPED' };
+    },
+    io: {
+      ...f.io,
+      readLog: async () => {
+        reads += 1;
+        if (reads === 3) logText += '2026-11-17 08:30:01  kernel started pid=22\n';
+        if (reads === 6) logText += '2026-11-17 08:30:05  tun idle\n';
+        return logText;
+      }
+    }
+  });
+  assert.equal(await tun.enable({ config: `${HOME}/tmp/mihomo-runtime.json`, hostPid: 999 }), true);
+  assert.ok(reads >= 3, 'enable must wait past stale history');
+  assert.ok(execCalls.some(c => c[0] === 'sc.exe' && c[1] === 'start' && c[2] === SERVICE_ID));
+  assert.equal(await tun.disable(), true);
+  assert.ok(reads >= 6, 'disable must wait past stale history');
+});
