@@ -782,3 +782,11 @@ test('appearance blur=0 Filter 契约、.banner 液态玻璃胶囊绑定、字�
  assert.match(pageCss,/\.confirm-bar::before,\.banner::before,\.look-card::before/,'.banner 纳入凸面柔光 ::before');
  assert.match(pageCss,/\.confirm-bar::after,\.banner::after,\.look-card::after/,'.banner 纳入 360° Fresnel 描边 ::after');
 });
+test('输入框 placeholder 命中次要文字 --dock-muted、内核设置防溢出、settings/外观留白对齐订阅页且下拉优先向下滚动腾位',()=>{
+ assert.match(pageCss,/input::placeholder,\s*textarea::placeholder\{color:var\(--dock-muted\);opacity:1\}/,'placeholder 跟随次要文字调色');
+ assert.match(pageCss,/\.pane\.settings\{[^}]*padding:16px 4px 16px 16px/,'settings 与外观页保留与订阅页一致的顶部与左侧内边距');
+ assert.match(pageCss,/\.tun-box\{[^}]*min-inline-size:0/,'tun-box 解除 fieldset min-content 锁定');
+ assert.match(pageCss,/\.svc-log\{[^}]*white-space:pre-wrap;[^}]*overflow-wrap:anywhere/,'内核命令行长日志换行且可滚动，不撑破卡片');
+ assert.match(pageJs,/wantDown=Math\.min\(natural,240\)/,'下拉优先向下滚出空间再测量位置');
+ assert.match(pageJs,/below<72&&above>below/,'仅底部实在不足 72px 时才向上翻');
+});

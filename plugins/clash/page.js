@@ -273,17 +273,30 @@
   LB.active={trigger,pop,onOutside,onKey:key,onWheel,onResize};
   popoverRoot.appendChild(pop);
   paint();
-  // 定位：默认向下开（下拉在触发框下面才符合直觉），只有下方实在不够
-  // 才向上翻；两边都不够时取宽敞的一侧并把高度夹住。
-  const r=trigger.getBoundingClientRect?.()??{left:0,bottom:0,top:0,width:0};
+  // 定位：严格默认“下拉”（向下展开）；如果触发器靠近可视区底部且所在 #pane 还能往下滚，
+  // 先把 #pane 轻轻滚出下方空间，避免向上翻盖住上面的订阅卡；只有到底仍不足 72px 才上翻。
   const vw=(window.innerWidth||document.documentElement?.clientWidth||900);
   const vh=(window.innerHeight||document.documentElement?.clientHeight||600);
+  const pane=trigger.closest?.('#pane');
+  const r0=trigger.getBoundingClientRect?.()??{left:0,bottom:0,top:0,width:0};
   pop.style.position='fixed';
-  pop.style.width=Math.round(r.width||280)+'px';
+  pop.style.width=Math.round(r0.width||280)+'px';
   const natural=Math.round(pop.getBoundingClientRect?.().height||0)||320;
+  if(pane&&pane.scrollHeight>pane.clientHeight){
+   const pr=pane.getBoundingClientRect?.();
+   if(pr){
+    const wantDown=Math.min(natural,240);
+    const curBelow=vh-r0.bottom-8;
+    const availScroll=Math.max(0,pane.scrollHeight-pane.clientHeight-pane.scrollTop);
+    const maxShift=Math.max(0,r0.top-pr.top-12);
+    const shift=Math.min(wantDown-curBelow,availScroll,maxShift);
+    if(shift>0)pane.scrollTop+=Math.ceil(shift);
+   }
+  }
+  const r=trigger.getBoundingClientRect?.()??r0;
   const below=vh-r.bottom-8, above=r.top-8;
-  const up=below<110&&above>below;
-  const room=Math.max(120,up?above:below);
+  const up=below<72&&above>below;
+  const room=Math.max(72,up?above:below);
   const maxH=Math.min(natural,room);
   pop.style.maxHeight=maxH+'px';
   pop.style.overflowY='auto';
