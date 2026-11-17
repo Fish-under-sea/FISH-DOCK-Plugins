@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {obsidianResources} from '../plugins/magpie/knowledge-vault.mjs';
 const repository=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 // 发行与开发暂存共用当前插件清单，不注册退役插件。
@@ -41,7 +42,7 @@ export function stage({out,sdk,magpie,mihomo,only,include}={}){
    if(key==='magpie'&&item.name==='obsidian-plugin'&&item.isDirectory()){
     // Desktop Obsidian release files only. No npm dependencies, pairing data,
     // dev fixtures or user vaults may hitch a ride in the Dock archive.
-    for(const name of ['manifest.json','main.js','styles.css'])copy(path.join(source,name),path.join(target,name));
+    for(const name of obsidianResources)copy(path.join(source,name),path.join(target,name));
    }else if(item.isDirectory()&&!item.name.startsWith('.'))copyDir(source,target);
    else if(item.isFile()&&!item.name.includes('.test.')&&item.name!=='stage.mjs'&&!item.name.endsWith('.cs'))copy(source,target);
   }

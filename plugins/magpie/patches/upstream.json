@@ -1,22 +1,21 @@
 {
   "schema": 1,
   "upstream": "yetone/magpie",
-  "baseTag": "v0.1.4262",
-  "baseSha": "30de93e9e9d5bf6a013b1773010700d8eaa707f0",
-  "fetchedAt": "2026-11-15T16:12:01.337Z",
-  "patch": "magpie-v0.1.4262+fish.35.patch",
-  "versionTag": "v0.1.4262+fish.35",
-  "fileVersion": "0.1.4262.35",
+  "baseTag": "v0.1.4344",
+  "baseSha": "00b2c11a6b481bc1c2a909dfa9f5396f618fdd28",
+  "fetchedAt": "2026-11-17T13:04:00.0000000+08:00",
+  "patch": "magpie-v0.1.4344+fish.46.patch",
+  "versionTag": "v0.1.4344+fish.46",
+  "fileVersion": "0.1.4344.46",
   "product": "magpie fish",
   "result": "clean",
   "counts": {
-    "files": 179,
-    "hunks": 311,
-    "appliedFiles": 179,
-    "appliedHunks": 311,
+    "files": 253,
+    "hunks": 442,
+    "appliedFiles": 253,
+    "appliedHunks": 442,
     "conflictFiles": 0,
     "conflictHunks": 0
   },
-  "conflicts": [],
-  "note": "Fish.34 plus opt-in native liquid glass with persistent settings, opaque fallback and reduced-transparency support. Core budgets unchanged. Obsidian window repair, dismissible knowledge hint, DuMate and folder handoff live in the Node adapter."
+  "conflicts": []
 }

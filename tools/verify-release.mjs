@@ -6,6 +6,7 @@ import {inflateRawSync} from 'node:zlib';
 import {spawnSync} from 'node:child_process';
 import {crc32} from './crc32.mjs';
 import {fileURLToPath} from 'node:url';
+import {obsidianResources} from '../plugins/magpie/knowledge-vault.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const check=(condition,message)=>{if(!condition)throw Error(message)};
 // 摘要只能证明包没被改动，证明不了包内的 ES 模块能解析。2.3.8 的 SDK 快照把
@@ -77,10 +78,10 @@ export function verifyArchive(bytes) {
  if(required)check(files.has(required),`服务入口缺失：${required}`);
  if(manifest.id==='fish.magpie'){
   const base='plugins/magpie/obsidian-plugin/';
-  for(const name of ['manifest.json','main.js','styles.css'])check(files.has(base+name),`Obsidian 插件入口缺失：${name}`);
+  for(const name of obsidianResources)check(files.has(base+name),`Obsidian 插件入口缺失：${name}`);
   const obsidian=JSON.parse(files.get(base+'manifest.json').toString('utf8'));
   check(obsidian.id==='fish-magpie-memory'&&obsidian.isDesktopOnly===true&&/^\d+\.\d+\.\d+$/.test(obsidian.version),'Obsidian 插件清单无效');
-  for(const name of files.keys())if(name.startsWith(base))check(['manifest.json','main.js','styles.css'].includes(name.slice(base.length)),'Obsidian 发行资源不在白名单');
+  for(const name of files.keys())if(name.startsWith(base))check(obsidianResources.includes(name.slice(base.length)),'Obsidian 发行资源不在白名单');
  }
  return {id:manifest.id,version:manifest.version,files:files.size,bytes:bytes.length,sha256:hash(bytes)};
 }

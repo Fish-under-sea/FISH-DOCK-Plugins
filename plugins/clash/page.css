@@ -279,7 +279,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 
 /* Windows 高对比度：改用系统色，关掉 blur 与内高光 */
 @media(forced-colors:active){
- .card,.subscription,.listbox,.snackbar,.tun-box,.empty-card{border:1px solid CanvasText;box-shadow:none;background:Canvas}
+ .card,.subscription,.listbox,.snackbar,.tun-box,.empty-card,.banner{border:1px solid CanvasText;box-shadow:none;background:Canvas}
  .combo-trigger,.lb-option[aria-selected=true],.lb-option[data-active=true]{forced-color-adjust:none;background:Highlight;color:HighlightText}
  .readout-fill,.usage-fill{background:Highlight}
 }
@@ -360,7 +360,7 @@ input[type=color].fc-input::-webkit-color-swatch,input[type=color].fc-input::-mo
    2) ::before 顶部与底部凸面柔光（按像素封顶），模拟入射光在曲面上的散射；
    3) ::after 用 360° conic-gradient 描出 1px Fresnel 高光边（mask 挖空中间），四边均衡不缺角。 */
 @supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) and (background: color-mix(in srgb, red, transparent)){
- .card,.subscription,.tun-box,.empty-card,.confirm-bar,.look-card,
+ .card,.subscription,.tun-box,.empty-card,.confirm-bar,.banner,.look-card,
  .listbox,.snackbar{
   position:relative;
   background:color-mix(in srgb,var(--layer-1) var(--g-main-fill),transparent);
@@ -378,14 +378,14 @@ input[type=color].fc-input::-webkit-color-swatch,input[type=color].fc-input::-mo
   backdrop-filter:var(--g-overlay-filter,blur(var(--g-overlay-blur)) saturate(190%) brightness(1.06) contrast(1.03));
  }
  .card::before,.subscription::before,.tun-box::before,.empty-card::before,
- .confirm-bar::before,.look-card::before,.listbox::before,.snackbar::before{
+ .confirm-bar::before,.banner::before,.look-card::before,.listbox::before,.snackbar::before{
   content:"";position:absolute;inset:0;border-radius:14px;pointer-events:none;
   background:
    radial-gradient(420px 110px at 14% 0%, var(--lg-convex-top), transparent 72%),
    linear-gradient(175deg, var(--lg-convex-top) 0%, transparent 96px, transparent calc(100% - 48px), var(--lg-convex-bot) 100%);
  }
  .card::after,.subscription::after,.tun-box::after,.empty-card::after,
- .confirm-bar::after,.look-card::after,.listbox::after,.snackbar::after{
+ .confirm-bar::after,.banner::after,.look-card::after,.listbox::after,.snackbar::after{
   content:"";position:absolute;inset:0;border-radius:14px;padding:1px;pointer-events:none;
   background:conic-gradient(from 315deg at 50% 50%, var(--lg-rim-hi) 0deg, var(--lg-rim-mid) 55deg, var(--lg-rim-lo) 130deg, var(--lg-rim-mid) 195deg, var(--lg-rim-hi) 240deg, var(--lg-rim-mid) 305deg, var(--lg-rim-hi) 360deg);
   -webkit-mask:linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);
@@ -393,6 +393,8 @@ input[type=color].fc-input::-webkit-color-swatch,input[type=color].fc-input::-mo
   opacity:.82;
  }
  .snackbar::before,.snackbar::after{border-radius:999px}
+ .banner.bad{background:color-mix(in srgb,var(--c-bad) 18%,color-mix(in srgb,var(--layer-1) var(--g-main-fill),transparent))}
+ .banner.good{background:color-mix(in srgb,var(--c-ok) 18%,color-mix(in srgb,var(--layer-1) var(--g-main-fill),transparent))}
  /* 控件：按钮、输入框、下拉，以及分组胶囊 .segmented 的容器本身。
     排除颜色块（.fc-input）与下拉内嵌过滤框（.lb-filter），避免双重斜角/拉伸破坏观感。 */
  .segmented,button:not(.segmented button),input:not([type=checkbox]):not([type=range]):not([type=color]):not(.lb-filter),select,textarea,.combo-trigger{
@@ -412,7 +414,7 @@ input[type=color].fc-input::-webkit-color-swatch,input[type=color].fc-input::-mo
  .headbar button[aria-pressed=true],.segmented button[aria-pressed=true]{background:color-mix(in srgb,var(--dock-accent) 18%,transparent);border-color:color-mix(in srgb,var(--dock-accent) 34%,transparent)}
  .tag.on{background:color-mix(in srgb,var(--c-ok) 20%,transparent)}
  /* 玻璃面上焦点圈照旧可见，同时收敛高亮晕染，不画刺眼纯蓝大边框。 */
- .card :focus-visible,.subscription :focus-visible,.tun-box :focus-visible,
+ .card :focus-visible,.subscription :focus-visible,.tun-box :focus-visible,.banner :focus-visible,
  header :focus-visible,.listbox :focus-visible{
   outline:2px solid var(--lg-focus-ring);outline-offset:1px;
   box-shadow:0 0 0 3px var(--lg-focus-halo);
@@ -421,8 +423,8 @@ input[type=color].fc-input::-webkit-color-swatch,input[type=color].fc-input::-mo
 /* 减少透明 / 高对比度：退回实底并关掉模糊，不为「玻璃」牺牲可读性。
    放在玻璃规则之后，确保覆盖成立。 */
 @media(prefers-reduced-transparency:reduce),(forced-colors:active){
- .card,.subscription,.tun-box,.empty-card,.confirm-bar,.look-card{background:var(--layer-1);-webkit-backdrop-filter:none;backdrop-filter:none}
- .card::before,.card::after,.subscription::before,.subscription::after,.tun-box::before,.tun-box::after,.empty-card::before,.empty-card::after,.confirm-bar::before,.confirm-bar::after,.look-card::before,.look-card::after,.listbox::before,.listbox::after,.snackbar::before,.snackbar::after{content:none}
+ .card,.subscription,.tun-box,.empty-card,.confirm-bar,.banner,.look-card{background:var(--layer-1);-webkit-backdrop-filter:none;backdrop-filter:none}
+ .card::before,.card::after,.subscription::before,.subscription::after,.tun-box::before,.tun-box::after,.empty-card::before,.empty-card::after,.confirm-bar::before,.confirm-bar::after,.banner::before,.banner::after,.look-card::before,.look-card::after,.listbox::before,.listbox::after,.snackbar::before,.snackbar::after{content:none}
  .segmented{background:var(--layer-1);-webkit-backdrop-filter:none;backdrop-filter:none}
  .listbox,.snackbar{background:var(--layer-1);-webkit-backdrop-filter:none;backdrop-filter:none}
  button:not(.segmented button),input:not([type=checkbox]):not([type=range]),select,textarea,.combo-trigger{background:var(--layer-1);-webkit-backdrop-filter:none;backdrop-filter:none}
