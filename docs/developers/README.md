@@ -1,6 +1,6 @@
 # 插件开发者指南
 
-当前协议为 v1。目录里当前是飞书 **2.2.0**、Clash **2.4.6**、Magpie **2.4.6**（后者原生标识 `v0.1.4344+fish.46`，要求宿主 ≥2.3.4）——液态玻璃按区域精细调节与独立玻璃颜色、「外观」独立分页、原生服务内置记忆 Agent 与 Obsidian `.obsidian` 统一工作区；作者用数组、不再有维护者字段。OFM 已退役（2026-10-25 暂停维护，2.3.0 起移出官方目录与活动构建链），历史适配层见 [docs/archive/ofm](../archive/ofm/README.md)，不再随目录发行。两个内置件按 npm 包登记、不单独发行：`@fish-under-sea/magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `@fish-under-sea/magpie-purge`（破甲），首装与后续更新都交给 magpie 自己的更新循环，Dock 不随包分发它们的目录。两者的源码分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge)。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
+当前协议为 v1。目录里当前是飞书 **2.2.0**、Clash **2.4.7**、Magpie **2.4.7**（后者原生标识 `v0.1.4344+fish.47`，要求宿主 ≥ 2.3.4）——Magpie 具备四区域液态玻璃与独立玻璃颜色、全页面控件/选中/悬浮玻璃样式统一、多层级字体调色（含 `--ctl-fg` 与全局占位符）命中、「外观」独立分页、原生服务内置记忆 Agent（含紫色晶石 Obsidian 图标）与 Obsidian `.obsidian` 统一工作区；Clash 具备多订阅管理、自愈看门狗、Windows TUN 虚拟网卡服务控制与独立外观设置。作者用数组、不再有维护者字段。OFM 已退役（2026-10-25 暂停维护，2.3.0 起移出官方目录与活动构建链），历史适配层见 [docs/archive/ofm](../archive/ofm/README.md) ，不再随目录发行。两个内置件按 npm 包登记、不单独发行：`@fish-under-sea/magpie-checkin-relay-probe`（签到与中转站探针合一的页面插件）与 `@fish-under-sea/magpie-purge`（破甲），首装与后续更新都交给 magpie 自己的更新循环，Dock 不随包分发它们的目录。两者的源码分别在 [magpie-checkin-relay-probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) 与 [magpie-purge](https://github.com/Fish-under-sea/magpie-purge) 。源码已接入独立后台、分类存储和业务页面；发行资源与线上索引由插件仓 Release 提供。
 
 ## 仓库边界
 
@@ -141,9 +141,10 @@ Magpie 的 `gateway.open` 是宿主提供的特定管理页入口，地址只接
 
 ```powershell
 node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.test.mjs' 'plugins/magpie/*.test.mjs' 'shared/*.test.mjs' 'tools/*.test.mjs'
+node --test 'plugins/magpie/obsidian-plugin/*.test.cjs'
 ```
 
-`FISH_TEST_MAGPIE`、`FISH_TEST_MIHOMO` 与 `FISH_TEST_SDK` 启用真实服务验收。验证首次配置、保存失败、业务错误后的继续操作、端口占用、启动就绪、停止、连续启停、卸载保留资料，以及升级失败回滚。前端单测通过后，再用真实 WebView 核对页面加载、布局切换与键盘操作。
+`FISH_TEST_MAGPIE`、`FISH_TEST_MIHOMO`、`FISH_TEST_SDK`、`FISH_TEST_EDGE` 与 `FISH_TEST_PLAYWRIGHT` 用于启用真实服务或浏览器 UI 验收。验证首次配置、保存失败、业务错误后的继续操作、端口占用、启动就绪、停止、连续启停、卸载保留资料，以及升级失败回滚。前端单测通过后，再用真实 WebView 核对页面加载、布局切换与键盘操作。
 
 发行制作、固定来源与商店更新顺序见 [维护者指南](../maintainers/README.md)。
 
