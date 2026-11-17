@@ -750,10 +750,13 @@ test('默认优先选「节点选择」Selector 组，且 URLTest 组禁用手�
  assert.equal(fAuto.element('node-pick').disabled,true,'URLTest 自动组禁用手动选节点');
  assert.ok(fAuto.root.innerHTML.includes('自动选择组按延迟自动切换'));
 });
-test('appearance blur=0 Filter 契约、字体颜色与下拉滚动条样式完备',()=>{
+test('appearance blur=0 Filter 契约、.banner 液态玻璃胶囊绑定、字体颜色与下拉滚动条样式完备',()=>{
  assert.match(pageJs,/blur>0\?`blur\(\$\{blur\}px\)[^`]*`:'none'/);
  assert.match(pageCss,/\.fc-row\{/);
  assert.match(pageCss,/\.fc-input\{[^}]*width:36px[^}]*border-radius:999px/);
  assert.match(pageCss,/\.listbox::-webkit-scrollbar-thumb/);
  assert.match(pageCss,/\.snackbar::before,\.snackbar::after\{border-radius:999px\}/);
+ assert.match(pageCss,/\.confirm-bar,\.banner,\.look-card/,'内核运行中 .banner 纳入液态玻璃基底');
+ assert.match(pageCss,/\.confirm-bar::before,\.banner::before,\.look-card::before/,'.banner 纳入凸面柔光 ::before');
+ assert.match(pageCss,/\.confirm-bar::after,\.banner::after,\.look-card::after/,'.banner 纳入 360° Fresnel 描边 ::after');
 });
