@@ -157,7 +157,7 @@ export function tunHandoverNeeded(info){
  return !!(info&&info.enabled&&info.state==='running');
 }
 export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],dataDirectory,tun,geo=false}){
- const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,profile:{'store-selected':true}};
+ const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,'find-process-mode':'off','keep-alive-idle':15,'keep-alive-interval':15,profile:{'store-selected':true}};
  const enabled=subscriptions.filter(s=>s.enabled!==false);
  if(enabled.length){
   value['proxy-providers']=Object.fromEntries(enabled.map(s=>[s.id,fileProvider(s.id,subscriptionPath(dataDirectory,s.id))]));
@@ -216,9 +216,15 @@ export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],d
   }
  }else value.rules=['MATCH,DIRECT'];
  if(tun?.enable){
+  value.ipv6=false;
   value.tun={enable:true,stack:['mixed','gvisor','system'].includes(tun.stack)?tun.stack:'mixed',
-   'dns-hijack':['any:53'],'auto-route':true,'auto-detect-interface':true};
-  value.dns={enable:true,ipv6:false,'enhanced-mode':'fake-ip','fake-ip-range':'198.18.0.1/16',nameserver:['223.5.5.5','119.29.29.29']};
+   mtu:1500,'strict-route':true,'dns-hijack':['any:53','tcp://any:53'],'auto-route':true,'auto-detect-interface':true,
+   'route-exclude-address':['127.0.0.0/8','10.0.0.0/8','100.64.0.0/10','169.254.0.0/16','172.16.0.0/12','192.168.0.0/16','224.0.0.0/4','255.255.255.255/32']};
+  value.dns={enable:true,ipv6:false,'enhanced-mode':'fake-ip','fake-ip-range':'198.18.0.1/16',
+   'default-nameserver':['223.5.5.5','119.29.29.29'],'proxy-server-nameserver':['223.5.5.5','119.29.29.29'],
+   nameserver:['https://dns.alidns.com/dns-query','https://doh.pub/dns-query'],
+   'fake-ip-filter':['*.lan','*.local','localhost.ptlogin2.qq.com','+.srv.nintendo.net','+.stun.playstation.net','xbox.*.microsoft.com','+.xboxlive.com','+.msftconnecttest.com','+.msftncsi.com','*.msftncsi.com','time.*.com','ntp.*.com','*.ntp.org.cn','+.pool.ntp.org']};
+  value.sniffer={enable:true,'parse-pure-ip':true,sniff:{HTTP:{ports:[80,'8080-8880'],'override-destination':true},TLS:{ports:[443,8443]},QUIC:{ports:[443,8443]}},'skip-domain':['Mijia Cloud','+.push.apple.com']};
  }
  return value;
 }
@@ -396,6 +402,9 @@ export function createRuntime(context){
     const error=Error('已安装的 TUN 服务绑定了另一个内核，请重新安装服务');error.code='TUN_KERNEL_MISMATCH';throw error}
    viaService=true;
    try{
+    // TUN 独占接管前先清掉残留的本机系统代理，防止未清租约引发回环或断网。
+    if(!c.proxy?.system)await proxy.restore(c.mixedPort).catch(()=>{});
+    c.signal?.throwIfAborted();
     // C7：宿主租约写进服务侧能读到的 <home>/host.json；宿主消失后服务据此撤内核。
     const applied=await tun.enable({config:runtimePath,home:context.dataDirectory,hostPid:process.pid});
     if(!applied)throw serviceError('TUN_START_UNCONFIRMED');
@@ -403,7 +412,11 @@ export function createRuntime(context){
     // TUN 内核由服务托管，没有本进程的 pid：看门狗只负责还代理。
     watchdogKernelPid=0;watchdogPort=c.mixedPort;armWatchdog();
     return {alive:()=>viaService,pid:null,mode:'service',stop:async()=>{await tun.disable().catch(()=>{});viaService=false}};
-   }catch(error){viaService=false;throw error}
+   }catch(error){
+    viaService=false;
+    await tun.disable().catch(()=>{});
+    throw error;
+   }
   }
 
   // 普通模式：先把 TUN 服务托管的内核交出来。两者写的是同一个控制器端口，同时跑
@@ -446,9 +459,10 @@ export function createRuntime(context){
  // 它就是个「有网卡没内核」的死劫持。viaService 只用来记状态。
  tunStop:async()=>{
   if(!tun)return;
-  try{const info=await tun.status();if(info?.enabled&&info.state!=='stopped')await tun.disable()}catch{/* 服务未装或已停 */}
+  try{const info=await tun.status();if(info?.enabled)await tun.disable()}catch{/* 服务未装或已停 */}
   viaService=false;
  },
+ tunRefreshLease:pid=>tun?.refreshLease?.(pid)??Promise.resolve(false),
   // C8：插件停用/关闭时不再保留看门狗任务（代理还在接管时由 proxy.restore 负责）。
   stop:async()=>{disarmWatchdog()},shutdown:async()=>{disarmWatchdog()},
   ...createSubscriptionRuntime(context)};

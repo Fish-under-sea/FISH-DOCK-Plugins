@@ -492,21 +492,26 @@
    {wide:true,footer:`${button('node-test',nodeTesting?'测速中…':'测速',`aria-busy="${nodeTesting}"`,anyOp()||nodeTesting||!view.running)}${nodeTesting?button('cancel-test','取消测速','',false):''}`});
  }
  function networkCard(){
-  const system=view.systemProxy===true,tun=view.tun?.enable===true;
-  const status=tun?'TUN 模式已启用：应用通过虚拟网卡访问网络。'
+  const system=view.systemProxy===true,tun=view.tun?.enable===true,tunInstalled=view.tunService?.installed===true;
+  const opBusy=anyOp()||!!view.operation||view.tunSwitching===true;
+  const status=tun
+   ?(view.running?'TUN 模式已启用：应用通过虚拟网卡访问网络。':'TUN 开关已勾选，但内核未运行：启动内核后生效，或可先关闭开关。')
    :system?`系统代理已接管：浏览器等应用走 127.0.0.1:${view.mixedPort}。`
    :'未接管系统网络：只有内置代理端口可用，其他应用需要自行配置。';
   // 禁用原因是独立一行 muted 小字（同时进 title）：混进同一句会把「开启」胶囊压成竖排圆块。
-  const proxyReason=!view.running&&!system?'内核未运行，无法接管系统代理':'';
-  const tunReason=!view.configured?'先完成内核配置':!view.tunService?.installed?'需先安装 TUN 服务':'';
-  const tunNote=view.tunService?.installed&&view.running?' · 切换会重启内核':'';
+  const proxyReason=view.tunSwitching?'TUN 切换中，请稍候':!view.running&&!system?'内核未运行，无法接管系统代理':'';
+  const tunReason=view.tunSwitching?'TUN 正在切换，请稍候'
+   :!view.configured?'先完成内核配置'
+   :!tunInstalled&&!tun?'需先安装 TUN 服务'
+   :!view.running&&!tun?'内核未运行，无法开启 TUN 模式':'';
+  const tunNote=tunInstalled&&view.running?' · 切换会重启内核':'';
   return card('网络设置',`<div class="switch-row"><div><strong>系统代理</strong>
     <p class="small muted">${system?'已写入系统代理设置':'由 Dock 写入，停止内核时还原'}</p></div>
-    ${button('proxy',system?'关闭':'开启',`role="switch" aria-checked="${system}" title="${esc(proxyReason||'接管系统代理')}"`,anyOp()||(!view.running&&!system))}</div>
+    ${button('proxy',system?'关闭':'开启',`role="switch" aria-checked="${system}" title="${esc(proxyReason||'接管系统代理')}"`,opBusy||(!view.running&&!system))}</div>
    ${proxyReason?`<p class="reason">${esc(proxyReason)}</p>`:''}
    <div class="switch-row"><div><strong>TUN 虚拟网卡</strong>
     <p class="small muted">${tun?'已启用':'未启用'}${tunNote}</p></div>
-    ${button('tun-toggle',view.tunSwitching?'切换中…':tun?'关闭':'开启',`role="switch" aria-checked="${tun}" title="${esc(tunReason||'切换 TUN')}"`,anyOp()||view.tunSwitching||!view.configured||!view.tunService?.installed)}</div>
+    ${button('tun-toggle',view.tunSwitching?'切换中…':tun?'关闭':'开启',`role="switch" aria-checked="${tun}" title="${esc(tunReason||'切换 TUN')}"`,opBusy||!view.configured||(!tunInstalled&&!tun)||(!view.running&&!tun))}</div>
    ${tunReason?`<p class="reason">${esc(tunReason)}</p>`:''}
    <p class="status-line">${esc(status)}</p>`);
  }
@@ -620,17 +625,19 @@
  function settingsSection(){
   const cfg=configDraft||view;
   const stack=cfg.tun?.stack||view.tun?.stack||'mixed';
+  const formLocked=locked()||view.tunSwitching===true;
+  const tunCheckLocked=formLocked||(!view.tunService?.installed&&!cfg.tun?.enable);
   return `<h2>内核设置</h2><form id="config">
-   <label>mihomo 可执行文件<input id="kernel" name="kernel" value="${esc(cfg.kernel)}" required ${locked()?'disabled':''}></label>
-   <div class="columns"><label>混合代理端口<input id="mixedPort" name="mixedPort" type="number" min="1024" max="65535" value="${esc(cfg.mixedPort)}" required ${locked()?'disabled':''}></label>
-   <label>控制器端口<input id="controllerPort" name="controllerPort" type="number" min="1024" max="65535" value="${esc(cfg.controllerPort)}" required ${locked()?'disabled':''}></label></div>
+   <label>mihomo 可执行文件<input id="kernel" name="kernel" value="${esc(cfg.kernel)}" required ${formLocked?'disabled':''}></label>
+   <div class="columns"><label>混合代理端口<input id="mixedPort" name="mixedPort" type="number" min="1024" max="65535" value="${esc(cfg.mixedPort)}" required ${formLocked?'disabled':''}></label>
+   <label>控制器端口<input id="controllerPort" name="controllerPort" type="number" min="1024" max="65535" value="${esc(cfg.controllerPort)}" required ${formLocked?'disabled':''}></label></div>
    <fieldset class="tun-box"><legend>TUN 模式</legend>
-   <label class="check"><input id="tunEnable" name="tunEnable" type="checkbox" ${cfg.tun?.enable?'checked':''} ${locked()?'disabled':''}> 启用 TUN（由 SYSTEM 服务托管，普通权限即可用）</label>
-   ${comboTrigger('tunStack','栈',stack,null,locked(),'内核运行中不可改')}
+   <label class="check"><input id="tunEnable" name="tunEnable" type="checkbox" ${cfg.tun?.enable?'checked':''} ${tunCheckLocked?'disabled':''}> 启用 TUN（由 SYSTEM 服务托管，普通权限即可用）</label>
+   ${comboTrigger('tunStack','栈',stack,null,formLocked,'内核运行中不可改')}
    ${cfg.tun?.enable&&!view.tunService?.installed?'<p class="bad" role="alert">TUN 已勾选但服务未安装，启动内核会被拒绝。请先安装 TUN 服务。</p>':''}
    ${tunServiceBlock()}
    </fieldset>
-   <div class="save-bar">${button('save-config','保存内核配置','',locked()||ops.has('save'))}</div></form>`;
+   <div class="save-bar">${button('save-config','保存内核配置','',formLocked||ops.has('save'))}</div></form>`;
  }
  // ── 外观：背景图片 + 分区域液态玻璃 ──
  // look 与 view 分开：外观是界面偏好，不是内核状态，所以它不随 clash.view 的轮询回传，
@@ -876,9 +883,10 @@
   if(!groups().some(g=>g.name===group))group=autoGroup()?.name??'';
   const nav=SECTIONS.map(([key,label])=>button(`section-${key}`,label,`aria-pressed="${section===key}"`,false)).join('');
   const body=section==='overview'?overviewSection():section==='providers'?providersSection():section==='appearance'?appearanceSection():settingsSection();
+  const switching=view.tunSwitching===true;
   const toggle=button(view.running||view.operation==='starting'||updating()?'stop':'start',
-   view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',
-   ops.has('kernel')||view.operation==='stopping');
+   switching?'切换 TUN 中…':view.operation==='starting'?'取消启动':view.operation==='stopping'?'正在停止…':view.running?'停止内核':updating()?'取消更新':'启动内核','',
+   ops.has('kernel')||view.operation==='stopping'||switching);
   root.innerHTML=`<header><div><h1>Clash</h1><span class="muted" data-live="state">${view.running?'内核运行中':'内核已停止'}${view.version?' · 内核 '+esc(view.version):''}${view.pluginVersion?' · 插件 v'+esc(view.pluginVersion):''}</span></div></header>
    ${feedbackBlock()}
    <div class="toolbar headbar" id="headbar" aria-label="页面分区与内核操作">${nav}${toggle}${button('view','刷新')}</div>
@@ -1008,16 +1016,18 @@
   finally{sitesBusy=false;draw();schedule()}
  }
  function toggleTun(){
-  if(anyOp())return false;
-  return optimistic('tunSwitch',{enable:!(view.tun?.enable===true)},()=>{view.tun={...(view.tun||{}),enable:!(view.tun?.enable===true)}},()=>{},'切换 TUN');
+  const enabling=!(view?.tun?.enable===true);
+  if(anyOp()||!!view?.operation||view?.tunSwitching)return false;
+  if(enabling&&(!view?.running||!view?.tunService?.installed))return false;
+  return optimistic('tunSwitch',{enable:enabling},()=>{view.tun={...(view.tun||{}),enable:enabling}},()=>{},'切换 TUN');
  }
  function changeMode(mode){
-  if(anyOp())return false;
+  if(anyOp()||!!view?.operation||view?.tunSwitching)return false;
   const prev=view.mode;
   return optimistic('mode',{mode},()=>{view.mode=mode},()=>{view.mode=prev},'切换模式');
  }
  function setProxy(enabled){
-  if(anyOp())return false;
+  if(anyOp()||!!view?.operation||view?.tunSwitching)return false;
   const prev=view.systemProxy;
   return optimistic('proxy',{enabled},()=>{view.systemProxy=enabled},()=>{view.systemProxy=prev},'系统代理');
  }

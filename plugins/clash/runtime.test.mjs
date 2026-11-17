@@ -81,14 +81,23 @@ test('无订阅时不生成组树，规则保持纯直连',()=>{
  assert.equal(c['proxy-groups'],undefined);assert.equal(c['proxy-providers'],undefined);
  assert.deepEqual(c.rules,['MATCH,DIRECT']);
 });
-test('TUN 关闭时不生成 tun/dns 段，开启时生成且栈值受控',()=>{
+test('TUN 关闭时不生成 tun/dns/sniffer 段，开启时生成完整防慢防漏配置且栈值受控',()=>{
  const base2={mixedPort:7895,controllerPort:9099,secret:'synthetic',dataDirectory:'D:/synthetic',subscriptions:[]};
  const off=kernelConfig({...base2,tun:{enable:false,stack:'mixed'}});
- assert.equal(off.tun,undefined);assert.equal(off.dns,undefined);
+ assert.equal(off.tun,undefined);assert.equal(off.dns,undefined);assert.equal(off.sniffer,undefined);
+ assert.equal(off['find-process-mode'],'off');
  const on=kernelConfig({...base2,tun:{enable:true,stack:'gvisor'}});
+ assert.equal(on.ipv6,false);
  assert.equal(on.tun.enable,true);assert.equal(on.tun.stack,'gvisor');
- assert.deepEqual(on.tun['dns-hijack'],['any:53']);assert.equal(on.tun['auto-route'],true);
+ assert.equal(on.tun.mtu,1500);
+ assert.equal(on.tun['strict-route'],true);
+ assert.deepEqual(on.tun['dns-hijack'],['any:53','tcp://any:53']);assert.equal(on.tun['auto-route'],true);
+ assert.ok(on.tun['route-exclude-address'].includes('192.168.0.0/16'));
  assert.equal(on.dns.enable,true);assert.equal(on.dns['enhanced-mode'],'fake-ip');
+ assert.ok(on.dns['default-nameserver']?.length>0);
+ assert.ok(on.dns['proxy-server-nameserver']?.length>0);
+ assert.ok(on.dns['fake-ip-filter']?.includes('+.msftncsi.com'));
+ assert.equal(on.sniffer.enable,true);
  const weird=kernelConfig({...base2,tun:{enable:true,stack:'nonsense'}});
  assert.equal(weird.tun.stack,'mixed');
 });
@@ -473,4 +482,44 @@ test('看门狗还原失败留下键名/错误码日志，租约保留',async()=
  assert.match(log,/ProxyServer/);
  assert.match(log,/Win32 5/);
  assert.ok((await readFile(lease,'utf8')).length>0,'租约要留着下次再试');
+});
+
+test('TUN 服务启动失败或停机收尾仍会禁用 job 并恢复系统代理',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'clash-tun-cleanup-'));
+ const dummyKernel=join(dir,'mihomo.exe');
+ await writeFile(dummyKernel,'dummy','utf8');
+ const fakeControllerPort=49999;
+ let sysProxy={ProxyEnable:1,ProxyServer:'127.0.0.1:7890',ProxyOverride:null};
+ let disableCalls=0;
+ let enableCalls=0;
+ let restoredCalls=0;
+ const rt=createRuntime({
+  dataDirectory:dir,
+  storage:{read:async()=>'',write:async()=>{}},
+  resolveKernel:async()=>dummyKernel,
+  watchdogTask:{start:async()=>({ok:true}),stop:async()=>({ok:true})},
+  proxyAdapter:{
+   read:async()=>({...sysProxy}),
+   write:async v=>{sysProxy={...v};restoredCalls+=1;}
+  },
+  tun:{
+   status:async()=>({installed:true,enabled:true,state:'stopped',kernel:dummyKernel}),
+   enable:async()=>{enableCalls+=1;return true;},
+   disable:async()=>{disableCalls+=1;return true;},
+   install:async()=>({}),
+   uninstall:async()=>({}),
+   refreshLease:async()=>true
+  }
+ });
+ await assert.rejects(
+  ()=>rt.start({kernel:dummyKernel,mixedPort:7890,controllerPort:fakeControllerPort,secret:'s',tun:{enable:true,stack:'mixed'},proxy:{bypass:[],system:false},subscriptions:[{id:'sub-00000000-0000-0000-0000-000000000001',enabled:true,content:'proxies: []\n'}]},{signal:AbortSignal.timeout(100)}),
+  err=>err?.code==='TUN_READY_TIMEOUT'||/abort/i.test(err?.name||err?.message||'')
+ );
+ assert.equal(enableCalls,1,'应尝试拉起 TUN');
+ assert.equal(sysProxy.ProxyEnable,0,'切入 TUN 启动前应清掉指向本机的残留系统代理');
+ assert.ok(restoredCalls>=1,'切入 TUN 启动前应先恢复遗留系统代理');
+ assert.ok(disableCalls>=1,'TUN 启动中断或控制器未就绪时必须立即撤销 job 防断网');
+ await rt.tunStop();
+ assert.ok(disableCalls>=2,'即使服务处于 stopped 状态，只要 enabled=true 收尾也必须调用 disable 清 job');
+ await rm(dir,{recursive:true,force:true});
 });

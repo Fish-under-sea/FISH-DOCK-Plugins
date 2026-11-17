@@ -773,15 +773,20 @@ test('运行中切 TUN：先停内核、写配置、再按新设置起来',async
  // 配置真的落盘了，不是只改了内存。
  assert.equal(JSON.parse(f.disk.get('config/clash.json')).tun.enable,true);
 });
-test('内核本来停着时切 TUN 只写配置，不顺手拉起内核',async()=>{
+test('停机时拒绝独立开启 TUN，只允许关闭遗留 TUN 开关且不顺手拉起内核',async()=>{
  const f=fixture();await f.service.save(kernel);
  await f.runtime.tun.install({kernel:kernel.kernel});
  const before=f.stats();
- await f.service.tunSwitch({enable:true});
- const state=await settledTun(f.service);
- assert.equal(f.stats().starts,before.starts,'本来没跑就不该起');
- assert.equal(state.running,false);
- assert.equal(state.tun.enable,true);
+ await assert.rejects(f.service.tunSwitch({enable:true}),error=>error.code==='KERNEL_NOT_RUNNING');
+ assert.equal(f.stats().starts,before.starts,'未运行内核时绝不能打开 TUN');
+ assert.equal(JSON.parse(f.disk.get('config/clash.json')).tun.enable,false);
+ // 若此前（例如内核设置中）已开启 TUN，停机时允许关闭并清掉服务端 TUN 状态
+ await f.service.save({...kernel,tun:{enable:true,stack:'mixed'}});
+ const off=await f.service.tunSwitch({enable:false});
+ assert.equal(off.tun.enable,false);
+ assert.equal(off.running,false);
+ assert.equal(f.stats().starts,before.starts,'关闭 TUN 不应顺手拉起内核');
+ assert.ok(f.events.includes('tun-stop'));
 });
 test('TUN 服务没装时拒绝切换，且不动正在跑的内核',async()=>{
  const f=fixture();await f.service.save(kernel);await f.service.start();
@@ -834,24 +839,44 @@ test('校验错误统一挂码：无节点、组失效、未启动路径都带 c
  await assert.rejects(f.service.mode({mode:'rule'}),error=>error.code==='KERNEL_NOT_RUNNING');
  await assert.rejects(f.service.mode({mode:'sideways'}),error=>error.code==='KERNEL_NOT_RUNNING');
 });
-test('tunSwitch 停机时同步落盘，运行中启动失败时回滚 tun.enable 并暴露错误',async()=>{
+test('tunSwitch 失败回滚与流程锁：停机拒开、失败清理 TUN、切换期拦截并发改写、接管服务续期租约',async()=>{
  const f=fixture();await f.service.save(kernel);
+ await assert.rejects(f.service.save({...kernel,tun:{enable:true,stack:'mixed'}}),error=>error.code==='TUN_NOT_INSTALLED');
  await f.runtime.tun.install({kernel:kernel.kernel});
- const offline=await f.service.tunSwitch({enable:true});
- assert.equal(offline.tun.enable,true,'停机切换立即返回新状态并已落盘');
- assert.equal(offline.tunSwitching,false);
- assert.equal(JSON.parse(f.disk.get('config/clash.json')).tun.enable,true);
- // 恢复 false 再开机验证失败回滚
- await f.service.tunSwitch({enable:false});
+ await assert.rejects(f.service.tunSwitch({enable:true}),error=>error.code==='KERNEL_NOT_RUNNING');
+ // 运行中启动失败时回滚 tun.enable 并暴露错误，且清理残余 tunStop
  await f.service.start();
  f.refuseStart(true);
  const immediate=await f.service.tunSwitch({enable:true});
  assert.equal(immediate.tun.enable,true,'即时响应反映目标 TUN 状态');
  assert.equal(immediate.tunSwitching,true);
+ // 在途切换期间，保存/安装/代理/重载均被流程锁拦截
+ await assert.rejects(f.service.save(kernel),error=>error.code==='KERNEL_SWITCHING');
+ await assert.rejects(f.service.proxy({enabled:true}),error=>error.code==='KERNEL_SWITCHING');
+ await assert.rejects(f.service.uninstallTunService(),error=>error.code==='KERNEL_SWITCHING');
  const settled=await settledTun(f.service);
  assert.equal(settled.tun.enable,false,'后台重启失败后必须回滚 clash.json 里的 tun.enable');
  assert.ok(settled.error,'错误必须保留给页面展示');
  assert.equal(JSON.parse(f.disk.get('config/clash.json')).tun.enable,false);
+ assert.ok(f.events.includes('tun-stop'),'TUN 启动失败应调用 tunStop 兜底收口');
+
+ // 插件重载后接管 service 模式运行态：必须刷新宿主租约，避免服务侧误判宿主退出并断开 TUN
+ const leases=[];
+ const disk2=new Map();
+ disk2.set('config/clash.json',JSON.stringify({...kernel,mixedPort:7895,controllerPort:9099,tun:{enable:true,stack:'mixed'}}));
+ disk2.set('secret/keys/controller.key','k-secret');
+ const {createHash}=await import('node:crypto');
+ const fp=createHash('sha256').update('k-secret').digest('hex').slice(0,16);
+ disk2.set('config/run-state.json',JSON.stringify({schema:1,pid:null,mode:'service',mixedPort:7895,controllerPort:9099,startedAt:Date.now(),subscriptions:[],secretFingerprint:fp}));
+ const f2=fixture(disk2,{tunInstalled:true,external:{pid:null,subscriptions:[]}});
+ f2.runtime.tun.status=async()=>({installed:true,enabled:true,state:'running'});
+ f2.runtime.tunRefreshLease=async pid=>{leases.push(pid);return true};
+ const v2=await f2.service.view();
+ assert.equal(v2.running,true);
+ assert.equal(leases.length,1);
+ assert.equal(leases[0],process.pid);
+ f2.runtime.tun.status=async()=>({installed:true,enabled:false,state:'stopped'});
+ assert.equal((await f2.service.view({controller:false})).running,false,'服务停止后应同步清理遗留 service 运行态');
 });
 
 

@@ -123,12 +123,14 @@ test('带时间戳的历史 service.log 不会让 enable/disable 误判秒过，
   let logText = '2026-11-17 06:40:31  kernel started pid=11\n2026-11-17 06:41:00  tun idle\n';
   let reads = 0;
   const f = fixture({ ini: { kernel: 'C:/k/mihomo.exe', home: HOME } });
+  let serviceStarted = false;
   const tun = createTun({
     programData: 'C:/ProgramData',
     platform: 'win32',
     exec: async (cmd, args) => {
       execCalls.push([cmd, ...args]);
-      return { code: 0, stdout: 'STATE : 1  STOPPED' };
+      if (args[0] === 'start') serviceStarted = true;
+      return { code: 0, stdout: serviceStarted ? 'STATE : 4  RUNNING' : 'STATE : 1  STOPPED' };
     },
     io: {
       ...f.io,
@@ -145,4 +147,17 @@ test('带时间戳的历史 service.log 不会让 enable/disable 误判秒过，
   assert.ok(execCalls.some(c => c[0] === 'sc.exe' && c[1] === 'start' && c[2] === SERVICE_ID));
   assert.equal(await tun.disable(), true);
   assert.ok(reads >= 6, 'disable must wait past stale history');
+});
+
+test('refreshLease 更新宿主租约而不改动 job.ini；服务已停时 disable 不空等日志超时', async () => {
+  const f = fixture({ state: 'stopped', ini: { kernel: 'C:/k/mihomo.exe', home: HOME } });
+  const tun = createTun({ programData: 'C:/ProgramData', exec: f.exec, platform: 'win32', io: f.io });
+  assert.equal(await tun.refreshLease(8888), true);
+  assert.equal(f.hostWrites.length, 1);
+  assert.equal(JSON.parse(f.hostWrites[0].value).pid, 8888);
+  assert.equal(await tun.refreshLease(0), false);
+  const t0 = Date.now();
+  assert.equal(await tun.disable(), true);
+  assert.ok(Date.now() - t0 < 1000, '服务已停止时 disable 应立即返回');
+  assert.match(f.writes[0], /enabled=0/);
 });
