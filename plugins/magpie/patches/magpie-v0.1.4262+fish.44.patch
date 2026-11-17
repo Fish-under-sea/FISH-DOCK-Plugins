@@ -1,0 +1,1785 @@
+diff --git a/internal/gui/appearance_test.go b/internal/gui/appearance_test.go
+index 42c6b4d..04310c0 100644
+--- a/internal/gui/appearance_test.go
++++ b/internal/gui/appearance_test.go
+@@ -122,6 +122,25 @@ func TestFishGlassSettings(t *testing.T) {
+ 	if reply.FishGlassSidebar != (settings.FishGlassRegion{Fill: 5, Blur: 40, Set: true}) {
+ 		t.Fatalf("clamp: %+v", reply.FishGlassSidebar)
+ 	}
++	// glass colour is saved independently from accent, carried on unrelated saves, validated, and cleared by ""
++	reply = post(`{"fishGlassColor":"#38bdf8","theme":"dark","accent":"#0d9488"}`)
++	if reply.FishGlassColor != "#38bdf8" || reply.Accent != "#0d9488" {
++		t.Fatalf("glass color changed accent or failed save: %+v", reply)
++	}
++	reply = post(`{"theme":"dark"}`)
++	if reply.FishGlassColor != "#38bdf8" {
++		t.Fatalf("unrelated save dropped fishGlassColor: %+v", reply)
++	}
++	for _, bad := range []string{"blue", "#38bdf", "#38bdf8;}body{display:none"} {
++		b, _ := json.Marshal(map[string]string{"theme": "dark", "fishGlassColor": bad})
++		if r := lookServe(srv, "POST", "/api/settings", string(b)); r.Code == http.StatusOK || settings.Load().FishGlassColor != "#38bdf8" {
++			t.Fatalf("invalid fishGlassColor %q accepted: %d", bad, r.Code)
++		}
++	}
++	reply = post(`{"fishGlassColor":"","theme":"dark"}`)
++	if reply.FishGlassColor != "" || reply.Accent != "#0d9488" {
++		t.Fatalf("clearing fishGlassColor failed or touched accent: %+v", reply)
++	}
+ }
+ 
+ // An accent of the reader's own (CHENGJIAHEGOXIS on X) is saved from
+diff --git a/internal/gui/assets/app.js b/internal/gui/assets/app.js
+index 65db141..368b124 100644
+--- a/internal/gui/assets/app.js
++++ b/internal/gui/assets/app.js
+@@ -19619,8 +19619,19 @@ function applyGlass(s) {
+     const part = glass[region];
+     root.style.setProperty(`--fish-glass-${region}-fill`, part.fill + "%");
+     root.style.setProperty(`--fish-glass-${region}-blur`, part.blur + "px");
++    root.style.setProperty(`--fish-glass-${region}-filter`, part.blur > 0 ? `blur(${part.blur}px) saturate(190%) brightness(1.06) contrast(1.03)` : "none");
+     if (part.fill < 100 || part.blur > 0) on = true;
+   }
++  const sb = glass.sidebar;
++  root.style.setProperty("--fish-glass-sidebar-edge", sb.fill > 0 || sb.blur > 0 ? "1px solid var(--lg-rim-base)" : "0px solid transparent");
++  const gc = /^#[0-9a-f]{6}$/i.test(s?.fishGlassColor || "") ? s.fishGlassColor : "";
++  if (gc) {
++    root.style.setProperty("--fish-glass-tint", gc);
++    root.style.setProperty("--lg-glass-wash", `color-mix(in srgb, ${gc} 16%, transparent)`);
++  } else {
++    root.style.removeProperty?.("--fish-glass-tint");
++    root.style.removeProperty?.("--lg-glass-wash");
++  }
+   root.toggleAttribute("data-fish-glass", on);
+   return glass;
+ }
+@@ -22906,7 +22917,7 @@ function dockChoice(s) {
+ 
+ // prefsKeep is what the settings page sends of s, all of it each time.
+ function prefsKeep(s) {
+-  return { theme: s.theme, accent: s.accent || "", fishGlass: !!s.fishGlass, fishGlassSidebar: s.fishGlassSidebar || null, fishGlassContent: s.fishGlassContent || null, fishGlassOverlay: s.fishGlassOverlay || null, fishGlassControl: s.fishGlassControl || null, colorblind: !!s.colorblind, reduceMotion: !!s.reduceMotion, noBird: !!s.noBird, lang: s.lang, tray: s.tray, dock: !!s.dock, dockWindow: !!s.dockWindow, dockNever: !!s.dockNever, lightweight: s.lightweight, keepAwake: !!s.keepAwake, keepAwakeDisplay: !!s.keepAwakeDisplay, noWSLAgents: !!s.noWSLAgents, quitNoAsk: !!s.quitNoAsk, restoreOnQuit: !!s.restoreOnQuit, proxy: s.proxy || "", pluginProxy: s.pluginProxy || "", updateProxy: s.updateProxy || "", updateSource: s.updateSource || "",
++  return { theme: s.theme, accent: s.accent || "", fishGlass: !!s.fishGlass, fishGlassColor: s.fishGlassColor || "", fishGlassSidebar: s.fishGlassSidebar || null, fishGlassContent: s.fishGlassContent || null, fishGlassOverlay: s.fishGlassOverlay || null, fishGlassControl: s.fishGlassControl || null, colorblind: !!s.colorblind, reduceMotion: !!s.reduceMotion, noBird: !!s.noBird, lang: s.lang, tray: s.tray, dock: !!s.dock, dockWindow: !!s.dockWindow, dockNever: !!s.dockNever, lightweight: s.lightweight, keepAwake: !!s.keepAwake, keepAwakeDisplay: !!s.keepAwakeDisplay, noWSLAgents: !!s.noWSLAgents, quitNoAsk: !!s.quitNoAsk, restoreOnQuit: !!s.restoreOnQuit, proxy: s.proxy || "", pluginProxy: s.pluginProxy || "", updateProxy: s.updateProxy || "", updateSource: s.updateSource || "",
+     sessionTerminal: s.sessionTerminal || "",
+     uiFont: s.uiFont || null, codeFont: s.codeFont || null, fontColors: s.fontColors || {}, fontColorsDark: s.fontColorsDark || {}, fontColorsDarkOn: !!s.fontColorsDarkOn,
+     otel: s.otel || {},
+diff --git a/internal/gui/assets/appearance.js b/internal/gui/assets/appearance.js
+index 7bbb79c..53bfdcb 100644
+--- a/internal/gui/assets/appearance.js
++++ b/internal/gui/assets/appearance.js
+@@ -22,6 +22,7 @@ window.lookPaint = async function () {
+ 
+ window.drawLook = function (s, keep) {
+   drawGlass(s, keep);
++  drawGlassColor(s, keep);
+   $("#colorblindSegs").title = t("Colorblind-safe chart colors, and each allowance window's line in a dash of its own");
+   $("#colorblindSegs").replaceChildren(segsOO(s.colorblind, (v) => savePrefs({ ...keep, colorblind: v })));
+   $("#reduceMotionSegs").title = t("Animations stand still, as with the system's Reduce Motion, so magpie keeps the computer less busy");
+@@ -164,6 +165,71 @@ function drawGlass(s, keep) {
+   box.dataset.glassOn = String(on);
+ }
+ 
++function applyGlassTintVars(hex) {
++  const st = document.documentElement.style;
++  if (hex) {
++    st.setProperty("--fish-glass-tint", hex);
++    st.setProperty("--lg-glass-wash", `color-mix(in srgb, ${hex} 16%, transparent)`);
++  } else {
++    st.removeProperty?.("--fish-glass-tint");
++    st.removeProperty?.("--lg-glass-wash");
++  }
++}
++
++function drawGlassColor(s, keep) {
++  const box = $("#fishGlassColorPick");
++  if (!box) return;
++  const now = (s.fishGlassColor || "").toLowerCase();
++  const presets = [
++    ["#38bdf8", "Glacier"],
++    ["#6366f1", "Indigo"],
++    ["#10b981", "Mint"],
++    ["#f43f5e", "Rose"],
++    ["#f59e0b", "Amber"],
++  ];
++  const dots = el("div", "accent-pick");
++  dots.setAttribute("role", "radiogroup");
++  for (const [v, label] of presets) {
++    const b = el("button", "swatch" + (v === now ? " on" : ""));
++    b.type = "button";
++    b.setAttribute("role", "radio");
++    b.setAttribute("aria-checked", String(v === now));
++    b.title = label;
++    b.setAttribute("aria-label", label);
++    if (v) b.style.setProperty("--sw", v);
++    b.onclick = () => {
++      if (v === now) return;
++      closeFontPicker();
++      applyGlassTintVars(v);
++      savePrefs({ ...keep, fishGlassColor: v });
++    };
++    dots.append(b);
++  }
++  const sw = el("button", "fc-swatch" + (now ? "" : " empty"));
++  sw.type = "button";
++  sw.setAttribute("aria-label", t("Glass color") + " · " + t("Pick a colour"));
++  sw.style.setProperty("--fc", now || "transparent");
++  const hex = el("code", "fc-hex", now || t("Follows theme"));
++  const reset = el("button", "text fc-reset", t("Reset"));
++  reset.type = "button";
++  reset.hidden = !now;
++  sw.onclick = () => openFontPicker(sw, now || "#38bdf8", (out) => {
++    const clean = out ? out.toLowerCase() : "";
++    sw.style.setProperty("--fc", clean || "transparent");
++    sw.classList.toggle("empty", !clean);
++    hex.textContent = clean || t("Follows theme");
++    reset.hidden = !clean;
++    applyGlassTintVars(clean);
++    scheduleFontSave({ ...keep, fishGlassColor: clean });
++  });
++  reset.onclick = () => {
++    closeFontPicker();
++    applyGlassTintVars("");
++    savePrefs({ ...keep, fishGlassColor: "" });
++  };
++  box.replaceChildren(dots, sw, hex, reset);
++}
++
+ function drawAccent(s, keep) {
+   const box = $("#accentPick");
+   if (!box) return;
+diff --git a/internal/gui/assets/fish-glass.css b/internal/gui/assets/fish-glass.css
+index 6aec7ef..5d2bb6e 100644
+--- a/internal/gui/assets/fish-glass.css
++++ b/internal/gui/assets/fish-glass.css
+@@ -21,14 +21,118 @@
+   --fish-glass-overlay-blur: 0px;
+   --fish-glass-control-fill: 100%;
+   --fish-glass-control-blur: 0px;
+-  /* Liquid Glass 材质：高光边/柔光/内阴影。固定白色系，深色主题是亮边，
+-     浅色主题是更柔的亮边，都成立。 */
+-  --lg-rim-line: rgba(255, 255, 255, .72);
++  --fish-glass-header-fill: 100%;
++  --fish-glass-header-blur: 0px;
++  --fish-glass-bar-fill: 100%;
++  --fish-glass-bar-blur: 0px;
++  /* Liquid Glass 材质（深色默认）：中性玻璃基底，彻底与强调色(--accent)解耦；
++     --fish-glass-tint 由「液态玻璃 › 玻璃颜色」单独控制，默认走主题中性玻璃。 */
++  --lg-glass-base: #22232a;
++  --lg-glass-base-2: #1c1d23;
++  --lg-surface: color-mix(in srgb, var(--fish-glass-tint, var(--lg-glass-base)) 36%, var(--lg-glass-base));
++  --lg-surface-2: color-mix(in srgb, var(--fish-glass-tint, var(--lg-glass-base-2)) 26%, var(--lg-glass-base-2));
++  --lg-glass-wash: transparent;
++  --lg-rim-hi: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 44%, rgba(255, 255, 255, .36));
++  --lg-rim-mid: color-mix(in srgb, var(--fish-glass-tint, #dbeafe) 16%, rgba(255, 255, 255, .11));
++  --lg-rim-lo: color-mix(in srgb, var(--fish-glass-tint, #bae6fd) 28%, rgba(255, 255, 255, .21));
++  --lg-rim-base: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 12%, rgba(255, 255, 255, .09));
++  --lg-rim-inset-top: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 26%, rgba(255, 255, 255, .20));
++  --lg-rim-line: rgba(255, 255, 255, .24);
+   --lg-rim-line-2: rgba(255, 255, 255, .12);
+-  --lg-rim-soft: rgba(255, 255, 255, .20);
+-  --lg-rim-shade: rgba(0, 0, 0, .26);
+-  --lg-sheen-a: rgba(255, 255, 255, .20);
+-  --lg-sheen-b: rgba(160, 205, 255, .12);
++  --lg-rim-soft: rgba(255, 255, 255, .14);
++  --lg-rim-shade: rgba(0, 0, 0, .24);
++  --lg-sheen-a: rgba(255, 255, 255, .13);
++  --lg-sheen-b: rgba(160, 210, 255, .08);
++  --lg-convex-top: rgba(255, 255, 255, .055);
++  --lg-convex-bot: rgba(255, 255, 255, .02);
++  --lg-inner-bg: color-mix(in srgb, var(--lg-surface) 14%, color-mix(in srgb, var(--fg) 4%, transparent));
++  --lg-inner-line: rgba(255, 255, 255, .09);
++  --lg-control-bg: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 8%, rgba(255, 255, 255, .045));
++  --lg-control-line: rgba(255, 255, 255, .12);
++  --lg-sel-top: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 18%, rgba(255, 255, 255, .17));
++  --lg-sel-bot: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 10%, rgba(255, 255, 255, .07));
++  --lg-sel-rim: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 26%, rgba(255, 255, 255, .24));
++  --lg-hover-bg: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 10%, rgba(255, 255, 255, .065));
++  --lg-shadow: 0 12px 32px rgba(0, 0, 0, .22), 0 2px 8px rgba(0, 0, 0, .14);
++  --lg-shadow-pop: 0 20px 50px rgba(0, 0, 0, .34), 0 4px 12px rgba(0, 0, 0, .18);
++  --lg-focus-ring: color-mix(in srgb, var(--fg) 30%, transparent);
++  --lg-focus-halo: color-mix(in srgb, var(--fg) 10%, transparent);
++  --lg-switch-off: rgba(255, 255, 255, .16);
++  --lg-switch-off-rim: rgba(255, 255, 255, .20);
++  --lg-switch-on: color-mix(in srgb, var(--accent) 72%, rgba(20, 24, 38, .48));
++  --lg-switch-on-rim: rgba(255, 255, 255, .30);
++}
++@media (prefers-color-scheme: light) {
++  :root:not([data-theme="dark"]) {
++    --lg-glass-base: #ffffff;
++    --lg-glass-base-2: #f4f5f8;
++    --lg-surface: color-mix(in srgb, var(--fish-glass-tint, var(--lg-glass-base)) 24%, var(--lg-glass-base));
++    --lg-surface-2: color-mix(in srgb, var(--fish-glass-tint, var(--lg-glass-base-2)) 18%, var(--lg-glass-base-2));
++    --lg-rim-hi: rgba(255, 255, 255, .86);
++    --lg-rim-mid: color-mix(in srgb, var(--fish-glass-tint, #64748b) 16%, rgba(15, 23, 42, .09));
++    --lg-rim-lo: rgba(255, 255, 255, .64);
++    --lg-rim-base: rgba(15, 23, 42, .085);
++    --lg-rim-inset-top: rgba(255, 255, 255, .62);
++    --lg-rim-line: rgba(15, 23, 42, .12);
++    --lg-rim-line-2: rgba(15, 23, 42, .08);
++    --lg-rim-soft: rgba(15, 23, 42, .10);
++    --lg-rim-shade: rgba(15, 23, 42, .07);
++    --lg-sheen-a: rgba(255, 255, 255, .36);
++    --lg-sheen-b: rgba(186, 218, 255, .14);
++    --lg-convex-top: rgba(255, 255, 255, .22);
++    --lg-convex-bot: rgba(255, 255, 255, .05);
++    --lg-inner-bg: color-mix(in srgb, var(--lg-surface) 14%, color-mix(in srgb, var(--fg) 3.5%, transparent));
++    --lg-inner-line: rgba(15, 23, 42, .09);
++    --lg-control-bg: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 14%, rgba(255, 255, 255, .40));
++    --lg-control-line: rgba(15, 23, 42, .11);
++    --lg-sel-top: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 20%, rgba(255, 255, 255, .88));
++    --lg-sel-bot: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 12%, rgba(255, 255, 255, .64));
++    --lg-sel-rim: rgba(255, 255, 255, .82);
++    --lg-hover-bg: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 12%, rgba(255, 255, 255, .38));
++    --lg-shadow: 0 10px 28px rgba(15, 23, 42, .08), 0 2px 8px rgba(15, 23, 42, .04);
++    --lg-shadow-pop: 0 18px 44px rgba(15, 23, 42, .15), 0 4px 12px rgba(15, 23, 42, .07);
++    --lg-focus-ring: color-mix(in srgb, var(--fg) 26%, transparent);
++    --lg-focus-halo: color-mix(in srgb, var(--fg) 9%, transparent);
++    --lg-switch-off: rgba(15, 23, 42, .15);
++    --lg-switch-off-rim: rgba(15, 23, 42, .16);
++    --lg-switch-on: color-mix(in srgb, var(--accent) 88%, transparent);
++    --lg-switch-on-rim: rgba(255, 255, 255, .45);
++  }
++}
++:root[data-theme="light"] {
++  --lg-glass-base: #ffffff;
++  --lg-glass-base-2: #f4f5f8;
++  --lg-surface: color-mix(in srgb, var(--fish-glass-tint, var(--lg-glass-base)) 24%, var(--lg-glass-base));
++  --lg-surface-2: color-mix(in srgb, var(--fish-glass-tint, var(--lg-glass-base-2)) 18%, var(--lg-glass-base-2));
++  --lg-rim-hi: rgba(255, 255, 255, .86);
++  --lg-rim-mid: color-mix(in srgb, var(--fish-glass-tint, #64748b) 16%, rgba(15, 23, 42, .09));
++  --lg-rim-lo: rgba(255, 255, 255, .64);
++  --lg-rim-base: rgba(15, 23, 42, .085);
++  --lg-rim-inset-top: rgba(255, 255, 255, .62);
++  --lg-rim-line: rgba(15, 23, 42, .12);
++  --lg-rim-line-2: rgba(15, 23, 42, .08);
++  --lg-rim-soft: rgba(15, 23, 42, .10);
++  --lg-rim-shade: rgba(15, 23, 42, .07);
++  --lg-sheen-a: rgba(255, 255, 255, .36);
++  --lg-sheen-b: rgba(186, 218, 255, .14);
++  --lg-convex-top: rgba(255, 255, 255, .22);
++  --lg-convex-bot: rgba(255, 255, 255, .05);
++  --lg-inner-bg: color-mix(in srgb, var(--lg-surface) 14%, color-mix(in srgb, var(--fg) 3.5%, transparent));
++  --lg-inner-line: rgba(15, 23, 42, .09);
++  --lg-control-bg: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 14%, rgba(255, 255, 255, .40));
++  --lg-control-line: rgba(15, 23, 42, .11);
++  --lg-sel-top: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 20%, rgba(255, 255, 255, .88));
++  --lg-sel-bot: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 12%, rgba(255, 255, 255, .64));
++  --lg-sel-rim: rgba(255, 255, 255, .82);
++  --lg-hover-bg: color-mix(in srgb, var(--fish-glass-tint, #ffffff) 12%, rgba(255, 255, 255, .38));
++  --lg-shadow: 0 10px 28px rgba(15, 23, 42, .08), 0 2px 8px rgba(15, 23, 42, .04);
++  --lg-shadow-pop: 0 18px 44px rgba(15, 23, 42, .15), 0 4px 12px rgba(15, 23, 42, .07);
++  --lg-focus-ring: color-mix(in srgb, var(--fg) 26%, transparent);
++  --lg-focus-halo: color-mix(in srgb, var(--fg) 9%, transparent);
++  --lg-switch-off: rgba(15, 23, 42, .15);
++  --lg-switch-off-rim: rgba(15, 23, 42, .16);
++  --lg-switch-on: color-mix(in srgb, var(--accent) 88%, transparent);
++  --lg-switch-on-rim: rgba(255, 255, 255, .45);
+ }
+ /* Keep filtering on the bounded dialog, never the full-window scrim.
+    The normal veil and its drag strip remain untouched. */
+@@ -37,97 +141,145 @@
+   -webkit-backdrop-filter: none;
+   backdrop-filter: none;
+ }
+-/* A highlight cut into the inside edge costs no space or pointer layer. */
+-:root[data-fish-glass] body .sidebar {
+-  box-shadow: inset 0 1px 0 var(--line-2), inset 0 -1px 0 var(--line);
+-}
+-:root[data-fish-glass] body header.top {
+-  box-shadow: inset 0 1px 0 var(--line-2), inset 0 -1px 0 var(--line);
+-}
+-:root[data-fish-glass] body :is(.pop, .modal .dialog, .action-confirm) {
+-  box-shadow: inset 0 1px 0 var(--line-2), var(--shadow);
+-}
++/* the window's edge: sidebar & header strictly follow their own regions and beat lookCSS specificity */
+ @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) and (background: color-mix(in srgb, red, transparent)) {
+-  /* Liquid Glass 观感：区域变量只管底色与模糊，另加 saturate/brightness 让透过
+-     的东西像被折射过，再用 ::before 柔光 + ::after 1px 高光边做出 iOS 的釉面。
+-     fill=0 时底色全透，但柔光、高光边与模糊还在，所以不会是“什么都没有”。 */
+-  /* the window's edge */
+-  :root[data-fish-glass] body :is(.sidebar, header.top) {
+-    background: color-mix(in srgb, var(--card) var(--fish-glass-sidebar-fill), transparent);
+-    -webkit-backdrop-filter: blur(var(--fish-glass-sidebar-blur)) saturate(200%) brightness(1.14);
+-    backdrop-filter: blur(var(--fish-glass-sidebar-blur)) saturate(200%) brightness(1.14);
+-    box-shadow: inset 0 1px 0 var(--lg-rim-line), inset 0 -1px 0 var(--lg-rim-shade);
++  html:root[data-fish-glass] body.side-nav .sidebar,
++  html:root[data-fish-glass] body:not(.panel) .sidebar {
++    background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-sidebar-fill), var(--lg-glass-wash));
++    -webkit-backdrop-filter: var(--fish-glass-sidebar-filter, blur(var(--fish-glass-sidebar-blur)) saturate(185%) brightness(1.05));
++    backdrop-filter: var(--fish-glass-sidebar-filter, blur(var(--fish-glass-sidebar-blur)) saturate(185%) brightness(1.05));
++    border-right: var(--fish-glass-sidebar-edge, 1px solid var(--lg-rim-base));
++    box-shadow: none;
+   }
+-  /* the reading surface: cards and lists */
+-  :root[data-fish-glass] body :is(.list, .card) {
++  :root[data-fish-glass] body header.top {
++    background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-header-fill), var(--lg-glass-wash));
++    -webkit-backdrop-filter: var(--fish-glass-header-filter, blur(var(--fish-glass-header-blur)));
++    backdrop-filter: var(--fish-glass-header-filter, blur(var(--fish-glass-header-blur)));
++    border-bottom: 1px solid color-mix(in srgb, var(--lg-rim-mid) var(--fish-glass-header-fill), transparent);
++    box-shadow: none;
++  }
++  /* the reading surface: top-level cards, lists & Usage panels (including Overview / Requests / Sessions / Context) */
++  :root[data-fish-glass] body :is(
++    .list, .card, .stats.empty, .pm-card, .pm-hero, .pm-rank,
++    .ag-install-row, .ag-lead.welcome, .guide, .deprecation, .provider-discovery,
++    .sm-consent, .sm-subs-list, .plugin-panel-body,
++    .subscription-card, .pq-card, .pu-card, .pu-none, .kpi, .chart,
++    .led-strip, .led-trend, .led-up, .led-speed, .led-heat, .led-box, .led-wrap, .qt-wrap,
++    .sess-card, .ctx-card, .ctx-agent, .ctx-tune, .ctx-sess-list, .ctx-none, .rt-gtpl-card
++  ) {
+     position: relative;
+-    background: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-    -webkit-backdrop-filter: blur(var(--fish-glass-content-blur)) saturate(180%) brightness(1.06);
+-    backdrop-filter: blur(var(--fish-glass-content-blur)) saturate(180%) brightness(1.06);
+-    box-shadow: inset 0 1px 0 var(--lg-rim-line), inset 0 -1px 0 var(--lg-rim-shade), 0 10px 30px rgba(0, 0, 0, .20);
++    background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-content-fill), var(--lg-glass-wash));
++    -webkit-backdrop-filter: var(--fish-glass-content-filter, blur(var(--fish-glass-content-blur)) saturate(190%) brightness(1.06) contrast(1.03));
++    backdrop-filter: var(--fish-glass-content-filter, blur(var(--fish-glass-content-blur)) saturate(190%) brightness(1.06) contrast(1.03));
++    border-color: transparent;
++    box-shadow:
++      inset 0 1px 0 var(--lg-rim-inset-top),
++      inset 0 -1px 0 var(--lg-rim-shade),
++      inset 0 0 0 .5px var(--lg-rim-base),
++      var(--lg-shadow);
+   }
+-  /* buttons, fields and dropdowns: their own ground, thinnable if asked.
+-     The segmented control (.segs .opt) is left out: its selected state reads by
+-     its fill, and a see-through segment blurs that reading. */
+-  /* 控件只上底色与高光边，不做定位也不做模糊：下拉触发器一旦变成包含块
+-     （position 或 backdrop-filter 都会），挂在它下面的 fixed 弹出层就会跟着
+-     小方块定位 —— 用户看到的是「所有下拉框位置都被改了」。 */
+-  :root[data-fish-glass] body :is(.proto.pick, .sess-pick, .set-field, .segs, .pm-find, .lib-find, .find, .key.acct, .plan.mono, .lib-switch, input:not([type=checkbox]):not([type=range]), textarea, select) {
+-    background: color-mix(in srgb, var(--card) var(--fish-glass-control-fill), transparent);
+-    box-shadow: inset 0 1px 0 var(--lg-rim-line), inset 0 -1px 0 var(--lg-rim-shade);
++  /* controls: never add position or backdrop-filter so fixed popovers anchor cleanly;
++     wrap :not() inside :where() so nested search/form input resets always win */
++  :root[data-fish-glass] body :is(
++    .proto.pick, .sess-pick, .set-field, .segs, .pm-find, .lib-find,
++    .find, .mk-find, .lib-hubsearch, .am-search, .key.acct, .plan.mono,
++    .chip-input, .cxpick, .lib-filepick, .lib-browserask-pick, .rt-pick, .rt-gadd.open,
++    .field, textarea, select,
++    input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]):not([type=button]):not([type=submit]))
++  ) {
++    background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-control-fill), var(--lg-control-bg));
++    border-color: transparent;
++    box-shadow: inset 0 0 0 1px var(--lg-control-line), inset 0 1px 0 rgba(255, 255, 255, .07);
+   }
+-  /* 选中态随玻璃半透：不是实色块，而是强调色的半透，能透出后面的壁纸 */
+-  :root[data-fish-glass] body .segs .thumb { background: color-mix(in srgb, var(--mark-fill) 55%, transparent); }
+-  :root[data-fish-glass] body :is(.nav button.on, .row.sel, .sub.sel) { background: color-mix(in srgb, var(--sel) 55%, transparent); }
+-  /* menus, sheets and confirmations */
+-  :root[data-fish-glass] body :is(.pop, .modal .dialog, .action-confirm) {
+-    background: color-mix(in srgb, var(--card) var(--fish-glass-overlay-fill), transparent);
+-    box-shadow: inset 0 1px 0 var(--lg-rim-line), inset 0 -1px 0 var(--lg-rim-shade), 0 18px 50px rgba(0, 0, 0, .28);
++  /* menus, sheets, pickers, floating tooltips and confirmations */
++  :root[data-fish-glass] body :is(
++    .pop, .modal .dialog, .action-confirm, .fc-picker,
++    .view-ends, .set-hint, .cc-tip, .led-chart .tip, .heat-tip, .ctx-tip, body.panel .profiles.open
++  ) {
++    background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-overlay-fill), var(--lg-glass-wash));
++    -webkit-backdrop-filter: var(--fish-glass-overlay-filter, blur(var(--fish-glass-overlay-blur)) saturate(190%) brightness(1.06) contrast(1.03));
++    backdrop-filter: var(--fish-glass-overlay-filter, blur(var(--fish-glass-overlay-blur)) saturate(190%) brightness(1.06) contrast(1.03));
++    border-color: transparent;
++    box-shadow:
++      inset 0 1px 0 var(--lg-rim-inset-top),
++      inset 0 -1px 0 var(--lg-rim-shade),
++      inset 0 0 0 .5px var(--lg-rim-base),
++      var(--lg-shadow-pop);
+   }
+-  /* 柔光：左上冷光 + 右下壳光（只给大面，小控件上会显脏） */
+-  :root[data-fish-glass] body :is(.sidebar, header.top, .list, .card, .pop, .modal .dialog, .action-confirm)::before {
++  /* 液态凸面釉光：左上镜面 + 右下折射反光 + 轻弧面玻璃光泽 */
++  :root[data-fish-glass] body :is(
++    .list, .card, .stats.empty, .pm-card, .pm-hero, .pm-rank,
++    .ag-install-row, .ag-lead.welcome, .guide, .deprecation, .provider-discovery,
++    .sm-consent, .sm-subs-list, .pu-none, .ctx-none,
++    .subscription-card, .pq-card, .pu-card, .kpi, .chart,
++    .led-strip, .led-trend, .led-up, .led-speed, .led-heat, .led-box,
++    .sess-card, .ctx-card, .ctx-agent, .ctx-tune, .ctx-sess-list, .rt-gtpl-card,
++    .pop:not(.am-pop), .modal .dialog, .action-confirm, .fc-picker,
++    .set-hint, .cc-tip, .led-chart .tip, .heat-tip, .ctx-tip, body.panel .profiles.open
++  )::before {
+     content: "";
+     position: absolute;
+     inset: 0;
+     border-radius: inherit;
+     pointer-events: none;
+     background:
+-      radial-gradient(130% 85% at 18% -10%, var(--lg-sheen-a), transparent 62%),
+-      radial-gradient(90% 70% at 105% 110%, var(--lg-sheen-b), transparent 68%);
++      radial-gradient(460px 120px at 14% -16px, color-mix(in srgb, var(--fish-glass-tint, #ffffff) 24%, var(--lg-sheen-a)) 0%, transparent 62%),
++      radial-gradient(380px 110px at 92% calc(100% + 14px), color-mix(in srgb, var(--fish-glass-tint, #93c5fd) 20%, var(--lg-sheen-b)) 0%, transparent 65%),
++      linear-gradient(175deg, var(--lg-convex-top) 0%, transparent 96px, transparent calc(100% - 48px), var(--lg-convex-bot) 100%);
+   }
+-  /* 高光边：1px 渐变描边，mask 挖掉中间，只留边 */
+-  :root[data-fish-glass] body :is(.sidebar, header.top, .list, .card, .pop, .modal .dialog, .action-confirm)::after {
++  /* 360° 菲涅尔绕边高光：conic-gradient 绕四角均匀流动，四条边与四角绝不消失 */
++  :root[data-fish-glass] body :is(
++    .list, .card, .stats.empty, .pm-card, .pm-hero, .pm-rank,
++    .ag-install-row, .ag-lead.welcome, .guide, .deprecation, .provider-discovery,
++    .sm-consent, .sm-subs-list, .pu-none, .ctx-none,
++    .subscription-card, .pq-card, .pu-card, .kpi, .chart,
++    .led-strip, .led-trend, .led-up, .led-speed, .led-heat, .led-box,
++    .sess-card, .ctx-card, .ctx-agent, .ctx-tune, .ctx-sess-list, .rt-gtpl-card,
++    .pop:not(.am-pop), .modal .dialog, .action-confirm, .fc-picker,
++    .view-ends, .set-hint, .cc-tip, .led-chart .tip, .heat-tip, .ctx-tip, body.panel .profiles.open
++  )::after {
+     content: "";
+     position: absolute;
+     inset: 0;
+     border-radius: inherit;
+     padding: 1px;
+     pointer-events: none;
+-    background: linear-gradient(145deg, var(--lg-rim-line), transparent 38%, transparent 62%, var(--lg-rim-line-2));
++    background: conic-gradient(
++      from 315deg at 50% 50%,
++      var(--lg-rim-hi) 0deg,
++      var(--lg-rim-mid) 95deg,
++      var(--lg-rim-lo) 175deg,
++      var(--lg-rim-mid) 265deg,
++      var(--lg-rim-hi) 360deg
++    );
+     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+     -webkit-mask-composite: xor;
+     mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+     mask-composite: exclude;
+-    opacity: .7;
++    opacity: .95;
+   }
+ }
+-/* A provider editor's fields and a long dialog's prose stay on solid ground.
+-   Only its existing head/footer and outer shell transmit the backdrop. */
+-:root[data-fish-glass] body .modal .editor.framed > .ebody {
+-  background: var(--card);
+-}
+-:root[data-fish-glass] body :is(.sidebar, header.top, .list, .card, .pop, .modal .dialog, .action-confirm) :focus-visible {
+-  outline: 2px solid var(--accent);
+-  outline-offset: 2px;
+-}
+ /* Engines without this media feature keep the conservative fills above.
+    No glass animation is introduced, irrespective of motion preferences. */
+ @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+-  :root[data-fish-glass] body :is(.sidebar, header.top, .list, .card, .pop, .modal .dialog, .action-confirm, .proto.pick, .sess-pick, .set-field, input:not([type=checkbox]):not([type=range]), textarea, select) {
++  :root[data-fish-glass] body :is(
++    .sidebar, header.top, .list, .card, .stats.empty, .pm-card, .pm-hero, .pm-rank,
++    .ag-install-row, .ag-lead.welcome, .guide, .deprecation, .provider-discovery,
++    .sm-consent, .sm-subs-list, .plugin-panel-body, .subscription-card, .pq-card,
++    .pu-card, .pu-none, .kpi, .chart, .led-strip, .led-trend, .led-up, .led-speed,
++    .led-heat, .led-box, .led-wrap, .qt-wrap, .sess-card, .ctx-card, .ctx-agent,
++    .ctx-tune, .ctx-sess-list, .ctx-none, .pop, .modal .dialog, .action-confirm,
++    .fc-picker, .view-ends, .set-hint, .cc-tip, .led-chart .tip, .heat-tip, .ctx-tip,
++    body.panel .profiles.open, .proto.pick, .sess-pick, .set-field, .segs,
++    .chip-input, .cxpick, .lib-filepick, .lib-browserask-pick, .rt-pick,
++    input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]):not([type=button]):not([type=submit])),
++    textarea, select
++  ) {
+     background: var(--card);
+     background-image: none;
+     -webkit-backdrop-filter: none;
+     backdrop-filter: none;
++    box-shadow: none;
+   }
+ }
+ 
+@@ -151,8 +303,10 @@
+ 
+ 
+ 
+-/* ── Settings › Appearance › Font color 面板 ───────────────────────────────
+-   独立的多级面板：每级一个取色器 + 十六进制 + 清除；“深色单独设置”时多一组。 */
++/* ── Settings › Appearance › Glass color & Font color 面板 ───────────────── */
++.glass-color-pick { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; justify-content: flex-end; flex-wrap: wrap; }
++.glass-color-pick .accent-pick { margin: 0; }
++#accentRow + .font-color-panel > .row:first-child { border-top: 1px solid var(--line-2); }
+ .font-color-panel { display: block; min-width: 0; }
+ .fc-actions { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; justify-content: flex-end; }
+ .fc-hex { min-width: 8.5em; font: 11.5px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); text-align: right; }
+@@ -187,696 +341,783 @@
+   扫的是 app.css 与各插件页自己的 css；命中 = 「background 用实色令牌铺底」
+   且不是交互态、表单控件或正文区。只改 background-color，不碰布局属性。*/
+ :root[data-fish-glass] body #agents > .row.dragging {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body #panelKey .key-rec {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body #providers > .row.dragging {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body #view-gateway .find {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body #view-providers .pv-sel {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .acc.adding .bulk-keys {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .accts {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .achip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .action-confirm {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ag-acc {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ag-chip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ag-diff-file {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ag-install-row {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ag-lead.welcome {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .ag-open .field {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ag-show {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ag-up {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .call-archive {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .call-body {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .call-wire {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .call-wire-note {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .cc-tip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .chart {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .chip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ctx-agent {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ctx-card {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ctx-none {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ctx-sess-list {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ctx-spark .at {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ctx-tune {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .cx-t {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .cxpick {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .deprecation {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .editor .acct-proxies {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .editor .key-rates {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .guide {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .guide-agent {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .heat-grid .wd {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ic-stack .disc {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .kpi {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led th {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led-heat {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led-req .led-box {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led-spd thead th {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led-speed {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led-strip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led-trend {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led-up {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led-wrap {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-acct {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .lib-ag.profiles .cnt {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-bili-set .lib-bili-growth {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .lib-browserask-pick {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-empty {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .lib-filepick {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-filter {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-hubaddr {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-hubnode {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-hubstack > * {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-mdview {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .lib-pickbar {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .lib-row > .lib-agents .lib-ag {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-text.lib-skilltext {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-text.small {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .list {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .mask-tip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .mask-try-in {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .mchip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .mfoot .text.action:disabled {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .mk-card {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .mk-find {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .mk-sheet .mk-browser-folder {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .mname {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .mnhead {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .mo-node .ic {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .modal .dialog {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-blocked {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-card {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-content {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-ctip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-demo {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-facet {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-how {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-hub {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-req {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .plugin-panel-body {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pm-browse {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pm-card {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pm-fact {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pm-hero {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pm-rank {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .pop.proto-menu.rt-metric-menu {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .pop.proto-menu.rt-purpose-menu {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .pop.proto-menu.rt-skip-menu {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .pop.proto-menu.sess-carry-menu {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .pop.proto-menu.sess-menu {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .pop.proto-menu.sm-agent-menu {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pq-arow {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pq-card {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pq-dial b {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pr-list {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pr-none {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pr-picks {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pr-stage {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .prof-detail {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .provider-discovery {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ps-hub {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pu-card {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pu-none {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pu-tot {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .qt .qt-sub {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .qt-wrap {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rate-win .day-chip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .row.pref .set-field {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-accts li {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-bodies {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-cx {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-gedit .fbl > .fbrow.dragging {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-gimport-text {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-groups > .rt-group.dragging {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-node {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-rules > .fbl > .rt-rule.dragging {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .search-unit {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .sess-card {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .sess-filter {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .sess-menu .sc-top {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .sess-pick {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .sheet .find {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .sheet .sponsor-me {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .sm-subs-list {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .snip {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .snip-wrap > .copy {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .stats.empty {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .stats.indexing {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .subscription-card {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .subscription-head .us-more {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .text.action {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .update-hide {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .xq-bok {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .xq-box {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .xq-divider span {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body [type=color] {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body [type=file] {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body [type=hidden] {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--card)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body #view-providers .row.pv-pick.picked {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .acc.adding {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .accts .keys-tools {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .accts.sorting > .dragging {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
+-}
+-:root[data-fish-glass] body .action-confirm .confirm-names {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ag-exp {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .gw-keys.sorting > .acc.dragging {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-detail {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-md {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-projopts {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-row.lib-grouphead {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-subhead {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .lib-tools {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-kind {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-msg {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .msk-val {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pm-md blockquote {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pm-md pre {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pm-md th {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pr-a .kind {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .pr-a .m {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .ps-node {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rp-req .kind {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-accts li.rt-sub {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-ctx-s[aria-pressed="true"] {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-req[aria-pressed="true"] {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-session {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .rt-steps li .kind {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .search-key-list.sorting > .acc.dragging {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .signing {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .subscription-acct {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .xq-field {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-glass-wash, transparent));
+ }
+ :root[data-fish-glass] body .led-hscroll {
+-  background-color: color-mix(in srgb, var(--bg) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--bg)) var(--fish-glass-content-fill), transparent);
+ }
+ :root[data-fish-glass] body .sess-talk {
+-  background-color: color-mix(in srgb, var(--bg) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface, var(--bg)) var(--fish-glass-content-fill), transparent);
+ }
+ /* gen:glass-surfaces:end */
+ 
+-/* 2.4.4: 吸顶页头与页签条的底 ------------------------------------------------
+-   设置的页头原本刷一层 92% 不透明的 --bg，并且上下各外扩 6px：玻璃开着时，
+-   页签下面就多了一道与四周对不上的深色唇边（用户说的「意义不明的底部」）。
+-   改成跟随页面自己的遮罩，模糊与吸顶行为都不动；库与插件页的页头直接透明。 */
+-:root[data-fish-glass] body :is(#view-settings .set-head, #addSheet > .row-head)::before {
+-  background: var(--wall-veil, color-mix(in srgb, var(--bg) 92%, transparent));
+-}
+-:root[data-fish-glass] body :is(#view-library .lib-head, #view-plugins .pm-head) {
++/* ── Nested surfaces & Modal continuity (avoid opaque middles / double blur) ── */
++:root[data-fish-glass] body :is(.list, .card, .modal .dialog, .pop, .subscription-card, .ctx-card, .ctx-agent, .ctx-tune, .led-strip, .led-trend, .led-up, .led-speed, .led-heat, .sess-card) :is(.list, .card, .subscription-acct, .quota-all, .ctx-sess-list, .qt-wrap) {
++  -webkit-backdrop-filter: none;
++  backdrop-filter: none;
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-inner-bg));
++  border-color: transparent;
++  box-shadow: inset 0 0 0 1px var(--lg-inner-line);
++}
++:root[data-fish-glass] body :is(.list, .card, .modal .dialog, .pop, .subscription-card, .ctx-card, .ctx-agent, .ctx-tune, .led-strip, .led-trend, .led-up, .led-speed, .led-heat, .sess-card) :is(.list, .card, .subscription-acct, .quota-all, .ctx-sess-list)::before,
++:root[data-fish-glass] body :is(.list, .card, .modal .dialog, .pop, .subscription-card, .ctx-card, .ctx-agent, .ctx-tune, .led-strip, .led-trend, .led-up, .led-speed, .led-heat, .sess-card) :is(.list, .card, .subscription-acct, .quota-all, .ctx-sess-list)::after {
++  content: none;
++  display: none;
++}
++:root[data-fish-glass] body :is(.modal .editor.framed, .modal .editor.pm-detail.framed, .modal .editor.sess-sheet) > .ebody {
+   background: transparent;
++  background-color: transparent;
+ }
+-
+-/* 2.4.5: 选中态与悬停 —— 玻璃的「凸起高光」 -------------------------------
+-   原来选中行只是一块 --pill / --mark-fill 的实色，在玻璃底下看着是黑灰方块。
+-   这里把它做成玻璃凸起：上半亮、下半暗的渐变底 + 内高光边 + 轻投影，
+-   换选中时用 transition 滑动过去，像从平面里抬起来。
+-   只改 background / box-shadow / transition：不位移、不改尺寸。 */
+ :root[data-fish-glass] body :is(
+-  .nav button.on, #prefs.on,
+-  .row.on, .row.sel, .sub.sel, .row.picked,
+-  .segs .opt.on, .segs .thumb,
+-  .lib-tab.on, .pm-tab.on, .set-tabs button.on, .warm-tabs button.on,
+-  .tabs button.on, .chips .on, .pv-pick.picked
++  .ag-exp, .lib-detail, .lib-md, .lib-mdview, .lib-text.lib-skilltext,
++  .lib-row.open, .ctx-sess.open, .rt-accts li.rt-fold.open, .call-item.open, body.panel .row.agent.open,
++  .rt-gtpl-card, .led-archive,
++  .pm-md blockquote, .pm-md pre, .pm-md th, .action-confirm .confirm-names, .rt-gedit > .bar
+ ) {
+-  background:
+-    linear-gradient(180deg,
+-      color-mix(in srgb, var(--mark-fill, var(--pill)) 82%, transparent) 0%,
+-      color-mix(in srgb, var(--mark-fill, var(--pill)) 52%, transparent) 100%);
+-  box-shadow:
+-    inset 0 1px 0 var(--lg-rim-line, rgba(255,255,255,.30)),
+-    inset 0 -1px 0 var(--lg-rim-shade, rgba(0,0,0,.28)),
+-    0 2px 6px rgba(0,0,0,.18);
+-  transition: background .18s var(--ease), box-shadow .18s var(--ease);
++  background-color: color-mix(in srgb, var(--lg-surface-2, var(--card-2)) var(--fish-glass-content-fill), var(--lg-inner-bg));
++  border-color: var(--lg-inner-line);
++  box-shadow: none;
+ }
+-/* 悬停：比选中的低一档，只抬一点点，不抢选中 */
+-:root[data-fish-glass] body :is(
+-  .nav button[data-view]:hover:not(.on), #prefs:hover:not(.on),
+-  .row:hover:not(.on):not(.sel), .lib-card:hover, .pm-card:hover
+-) {
+-  background: color-mix(in srgb, var(--card) 58%, transparent);
+-  box-shadow: inset 0 1px 0 var(--lg-rim-line, rgba(255,255,255,.22));
++:root[data-fish-glass] body .pm-facts {
++  background: var(--lg-inner-line);
++  border-color: var(--lg-inner-line);
++}
++:root[data-fish-glass] body .led-hscroll {
++  background-color: transparent;
++}
++:root[data-fish-glass] body .ctx-tile.free {
++  background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--fg) 5.5%, transparent) 0 1px, transparent 1px 6px), color-mix(in srgb, var(--fg) 1.5%, var(--lg-surface));
++}
++:root[data-fish-glass] body.panel .ag-open .field:hover {
++  background: color-mix(in srgb, var(--lg-surface) var(--fish-glass-control-fill), var(--lg-hover-bg));
++  box-shadow: inset 0 0 0 1px var(--lg-control-line);
+ }
+ 
+-/* 2.4.5: 补充覆盖（生成器抓不到的写法）-------------------------------------
+-   审计脚本在预览里逐元素比对「仍然不透明的实底」时，这几处始终没能被生成规则
+-   命中（选择器带 :not()/state 组合或写在其它规则里），在这里点名补上。
+-   同样只改背景与阴影，不动布局。 */
++/* ── Overlays (high specificity over plugin menus that set background: var(--card)) ── */
+ :root[data-fish-glass] body :is(
+-  .nav-top-hl, .row.model.selected, .accts.gw-keys, .lib-install,
+-  .gw-keys, .sheet, .lib-safind, .pm-card, .pm-hero, .pm-rank
++  .pop, .pop.am-pop, .pop.model-picker, .pop.row-menu, .pop.proto-menu,
++  .pop.proto-menu.sess-menu, .pop.proto-menu.rt-metric-menu, .pop.proto-menu.rt-purpose-menu,
++  .pop.proto-menu.rt-skip-menu, .pop.proto-menu.sm-agent-menu, .pop.proto-menu.sess-carry-menu,
++  .modal .dialog, .action-confirm, .fc-picker,
++  .view-ends, .set-hint, .cc-tip, .led-chart .tip, .heat-tip, .ctx-tip, body.panel .profiles.open
+ ) {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-content-fill), transparent);
++  background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-overlay-fill), var(--lg-glass-wash));
++  -webkit-backdrop-filter: var(--fish-glass-overlay-filter, blur(var(--fish-glass-overlay-blur)) saturate(190%) brightness(1.06) contrast(1.03));
++  backdrop-filter: var(--fish-glass-overlay-filter, blur(var(--fish-glass-overlay-blur)) saturate(190%) brightness(1.06) contrast(1.03));
++  border-color: transparent;
+ }
+-:root[data-fish-glass] body .row.model.selected {
+-  background-color: color-mix(in srgb, var(--card-2) var(--fish-glass-content-fill), transparent);
++:root[data-fish-glass] body .ctx-tip {
++  color: var(--fg);
+ }
+-/* 侧栏那道跟着选中的滑块：给它玻璃的高光边，抬起来的感觉由渐变与阴影给 */
+-:root[data-fish-glass] body #nav > .nav-top-hl:not([hidden]) {
+-  background:
+-    linear-gradient(180deg,
+-      color-mix(in srgb, var(--card) 88%, transparent) 0%,
+-      color-mix(in srgb, var(--card) 62%, transparent) 100%);
+-  box-shadow:
+-    inset 0 1px 0 var(--lg-rim-line, rgba(255,255,255,.30)),
+-    inset 0 -1px 0 var(--lg-rim-shade, rgba(0,0,0,.26)),
+-    0 2px 6px rgba(0,0,0,.16);
++:root[data-fish-glass] body .pop.proto-menu.sess-menu .sc-top {
++  background-color: transparent;
++}
++:root[data-fish-glass] body .pop.am-pop::before {
++  background: color-mix(in srgb, var(--lg-surface) var(--fish-glass-overlay-fill), var(--lg-glass-wash));
++  box-shadow: -.5px -.5px 0 color-mix(in srgb, var(--lg-rim-mid) var(--fish-glass-overlay-fill), transparent);
++}
++:root[data-fish-glass] body .pop.am-pop.up::before {
++  box-shadow: .5px .5px 0 color-mix(in srgb, var(--lg-rim-mid) var(--fish-glass-overlay-fill), transparent);
+ }
+ 
+-/* 2.4.5: 页内工具条与页脚（新增「工具条」区域）------------------------------
+-   设置页头、库/插件页头、库的安装条、概览的统计条：它们是压在内容上的
+-   一条，读者常想单独调透。顶栏与侧栏也各自独立了。
+-   高光边与阴影的浓度跟着 fill 走：fill=0 时连边框一起消失，是真全透。 */
++/* ── Page bars, sticky headers & bottom footers (--fish-glass-bar-*) ───────── */
++:root[data-fish-glass] body :is(
++  #view-library .lib-head, #view-plugins .pm-head, #view-settings .set-head,
++  #addSheet > .row-head, .msk-onebar
++)::before {
++  background: color-mix(in srgb, var(--lg-surface) var(--fish-glass-bar-fill), transparent);
++  -webkit-backdrop-filter: var(--fish-glass-bar-filter, blur(var(--fish-glass-bar-blur)));
++  backdrop-filter: var(--fish-glass-bar-filter, blur(var(--fish-glass-bar-blur)));
++  box-shadow: 0 1px 0 color-mix(in srgb, var(--lg-rim-mid) var(--fish-glass-bar-fill), transparent);
++}
++:root[data-fish-glass] body #view-providers .after-list::before {
++  background: linear-gradient(
++    to bottom,
++    transparent,
++    color-mix(in srgb, var(--lg-surface) var(--fish-glass-bar-fill), transparent) 12px
++  );
++  -webkit-backdrop-filter: var(--fish-glass-bar-filter, blur(var(--fish-glass-bar-blur)));
++  backdrop-filter: var(--fish-glass-bar-filter, blur(var(--fish-glass-bar-blur)));
++  box-shadow: none;
++}
++:root[data-fish-glass] body #view-providers .after-list > button {
++  background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-bar-fill), var(--lg-inner-bg));
++  -webkit-backdrop-filter: blur(max(var(--fish-glass-bar-blur), 14px)) saturate(175%);
++  backdrop-filter: blur(max(var(--fish-glass-bar-blur), 14px)) saturate(175%);
++  box-shadow: inset 0 1px 0 var(--lg-rim-inset-top), inset 0 0 0 1px var(--lg-rim-base), 0 6px 18px rgba(0, 0, 0, .16);
++}
++:root[data-fish-glass] body .pm-manual {
++  background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-bar-fill), var(--lg-inner-bg));
++  -webkit-backdrop-filter: blur(max(var(--fish-glass-bar-blur), 16px)) saturate(180%);
++  backdrop-filter: blur(max(var(--fish-glass-bar-blur), 16px)) saturate(180%);
++  box-shadow: inset 0 1px 0 var(--lg-rim-inset-top), inset 0 0 0 1px var(--lg-rim-base), var(--lg-shadow);
++}
++:root[data-fish-glass] body .pm-manual::before {
++  background: none;
++  background-color: transparent;
++  -webkit-backdrop-filter: none;
++  backdrop-filter: none;
++  box-shadow: none;
++}
++:root[data-fish-glass] body .pm-manual::after {
++  border-color: var(--lg-rim-mid);
++}
+ :root[data-fish-glass] body :is(
+   #view-settings .set-head, #view-library .lib-head, #view-plugins .pm-head,
+-  .lib-install, .stats, .kpi, .chart, #addSheet > .row-head
++  #addSheet > .row-head, .lib-install, .lib-safind, .use.add, .sheet .add-tools
+ ) {
+-  background-color: color-mix(in srgb, var(--card) var(--fish-glass-bar-fill), transparent);
+-  box-shadow:
+-    inset 0 1px 0 color-mix(in srgb, var(--lg-rim-line, rgba(255,255,255,.30)) var(--fish-glass-bar-fill), transparent),
+-    inset 0 -1px 0 color-mix(in srgb, var(--lg-rim-shade, rgba(0,0,0,.26)) var(--fish-glass-bar-fill), transparent);
++  background: none;
++  background-color: transparent;
++  box-shadow: none;
++  border-color: transparent;
+ }
+-/* 侧栏与顶栏：fill 掉到 0 时把内描边一起收掉，不留一条亮线 */
+-:root[data-fish-glass] body .sidebar {
+-  box-shadow:
+-    inset 0 1px 0 color-mix(in srgb, var(--lg-rim-line, rgba(255,255,255,.30)) var(--fish-glass-sidebar-fill), transparent),
+-    inset 0 -1px 0 color-mix(in srgb, var(--lg-rim-shade, rgba(0,0,0,.26)) var(--fish-glass-sidebar-fill), transparent);
++:root[data-fish-glass] body :is(.lib-pickbar, .lib-savebar) {
++  background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-bar-fill), var(--lg-inner-bg));
++  -webkit-backdrop-filter: blur(max(var(--fish-glass-bar-blur), 14px)) saturate(180%);
++  backdrop-filter: blur(max(var(--fish-glass-bar-blur), 14px)) saturate(180%);
++  border-color: transparent;
++  box-shadow: inset 0 1px 0 var(--lg-rim-inset-top), inset 0 0 0 1px var(--lg-rim-mid), var(--lg-shadow);
+ }
+-:root[data-fish-glass] body header.top {
+-  box-shadow:
+-    inset 0 1px 0 color-mix(in srgb, var(--lg-rim-line, rgba(255,255,255,.30)) var(--fish-glass-header-fill), transparent),
+-    inset 0 -1px 0 color-mix(in srgb, var(--lg-rim-shade, rgba(0,0,0,.26)) var(--fish-glass-header-fill), transparent),
+-    inset 0 -1px 0 var(--line);
++:root[data-fish-glass] body .stats:not(.empty) {
++  background: none;
++  background-color: transparent;
++  box-shadow: none;
++  border-color: transparent;
++}
++
++/* ── Search inputs inside wrapper boxes (never draw double inner box) ──────── */
++:root[data-fish-glass] body :is(
++  .pop .search, .pop.am-pop .am-search, .lib-find, .pm-find,
++  .mk-find, .lib-hubsearch, .abal-form, .rt-cond
++) input {
++  background: none;
++  background-color: transparent;
++  border: 0;
++  border-color: transparent;
++  box-shadow: none;
++  outline: none;
++}
++:root[data-fish-glass] body .pop .search {
++  border-bottom-color: var(--lg-inner-line);
++}
++:root[data-fish-glass] body .pop :is(.search:focus-within, .pop.keying .search) {
++  border-bottom-color: var(--lg-rim-hi);
++}
++:root[data-fish-glass] body :is(.pm-find, .lib-find, .mk-find, .lib-hubsearch, .am-search):focus-within {
++  background-color: color-mix(in srgb, var(--lg-surface) var(--fish-glass-control-fill), var(--lg-control-bg));
++  box-shadow: inset 0 0 0 1px var(--lg-focus-ring), 0 0 0 2.5px var(--lg-focus-halo);
+ }
+ 
+-/* 2.4.5: 去黑框、去选中描边，选中一律用玻璃凸起 -----------------------------
+-   玻璃底下，实色 1px 边框与强调色描边都会变成「一圈看不懂的黑/亮框」。
+-   这里把边框改成透明（几何尺寸不变），选中态换成凸起高光。只动颜色类属性。 */
++/* ── Clean glass borders on controls & panels ──────────────────────────────── */
+ :root[data-fish-glass] body :is(
+-  .list, .card, .pop, .modal .dialog, .action-confirm, .sheet,
++  .list, .card, .stats.empty, .pop, .modal .dialog, .action-confirm, .sheet,
+   .pm-card, .pm-hero, .pm-rank, .lib-card, .stats, .kpi, .chart,
+-  button, input, select, textarea, .segs, .field, .proto.pick, .sess-pick, .set-field
++  .subscription-card, .pq-card, .pu-card, .pu-none, .qt-wrap,
++  .led-strip, .led-trend, .led-up, .led-speed, .led-heat, .led-box, .led-wrap, .led-archive,
++  .sess-card, .ctx-card, .ctx-agent, .ctx-tune, .ctx-sess-list, .ctx-none, .rt-gtpl-card,
++  .ag-install-row, .ag-lead.welcome, .guide, .deprecation, .provider-discovery,
++  .sm-consent, .sm-subs-list, .plugin-panel-body, .fc-picker,
++  .view-ends, .set-hint, .cc-tip, .led-chart .tip, .heat-tip, .ctx-tip, body.panel .profiles.open,
++  textarea, select, .segs, .field, .proto.pick, .sess-pick,
++  .chip-input, .cxpick, .lib-filepick, .lib-browserask-pick, .rt-pick, .rt-gadd.open,
++  .set-field, .pm-find, .lib-find, .find, .mk-find, .lib-hubsearch, .am-search,
++  input:where(:not([type=checkbox]):not([type=radio]):not([type=range]))
+ ) {
+   border-color: transparent;
+ }
+-/* 焦点环：不再是 3px 强调色圆圈，改成一层薄薄的玻璃光 */
+-:root[data-fish-glass] body :is(input, textarea, select, .pm-find, .lib-find, .find, .set-q):focus-visible {
++:root[data-fish-glass] body :is(.pm-pop, .pm-act.get, .pm-act.go, .pm-act.pm-up, .use.add, .sheet .sponsor-me) {
++  box-shadow: inset 0 0 0 1px var(--lg-control-line);
++}
++:root[data-fish-glass] body .pm-dact .pm-act.go {
++  box-shadow: none;
++}
++
++/* ── Switches (.lib-switch across Agents, Providers, Library, Plugins, Usage) ─ */
++:root[data-fish-glass] body .lib-switch {
++  background: var(--lg-switch-off);
++  border-color: transparent;
++  box-shadow: inset 0 0 0 1px var(--lg-switch-off-rim);
++}
++:root[data-fish-glass] body .lib-switch i {
++  background: #ffffff;
++  box-shadow: 0 1px 3px rgba(0, 0, 0, .28), 0 0 0 .5px rgba(0, 0, 0, .06);
++}
++:root[data-fish-glass] body .lib-switch.on {
++  background: var(--lg-switch-on);
++  box-shadow: inset 0 0 0 1px var(--lg-switch-on-rim), 0 1px 6px color-mix(in srgb, var(--accent) 24%, transparent);
++}
++:root[data-fish-glass] body .lib-switch.on i {
++  background: #ffffff;
++  box-shadow: 0 1px 3px rgba(0, 0, 0, .30);
++}
++
++/* ── Library Agent chips (.lib-ag) & small badges/glyphs (zero black rings!) ─ */
++:root[data-fish-glass] body :is(.lib-row, .lib-grouphead, .lib-row.click:hover) > .lib-agents .lib-ag,
++:root[data-fish-glass] body :is(.lib-row, .lib-grouphead, .lib-row.click:hover) > .lib-agents .lib-ag:not(:focus-visible),
++:root[data-fish-glass] body :is(.lib-row, .lib-grouphead, .lib-row.click:hover) > .lib-agents .lib-ag:not(:focus) {
+   outline: none;
+-  box-shadow:
+-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 46%, transparent),
+-    0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
++  outline-color: transparent;
++  border-color: transparent;
++  background: none;
++  background-color: transparent;
++  box-shadow: none;
++}
++:root[data-fish-glass] body :is(.lib-row, .lib-grouphead) > .lib-agents .lib-ag + .lib-ag {
++  margin-left: 2px;
++}
++:root[data-fish-glass] body :is(.lib-row, .lib-grouphead) > .lib-agents .lib-ag.on,
++:root[data-fish-glass] body :is(.lib-row, .lib-grouphead) > .lib-agents .lib-ag:hover {
++  background-color: var(--lg-inner-bg);
++  box-shadow: inset 0 0 0 1px var(--lg-control-line);
++}
++:root[data-fish-glass] body .lib-ag.warn::after {
++  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35);
++}
++:root[data-fish-glass] body .lib-ag.always::before {
++  background: var(--lg-control-bg);
++  box-shadow: inset 0 0 0 1px var(--lg-control-line);
++}
++:root[data-fish-glass] body .lib-ag.profiles .cnt {
++  background: var(--lg-surface);
++  border-color: var(--lg-control-line);
+ }
+-/* 选中/按下：一律是抬起来的玻璃，不再是一圈描边或一块灰 */
+ :root[data-fish-glass] body :is(
+-  [aria-selected="true"], [aria-pressed="true"], [aria-current="page"],
+-  .row.sel, .row.on, .row.model.selected, .lib-card.sel, .pm-card.sel,
+-  .segs .opt[aria-pressed="true"]
++  .lib-glyph, .lib-tag, .use, .gw-mark, .badge, .disc, .snip-wrap > .copy, .text.action
+ ) {
++  background: none;
++  background-color: transparent;
+   border-color: transparent;
+-  background:
+-    linear-gradient(180deg,
+-      color-mix(in srgb, var(--mark-fill, var(--pill)) 84%, transparent) 0%,
+-      color-mix(in srgb, var(--mark-fill, var(--pill)) 54%, transparent) 100%);
+-  box-shadow:
+-    inset 0 1px 0 color-mix(in srgb, var(--lg-rim-line, rgba(255,255,255,.34)) 100%, transparent),
+-    inset 0 -1px 0 color-mix(in srgb, var(--lg-rim-shade, rgba(0,0,0,.26)) 100%, transparent),
+-    0 2px 7px rgba(0,0,0,.18);
+-  transition: background .18s var(--ease), box-shadow .18s var(--ease);
++  box-shadow: none;
++}
++:root[data-fish-glass] body :is(.lib-glyph.on, .gw-mark.on, .use.add:hover) {
++  background: var(--lg-hover-bg);
++  box-shadow: inset 0 0 0 1px var(--lg-control-line);
+ }
+ 
+-/* 2.4.5: 底条不绘制、图标不再带黑框 -----------------------------------------
+-   1) 页脚与工具条（库的安装条、供应商页的「添加供应商」行）默认就不画底板，
+-      只留上面的文字与按钮——用户明确要的是「底部不要那块」。
+-   2) 图标方块（.lib-glyph 用 --pill 铺底）、小徽章与开关不再带实底/描边：
+-      没点亮时就是一枚图标，不是黑框。 */
+-:root[data-fish-glass] body :is(
+-  .lib-install, .lib-safind, .use.add, .sheet .add-tools,
+-  #addSheet > .row-head
+-) {
++/* ── Segmented controls, navigation & selection: pure Glass crystal, decoupled from --accent ─ */
++:root[data-fish-glass] body .segs :is(.opt, .opt.on, .opt[aria-pressed="true"], .opt[aria-selected="true"]) {
+   background: none;
+   background-color: transparent;
++  border-color: transparent;
+   box-shadow: none;
++}
++:root[data-fish-glass] body #nav:has(> .nav-top-hl:not([hidden])) > :is(button.on, button[aria-current="page"]) {
++  background: none;
++  background-color: transparent;
+   border-color: transparent;
++  box-shadow: none;
+ }
+ :root[data-fish-glass] body :is(
+-  .lib-glyph, .lib-switch, .lib-tag, .use, .gw-mark, .badge,
+-  .disc, .snip-wrap > .copy, .text.action
++  .segs .thumb,
++  #nav > .nav-top-hl:not([hidden]),
++  #nav > button.on, #prefs.on, .nav-sub > button.cur, .nav-sub > button.on,
++  .snav button.on, .snav button[aria-current="page"],
++  .lib-tab.on, .pm-tab.on, .set-tabs button.on, .warm-tabs button.on,
++  .tabs button.on, .am-seg button.on, #gatewayKeys .klf-tab.on,
++  .rate-win .day-chip.on, .ctx-look-b.on, .editor.importapps .apptab.on, .sm-agents .opt.on
+ ) {
+-  background: none;
+-  background-color: transparent;
++  background: linear-gradient(180deg, var(--lg-sel-top) 0%, var(--lg-sel-bot) 100%);
+   border-color: transparent;
++  box-shadow:
++    inset 0 1px 0 var(--lg-sel-rim),
++    inset 0 0 0 .5px var(--lg-rim-mid),
++    0 2px 8px rgba(0, 0, 0, .15);
++  transition: background .18s cubic-bezier(.22, 1, .36, 1), box-shadow .18s cubic-bezier(.22, 1, .36, 1);
++}
++:root[data-fish-glass] body :is(
++  .pop li.sel, .pop li.cur, .row.sel, .row.on, .sub.sel, .row.picked,
++  .row.model.selected, .lib-card.sel, .pm-card.sel, .pv-pick.picked, .chips .on
++) {
++  background: linear-gradient(180deg, var(--lg-sel-top) 0%, var(--lg-sel-bot) 100%);
++  border-color: transparent;
++  box-shadow: inset 0 0 0 1px var(--lg-sel-rim);
++}
++:root[data-fish-glass] body :is(
++  .nav button[data-view]:hover:not(.on), #prefs:hover:not(.on), .nav-sub > button:hover:not(.cur),
++  .snav button:hover:not(.on), .pop li:hover:not(.group):not(.sel),
++  .proto-menu .pm-item:hover, .row-menu .rm-item:hover,
++  .row:hover:not(.on):not(.sel), .lib-card:hover, .pm-card:hover
++) {
++  background: var(--lg-hover-bg);
+   box-shadow: none;
+ }
+-/* 点亮时仍然给一层玻璃底，好分辨选中状态 */
+-:root[data-fish-glass] body :is(.lib-glyph.on, .lib-switch.on, .gw-mark.on, .use.add:hover) {
+-  background: color-mix(in srgb, var(--mark-fill, var(--pill)) 62%, transparent);
++
++/* ── Unified glass focus-visible (no harsh 2px solid accent ring anywhere) ── */
++:root[data-fish-glass] body :focus-visible {
++  outline: none;
++}
++:root[data-fish-glass] body :is(
++  textarea, select, .field, .proto.pick, .sess-pick, .lib-switch,
++  .pm-card, .pm-hero, .am-ri, .am-rk, .am-mr, .md-row, .ctx-sess-row,
++  input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):not([type=color]):not([type=button]):not([type=submit])),
++  button:where(:not(.lib-ag):not(.segs .opt))
++):focus-visible {
++  outline: none;
++  box-shadow: inset 0 0 0 1px var(--lg-focus-ring), 0 0 0 2.5px var(--lg-focus-halo);
++}
++:root[data-fish-glass] body :is(
++  .pop .search, .pop.am-pop .am-search, .lib-find, .pm-find,
++  .mk-find, .lib-hubsearch, .abal-form, .rt-cond
++) input:focus-visible {
++  outline: none;
++  box-shadow: none;
+ }
+diff --git a/internal/gui/assets/i18n.js b/internal/gui/assets/i18n.js
+index 895669a..b02772a 100644
+--- a/internal/gui/assets/i18n.js
++++ b/internal/gui/assets/i18n.js
+@@ -4098,6 +4098,7 @@ const I18N = {
+     "Your own text colour; empty follows the theme": "你自己的文字颜色；留空则跟随主题",
+     "Default": "默认",
+     "Preset": "预设",
++    "Glass color": "玻璃颜色",
+     "Subtle": "轻透",
+     "Balanced": "均衡",
+     "Opacity": "不透明度",
+@@ -9431,6 +9432,7 @@ const I18N = {
+     "Your own text colour; empty follows the theme": "你自己的文字颜色；留空则跟随主题",
+     "Default": "默认",
+     "Preset": "預設",
++    "Glass color": "玻璃顏色",
+     "Subtle": "輕透",
+     "Balanced": "均衡",
+     "Opacity": "不透明度",
+@@ -14778,6 +14780,7 @@ const I18N = {
+     "Your own text colour; empty follows the theme": "文字色を自分で決めます。空ならテーマに従います",
+     "Default": "既定",
+     "Preset": "プリセット",
++    "Glass color": "ガラスの色",
+     "Subtle": "控えめ",
+     "Balanced": "バランス",
+     "Opacity": "不透明度",
+@@ -20134,6 +20137,7 @@ const I18N = {
+     "Your own text colour; empty follows the theme": "Eigene Textfarbe; leer folgt dem Thema",
+     "Default": "Standard",
+     "Preset": "Voreinstellung",
++    "Glass color": "Glasfarbe",
+     "Subtle": "Dezent",
+     "Balanced": "Ausgewogen",
+     "Opacity": "Deckkraft",
+diff --git a/internal/gui/assets/index.html b/internal/gui/assets/index.html
+index ae04158..bf35ebf 100644
+--- a/internal/gui/assets/index.html
++++ b/internal/gui/assets/index.html
+@@ -258,10 +258,6 @@
+         <div class="who"><div class="name" data-t>Appearance</div><div class="sub om-only" data-t>Follows the Omarchy theme, as picked in Omarchy's menu</div></div>
+         <div id="themeSegs" class="om-hide"></div><span class="om-only om-theme-name"></span>
+       </div>
+-      <div class="row pref om-hide" id="accentRow">
+-        <div class="who"><div class="name" data-t>Accent color</div></div>
+-        <div id="accentPick" class="accent-pick" role="radiogroup"></div>
+-      </div>
+       <div class="row pref om-hide" id="wallpaperRow">
+         <div class="who"><div class="name" data-t>Background image</div></div>
+         <div id="wallpaperPick" class="wall-pick"></div>
+@@ -301,11 +297,21 @@
+         <div class="who"><div class="name" data-t>Preset</div><div class="sub" data-t>Surfaces take the theme's own colour, thinned: 100 % opacity with no blur is the solid look, and each region's numbers below are the truth.</div></div>
+         <div id="fishGlassSegs"></div>
+       </div>
++      <div class="row pref" id="fishGlassColorRow">
++        <div class="who"><div class="name" data-t>Glass color</div></div>
++        <div id="fishGlassColorPick" class="glass-color-pick"></div>
++      </div>
+       <div id="fishGlassRegions"></div>
+       <div id="fishGlassVeilRow"></div>
+     </div>
+     <div class="row-head set-sub-head"><div class="who"><div class="name" data-t>Font color</div></div></div>
+-    <div class="list prefs"><div id="fontColorPick" class="font-color-panel"></div></div>
++    <div class="list prefs">
++      <div class="row pref om-hide" id="accentRow">
++        <div class="who"><div class="name" data-t>Accent color</div></div>
++        <div id="accentPick" class="accent-pick" role="radiogroup"></div>
++      </div>
++      <div id="fontColorPick" class="font-color-panel"></div>
++    </div>
+   </section>
+   <section class="set-page" id="setPage-usage" role="tabpanel" aria-labelledby="setTab-usage">
+     <div class="list prefs">
+diff --git a/internal/gui/core_budget_test.go b/internal/gui/core_budget_test.go
+index 13c4dd4..6c752f8 100644
+--- a/internal/gui/core_budget_test.go
++++ b/internal/gui/core_budget_test.go
+@@ -17,8 +17,8 @@ import (
+ // never what pays for a change (#5918); the history of each number is in
+ // `git log -L` of this file.
+ const (
+-	appScriptBudget  = 1_087_361 // +543 for the Font color panel in app.js (applyFontColors writes the per-level stylesheet); app.js: 1,080,614 at 8016205e3, with the 5,653 of room it had; +123 for a sidebar list folded from its page's row (hkwok06 on X), its chevron and fold in navicons.js, imported with the first list; +57 for each account of a provider's Usage card in a card of its own (normalcoder_ on X), past the 24 of room left; +17 for an allowance card's wallet line under its rings (apple_test_src on X), the one filter shared with its text line; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
+-	coreScriptBudget = 1_273_636 // +783 for the Font color panel (per-level rows, the dark toggle and applyFontColors); +66 for the Font color row (a colour picker, its reset, and applying --fg); +54 for the See-through preset and opacity 0 support (a fifth preset row and the fill floor at 0); +59 for the Controls region (a fourth pair in the Liquid glass rows: buttons, fields and dropdowns); +1,766 for Settings › Appearance (the Liquid glass three-region rows, its presets and the live slider preview in appearance.js, and the Appearance tab the nine look rows moved to): they draw on every Settings view, so there is no page to move them to; every core script at 8016205e3, the old measure 682 over its cap there (#5918); +367 for the model test on a chosen account (tmr11235), no page left to move it to; +151 for the provider menu's "Only on this device" item and its four translations; +458 for Settings › About's Report a problem row and its translations; +113 for withScheme, the one rule every typed address goes through (eachg0 on X), cut to the shortest form that keeps it whole; +10 for the kept whole's tooltip (Musikrv77852 on X), the past-cycle line reused for it, no page left to move it to; +1,112 for Codex's Open button and its Open Codex with menu (Yink88564391 on X), packed to the shortest form, no page left to move them to; +168 for Discover's long lists drawn in part (the owner, 11-13), after the rest of its hook moved into plugingrid.js, imported when Plugins first draws; +296 for the cap toggle and Smart sentences that say what they do and the Sign in on another computer row (Wing8Aqua on X), packed to the shortest form, no page left to move them to; +333 for In turn's figure in a provider's editor and its words naming the message that goes round (Wing8Aqua on X), the figure itself in rotfig.js, imported when In turn is first shown, the hook packed to the shortest form; +236 for a lone capped Codex account's row saying its turns go to the fallbacks when Codex is connected (not_4O4 on X), the two helpers inlined, no page left to move it to; +717 for omp's advisor (Awad_Yoo on X, #6408): its three rows moved into ompadvisor.js, imported when an omp's settings show, and what is left is the import, the role's " · off" and the Settings line's name, packed to the shortest form; +468 for a plugin's own file import (auth.import) in the import sheet, in the plugin's words (marchen_cc on X), packed to one statement; importSay is read as the Providers rows draw, so it has no lazy page to go to, and nothing else was moved out; +180 for Claude Magpie's own Claude Code folder (xMopf7RF on X, #6459): its Advanced fold in claudemagpie.js, imported when it first shows, and what is left is the import and the fold's place in the Separate app line, 216 bytes packed to the shortest form, less the 36 of room there was; +81 for the Use Claude Magpie button on Claude Desktop's row (xMopf7RF on X), drawn by claudemagpie.js too, what is left the one line that places it (#2710); +225 for the Hermes row's Other profiles lines (Norethcy on X), which 1d60b165c took out while each profile had a row and c96f33d65 left with no place at all, packed to the shortest form; the dead hermes# Default note went with it, and the Agents rows draw it, so there is no page to move it to; +397 for a key's own price rate (tnt12231 on X): its lines, check and placeholder in keyrates.js, imported when a provider with two or more keys opens, and what is left is the import, the draft's copy, Advanced opening for it, the save's one line and proxyLines drawing another kind of line; +316 for an image or video model's chip saying what it makes from its right-click (iceloon on X): the chat chip's Makes… now shared with it, and the media chip's Copy model ID left out, packed to the shortest form; the provider's editor draws it, so there is no page to move it to; +67 for the Claude Code · Claude Magpie row saying it is on magpie through Claude Magpie (xMopf7RF on X), one line in connectLine with the shortest words that say it; the Agents rows draw it, so there is no page to move it to; +12 for AIGoCode's logo in pngIcons (MindfulReturn on X), the list every drawn icon is looked up in; +491 for each cost in the tray panel's and Requests' chart and ranking in its own provider's currency (onkashiko on X): ledProv and the provider passed through, packed to the shortest form; drawLedColumns and drawLedRank are shared by the panel, so there is no page to move it to; +326 for the Qwen AI platform's Token Plan sign-in (imthe99galaxy on X): its field, sign-in and wait in qianwenplan.js, imported when such a provider's editor opens, and what is left is the import and one quotaError line for its two refusals, packed to the shortest form; quotaError reads every card's error, so there is no page to move it to; +72 for Copy all keys (emilochen on X): its row in keyrates.js, imported when a provider with two or more keys opens through keyRateField, now told which of its parts to draw, and what is left is the one line that places it; +83 for the page saying it has gone from view, so what its Sessions and Usage pages keep goes in 30 s and not 7 minutes (P0 memory): folded into the visibilitychange listener every window has, packed to the shortest form, so there is no page to move it to; +270 for Providers' Select, to remove several at once (eiyuuzaki2333 on X): its rows, bar, removal and keys in pvpick.js, imported when Select is first clicked, and what is left is pvSel, the button's click and two lines in renderProviders, which draws the list, so there is no page to move it to; +81 for each account of a provider's Usage card in a card of its own (normalcoder_ on X): one line that makes the box, its brief look left to CSS, and renderQuotas, which draws every card, so there is no page to move it to; +17 for Kimi Code's booster balance under an allowance card's rings in the tray panel (apple_test_src on X): the card's text line and the wallet line share one filter, packed to the shortest form; panelQuotaCard draws every card, so there is no page to move it to; +51 for what a failed plugin install left in plugins/, listed under Installed with a Remove (CHENGJIAHEGOXIS on X): its section in plugininstalled.js as pmLeftovers, imported when Plugins first draws, and what is left is the one call after drawInstalled; draw is what draws the page, so there is no page to move it to; +123 for a sidebar list folded from its page's row (hkwok06 on X): the chevron, its click and the fold kept per page in navicons.js, imported with the first list, and what is left is the folded list read beside the hidden pages' (navList, which navMine now shares) and the two rows' clicks asking navFold first; navSubs draws every list, so there is no page to move it to; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
++	appScriptBudget  = 1_088_093 // +732 for independent fishGlassColor tint, per-region backdrop filter toggle at blur=0, and full-transparent sidebar edge control in applyGlass/prefsKeep; +543 for the Font color panel in app.js (applyFontColors writes the per-level stylesheet); app.js: 1,080,614 at 8016205e3, with the 5,653 of room it had; +123 for a sidebar list folded from its page's row (hkwok06 on X), its chevron and fold in navicons.js, imported with the first list; +57 for each account of a provider's Usage card in a card of its own (normalcoder_ on X), past the 24 of room left; +17 for an allowance card's wallet line under its rings (apple_test_src on X), the one filter shared with its text line; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
++	coreScriptBudget = 1_274_368 // +732 for independent glass colour tint and true blur=0/fill=0 full-transparent sidebar/header controls in core app.js; +783 for the Font color panel (per-level rows, the dark toggle and applyFontColors); +66 for the Font color row (a colour picker, its reset, and applying --fg); +54 for the See-through preset and opacity 0 support (a fifth preset row and the fill floor at 0); +59 for the Controls region (a fourth pair in the Liquid glass rows: buttons, fields and dropdowns); +1,766 for Settings › Appearance (the Liquid glass three-region rows, its presets and the live slider preview in appearance.js, and the Appearance tab the nine look rows moved to): they draw on every Settings view, so there is no page to move them to; every core script at 8016205e3, the old measure 682 over its cap there (#5918); +367 for the model test on a chosen account (tmr11235), no page left to move it to; +151 for the provider menu's "Only on this device" item and its four translations; +458 for Settings › About's Report a problem row and its translations; +113 for withScheme, the one rule every typed address goes through (eachg0 on X), cut to the shortest form that keeps it whole; +10 for the kept whole's tooltip (Musikrv77852 on X), the past-cycle line reused for it, no page left to move it to; +1,112 for Codex's Open button and its Open Codex with menu (Yink88564391 on X), packed to the shortest form, no page left to move them to; +168 for Discover's long lists drawn in part (the owner, 11-13), after the rest of its hook moved into plugingrid.js, imported when Plugins first draws; +296 for the cap toggle and Smart sentences that say what they do and the Sign in on another computer row (Wing8Aqua on X), packed to the shortest form, no page left to move them to; +333 for In turn's figure in a provider's editor and its words naming the message that goes round (Wing8Aqua on X), the figure itself in rotfig.js, imported when In turn is first shown, the hook packed to the shortest form; +236 for a lone capped Codex account's row saying its turns go to the fallbacks when Codex is connected (not_4O4 on X), the two helpers inlined, no page left to move it to; +717 for omp's advisor (Awad_Yoo on X, #6408): its three rows moved into ompadvisor.js, imported when an omp's settings show, and what is left is the import, the role's " · off" and the Settings line's name, packed to the shortest form; +468 for a plugin's own file import (auth.import) in the import sheet, in the plugin's words (marchen_cc on X), packed to one statement; importSay is read as the Providers rows draw, so it has no lazy page to go to, and nothing else was moved out; +180 for Claude Magpie's own Claude Code folder (xMopf7RF on X, #6459): its Advanced fold in claudemagpie.js, imported when it first shows, and what is left is the import and the fold's place in the Separate app line, 216 bytes packed to the shortest form, less the 36 of room there was; +81 for the Use Claude Magpie button on Claude Desktop's row (xMopf7RF on X), drawn by claudemagpie.js too, what is left the one line that places it (#2710); +225 for the Hermes row's Other profiles lines (Norethcy on X), which 1d60b165c took out while each profile had a row and c96f33d65 left with no place at all, packed to the shortest form; the dead hermes# Default note went with it, and the Agents rows draw it, so there is no page to move it to; +397 for a key's own price rate (tnt12231 on X): its lines, check and placeholder in keyrates.js, imported when a provider with two or more keys opens, and what is left is the import, the draft's copy, Advanced opening for it, the save's one line and proxyLines drawing another kind of line; +316 for an image or video model's chip saying what it makes from its right-click (iceloon on X): the chat chip's Makes… now shared with it, and the media chip's Copy model ID left out, packed to the shortest form; the provider's editor draws it, so there is no page to move it to; +67 for the Claude Code · Claude Magpie row saying it is on magpie through Claude Magpie (xMopf7RF on X), one line in connectLine with the shortest words that say it; the Agents rows draw it, so there is no page to move it to; +12 for AIGoCode's logo in pngIcons (MindfulReturn on X), the list every drawn icon is looked up in; +491 for each cost in the tray panel's and Requests' chart and ranking in its own provider's currency (onkashiko on X): ledProv and the provider passed through, packed to the shortest form; drawLedColumns and drawLedRank are shared by the panel, so there is no page to move it to; +326 for the Qwen AI platform's Token Plan sign-in (imthe99galaxy on X): its field, sign-in and wait in qianwenplan.js, imported when such a provider's editor opens, and what is left is the import and one quotaError line for its two refusals, packed to the shortest form; quotaError reads every card's error, so there is no page to move it to; +72 for Copy all keys (emilochen on X): its row in keyrates.js, imported when a provider with two or more keys opens through keyRateField, now told which of its parts to draw, and what is left is the one line that places it; +83 for the page saying it has gone from view, so what its Sessions and Usage pages keep goes in 30 s and not 7 minutes (P0 memory): folded into the visibilitychange listener every window has, packed to the shortest form, so there is no page to move it to; +270 for Providers' Select, to remove several at once (eiyuuzaki2333 on X): its rows, bar, removal and keys in pvpick.js, imported when Select is first clicked, and what is left is pvSel, the button's click and two lines in renderProviders, which draws the list, so there is no page to move it to; +81 for each account of a provider's Usage card in a card of its own (normalcoder_ on X): one line that makes the box, its brief look left to CSS, and renderQuotas, which draws every card, so there is no page to move it to; +17 for Kimi Code's booster balance under an allowance card's rings in the tray panel (apple_test_src on X): the card's text line and the wallet line share one filter, packed to the shortest form; panelQuotaCard draws every card, so there is no page to move it to; +51 for what a failed plugin install left in plugins/, listed under Installed with a Remove (CHENGJIAHEGOXIS on X): its section in plugininstalled.js as pmLeftovers, imported when Plugins first draws, and what is left is the one call after drawInstalled; draw is what draws the page, so there is no page to move it to; +123 for a sidebar list folded from its page's row (hkwok06 on X): the chevron, its click and the fold kept per page in navicons.js, imported with the first list, and what is left is the folded list read beside the hidden pages' (navList, which navMine now shares) and the two rows' clicks asking navFold first; navSubs draws every list, so there is no page to move it to; +338 for the Daily update channel (fishmagic80 on X): its segment, its line under Update channel and the version row's two Up to date on Daily words, packed to the shortest form (one t() per choice); Settings › About and renderUpdate draw them on every window, so there is no page to move them to
+ )
+ 
+ // codeBytes is how many bytes of b are code: its blank lines, its lines
+diff --git a/internal/gui/settings_keep_test.go b/internal/gui/settings_keep_test.go
+index 7088307..a74ac1b 100644
+--- a/internal/gui/settings_keep_test.go
++++ b/internal/gui/settings_keep_test.go
+@@ -247,6 +247,7 @@ func TestSettingsSaveKeepsWhatItDoesNotSend(t *testing.T) {
+ 	was.FishGlassContent = settings.FishGlassRegion{Fill: 92, Blur: 10}
+ 	was.FishGlassOverlay = settings.FishGlassRegion{Fill: 90, Blur: 22}
+ 	was.FishGlassControl = settings.FishGlassRegion{Fill: 88, Blur: 12}
++	was.FishGlassVeil = 45
+ 	was.FishGlass = true
+ 	if err := settings.Save(was); err != nil {
+ 		t.Fatal(err)
+diff --git a/internal/gui/tests/fish-glass.test.cjs b/internal/gui/tests/fish-glass.test.cjs
+index b9266e2..1fc2535 100644
+--- a/internal/gui/tests/fish-glass.test.cjs
++++ b/internal/gui/tests/fish-glass.test.cjs
+@@ -141,6 +141,16 @@ test("Appearance stays usable in a shell with no glass rows at all", () => {
+   assert.doesNotThrow(() => context.window.drawLook({}, context.prefsKeep({})));
+ });
+ 
++test("glass colour stays independent from accent and saves cleanly", () => {
++  const { saves, context } = fixture();
++  const s = { theme: "dark", accent: "#0d9488", fishGlassColor: "#38bdf8" };
++  const kept = context.prefsKeep(s);
++  assert.equal(kept.fishGlassColor, "#38bdf8");
++  assert.equal(kept.accent, "#0d9488");
++  assert.doesNotThrow(() => context.window.drawLook(s, kept));
++  assert.equal(saves.length, 0);
++});
++
+ 
+ 
+ 
+diff --git a/internal/settings/settings.go b/internal/settings/settings.go
+index 5de76bb..b937c88 100644
+--- a/internal/settings/settings.go
++++ b/internal/settings/settings.go
+@@ -148,6 +148,9 @@ type Settings struct {
+ 	// FishGlassBar is a page's own footer or tool row (Add a provider,
+ 	// install bar, settings head): separate, since they sit over content.
+ 	FishGlassBar FishGlassRegion `json:"fishGlassBar,omitempty"`
++	// FishGlassColor is an optional tint for Liquid glass surfaces, as #rrggbb;
++	// "" follows the neutral theme base, independent from Accent.
++	FishGlassColor string `json:"fishGlassColor,omitempty"`
+ 	// Colorblind switches chart series (--c1…--c7) to an Okabe–Ito palette
+ 	// and gives each quota curve window, and its legend key, a dash of its
+ 	// own (#2073).
+@@ -2686,6 +2689,9 @@ func saveOwn(s Settings, recording, reads bool) error {
+ 	if s.Accent != "" && !validAccent.MatchString(s.Accent) {
+ 		return fmt.Errorf("accent must be a colour as #rrggbb, not %q", s.Accent)
+ 	}
++	if s.FishGlassColor != "" && !validAccent.MatchString(s.FishGlassColor) {
++		return fmt.Errorf("glass colour must be a colour as #rrggbb, not %q", s.FishGlassColor)
++	}
+ 	if !slices.Contains(Langs, s.Lang) {
+ 		return fmt.Errorf("language must be one of %v, not %q", Langs, s.Lang)
+ 	}
+diff --git a/internal/settingsapi/settingsapi.go b/internal/settingsapi/settingsapi.go
+index a1ec3db..a5bb2dd 100644
+--- a/internal/settingsapi/settingsapi.go
++++ b/internal/settingsapi/settingsapi.go
+@@ -28,7 +28,7 @@ import (
+ // written.
+ var Keys = []string{
+ 	// Appearance
+-	"theme", "accent", "fontColors", "fontColorsDark", "fontColorsDarkOn", "fishGlass", "fishGlassSidebar", "fishGlassContent", "fishGlassOverlay", "fishGlassControl", "fishGlassHeader", "fishGlassBar", "fishGlassVeil", "colorblind", "reduceMotion", "noBird", "lang", "uiFont", "codeFont",
++	"theme", "accent", "fontColors", "fontColorsDark", "fontColorsDarkOn", "fishGlass", "fishGlassSidebar", "fishGlassContent", "fishGlassOverlay", "fishGlassControl", "fishGlassHeader", "fishGlassBar", "fishGlassVeil", "fishGlassColor", "colorblind", "reduceMotion", "noBird", "lang", "uiFont", "codeFont",
+ 	// the tray, the Dock and this computer
+ 	"tray", "dock", "dockWindow", "dockNever", "lightweight", "keepAwake", "keepAwakeDisplay",
+ 	"noWSLAgents", "sessionTerminal", "signInLinkOnly", "quitNoAsk", "restoreOnQuit",
+@@ -307,6 +307,9 @@ func Merge(body []byte, cur settings.Settings, web bool) (settings.Settings, err
+ 	if _, sent := fields["fishGlassVeil"]; !sent {
+ 		in.FishGlassVeil = cur.FishGlassVeil
+ 	}
++	if _, sent := fields["fishGlassColor"]; !sent {
++		in.FishGlassColor = cur.FishGlassColor
++	}
+ 	if _, sent := fields["fishGlass"]; !sent {
+ 		in.FishGlass = cur.FishGlass
+ 	}

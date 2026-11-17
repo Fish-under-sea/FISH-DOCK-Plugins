@@ -66,6 +66,11 @@ function rules(css) {
   return out;
 }
 
+// Overlay / Header / Bar / Control / Switch / Agent-chip selectors belong to
+// their own glass regions or dedicated component rules in fish-glass.css, never
+// content-fill.
+const EXCLUDE_SELS = /\.(?:pop|action-confirm|cc-tip|view-ends|set-hint|heat-tip|ctx-tip|sess-menu|lib-pickbar|lib-savebar|lib-head|pm-head|set-head|sess-pick|proto\.pick|find|lib-find|mk-find|pm-find|field|set-field|chip-input|cxpick|lib-browserask-pick|lib-filepick|rt-pick|lib-switch|lib-ag)\b|\.modal\s+\.dialog|\.led-chart\s+\.tip/;
+
 const found = new Map(); // selector -> token
 for (const sheet of sheets) {
   const stripped = fs.readFileSync(sheet, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -84,6 +89,7 @@ for (const sheet of sheets) {
       if (/:hover|:focus|:active|:checked|\.on\b|\.sel\b|\.open\b|\.drag\b/.test(sel)) continue;
       const lower = sel.toLowerCase();
       if (KEEP_SOLID.some((k) => lower.includes(k))) continue;
+      if (EXCLUDE_SELS.test(sel)) continue;
       // 页面与根节点不接管：墙纸与遮罩由 lookCSS 负责，这里再刷一层会互相打架
       if (/^(body|html|:root)([ .:#\[]|$)/.test(sel)) continue;
       // 侧栏与顶栏各有自己的区域变量（sidebar / header），交给显式规则
@@ -115,11 +121,13 @@ const balanced = (s) => {
   return d === 0;
 };
 let skipped = 0;
+const glassToken = (t) => t === '--card' ? 'var(--lg-surface, var(--card))' : t === '--card-2' ? 'var(--lg-surface-2, var(--card-2))' : t === '--bg' ? 'var(--lg-surface, var(--bg))' : `var(${t})`;
+const glassBase = (t) => t === '--bg' ? 'transparent' : 'var(--lg-glass-wash, transparent)';
 for (const token of TOKENS) {
   for (const sel of byToken.get(token)) {
     if (!SEL_OK.test(sel) || !balanced(sel) || /[>+~]\s*$/.test(sel)) { skipped += 1; continue; }
     lines.push(`:root[data-fish-glass] body ${sel} {`);
-    lines.push(`  background-color: color-mix(in srgb, var(${token}) var(--fish-glass-content-fill), transparent);`);
+    lines.push(`  background-color: color-mix(in srgb, ${glassToken(token)} var(--fish-glass-content-fill), ${glassBase(token)});`);
     // 只给底色，不再给内描边：里层与父层都描边时，圆角处会缺一截，
     // 看起来像「玻璃边缘丢了」。玻璃边只留给最外层的面（.list/.card/.sheet/.pop）。
     lines.push('}');
