@@ -139,7 +139,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   const SWITCH_RELOAD_TIMEOUT_MS=4500;
   // 切 TUN 要重启内核，耗时可能超过一次 RPC 的超时，所以它跑在后台：RPC 立刻返回，
   // 前端靠轮询 tunSwitching 看进度。这个标记不进 operation，免得和启动/停止互相覆盖。
-  let tunBusy=false;
+  let tunBusy=false,tunTask=null,tunController=null;
   const jobs=new Map(),alive=()=>!!running&&running.alive();
   const exclusive=fn=>{const result=queue.then(fn);queue=result.catch(()=>{});return result};
   // ---- 运行态落盘与 attach -------------------------------------------------
@@ -268,6 +268,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       running=adoptKernel(outcome.record);
       attached=true;kernelPid=outcome.record.pid;startedAt=outcome.record.startedAt;
       secret=outcome.key;ipCache=null;attachError=null;attachRetryAt=0;
+      if(outcome.record.mode==='service')void runtime.tunRefreshLease?.(process.pid).catch(()=>{});
       return outcome;
     })().catch(error=>{
       attachTask=null;
@@ -402,6 +403,17 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       arch:os.arch(),cpu:cpuLabel(),memoryTotal:os.totalmem(),pluginVersion,
       uptimeMs:alive()&&startedAt?Date.now()-startedAt:null,
       rulesCount:null,groups:[],mode:'rule'};
+    if(runtime.tun)try{state.tunService=await runtime.tun.status()}catch{state.tunService=null}
+    if(running?.mode==='service'&&!operation&&!tunBusy&&state.tunService){
+      const hasEnabled=typeof state.tunService.enabled==='boolean';
+      const serviceDead=state.tunService.installed===false||state.tunService.enabled===false||
+        (hasEnabled&&(state.tunService.state==='stopped'||state.tunService.state==='absent'));
+      if(serviceDead){
+        running=null;startedAt=0;kernelPid=null;attached=false;ipCache=null;
+        state.running=false;state.uptimeMs=null;state.kernelPid=null;state.attached=false;
+        await clearRunState().catch(()=>{});
+      }
+    }
     if(!state.error&&attachError)state.error=attachError.message;
     if(attachError)state.errorCode=attachError.code;
     if(controller&&state.running)try{
@@ -417,13 +429,18 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       state.error='控制器暂未响应，请刷新或停止内核';
       state.errorCode=error?.code??'CONTROLLER_UNREACHABLE';
     }
-    if(runtime.tun)try{state.tunService=await runtime.tun.status()}catch{state.tunService=null}
     return state;
   }
   function editable() {
+    if(tunBusy)throw serviceError('KERNEL_SWITCHING');
     if(alive()||operation)throw serviceError('KERNEL_RUNNING_LOCK');
     if(jobs.size)throw serviceError('SUBSCRIPTION_UPDATING');
     if(closing)throw serviceError('PLUGIN_STOPPING');
+  }
+  async function persistSettings(next) {
+    await context.storage.write('config','clash.json',JSON.stringify(next));
+    settings=next;
+    return next;
   }
   function rowFor(id) {
     const row=subscriptions.find(s=>s.id===id);if(!row)throw serviceError('SUBSCRIPTION_NOT_FOUND');return row;
@@ -442,10 +459,14 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         const tun=params.tun||{};
         if(typeof tun.enable!=='boolean'&&tun.enable!==undefined)throw serviceError('TUN_SWITCH_INVALID');
         next.tun={enable:tun.enable===true, stack:tunStacks.includes(tun.stack)?tun.stack:(old.tun?.stack??defaultTun.stack)};
-        if(next.tun.enable&&!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
+        if(next.tun.enable){
+          if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
+          const info=await runtime.tun.status();
+          if(!info?.installed)throw serviceError('TUN_NOT_INSTALLED');
+        }
       }
       next.bundled=!!defaultKernel&&next.kernel.replaceAll('\\','/').toLowerCase()===defaultKernel.replaceAll('\\','/').toLowerCase();
-      await context.storage.write('config','clash.json',JSON.stringify(next));settings=next;
+      await persistSettings(next);
       return view({controller:false});
     });
   }
@@ -578,7 +599,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function reload({id}={}) {
     return exclusive(async()=>{
       await config();
-      if(closing||operation)throw serviceError('KERNEL_SWITCHING');
+      if(closing||operation||tunBusy)throw serviceError('KERNEL_SWITCHING');
       if(!settings.kernel)throw serviceError('KERNEL_NOT_SELECTED');
       const selected=id?[rowFor(id)]:subscriptions.filter(s=>s.enabled),fresh=selected.filter(s=>!jobs.has(s.id));
       await persist(subscriptions.map(s=>fresh.some(f=>f.id===s.id)?{...s,status:'updating',
@@ -609,8 +630,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
       const c=await config();editable();
       await runtime.tun.uninstall();
-      const next={...c,tun:{...c.tun,enable:false}};
-      await context.storage.write('config','clash.json',JSON.stringify(next));settings=next;
+      await persistSettings({...c,tun:{...c.tun,enable:false}});
       return view({controller:false});
     });
   }
@@ -618,16 +638,23 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   // 代理恢复失败只记日志：它绝不能把真正的原因（被取消、SPAWN_FAILED、控制器没就绪）盖掉。
   async function abandonStart({candidate=null}={}){
     try{if(candidate)await candidate.stop()}catch{/* 内核已经不在、或这根句柄收不掉 */}
+    // 即便 candidate 尚未返回（如 tun.enable 后 waitController 超时/中止），也强清服务侧 TUN 防断网。
+    try{await runtime.tunStop?.()}catch{/* 服务未安装或已停 */}
     running=null;kernelPid=null;
     // 只有真的写过运行态才清：没起来的一轮不该在磁盘上留下一个空记录。
     try{if(await readRunState())await clearRunState()}catch{}
     try{await runtime.proxy.restore((await config()).mixedPort)}
     catch(error){console.error('[clash] 启动失败后恢复系统代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
   }
-  async function start() {
-    if(operation)return operation.promise;
-      const task={name:'starting',promise:null,controller:new AbortController()};operation=task;operationError='';
+  async function startKernel({externalSignal=null}={}) {
+    if(operation?.name==='starting')return operation.promise;
+    if(operation?.name==='stopping')throw coded('ABORTED','内核正在停止');
+    const task={name:'starting',promise:null,controller:new AbortController()};operation=task;operationError='';
+    const onAbort=()=>task.controller.abort();
+    externalSignal?.addEventListener('abort',onAbort,{once:true});
+    if(externalSignal?.aborted)task.controller.abort();
     task.promise=(async()=>{
+      task.controller.signal.throwIfAborted?.();
       await queue;const c=await config();
       // attach 优先于 start：插件重载后内核通常还在跑，此时再 spawn 就是第二个内核。
       await ready();
@@ -665,15 +692,24 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       }catch{/* 落盘失败只影响重载后能否 attach */}
       return view();
     })().catch(error=>{operationError=task.controller.signal.aborted?'启动已取消':'启动失败，请检查内核路径、端口和订阅缓存';throw error})
-      .finally(()=>{if(operation===task)operation=null});
+      .finally(()=>{
+        externalSignal?.removeEventListener('abort',onAbort);
+        if(operation===task)operation=null;
+      });
     return task.promise;
+  }
+  async function start() {
+    if(tunBusy)throw serviceError('KERNEL_SWITCHING');
+    return startKernel();
   }
   // 停止是两件事：内核必须杀干净，系统代理恢复失败只降级为警告（#14 现象 B）。
   // 顺序是结论的一部分（2.3.4 的 C1/C2）：**先还系统代理，再收内核**。宿主给
   // deactivate 的预算到点就会 kill 插件，排在后面的那一步等于没做——2026-11-07 现场
   // 就是「内核刚死、注册表还指着它」，用户整台机器没网。
-  async function stop() {
+  async function stopKernel({waitTun=true}={}) {
     if(operation?.name==='stopping')return operation.promise;
+    if(waitTun)tunController?.abort();
+    const priorTun=waitTun?tunTask:null;
     const prior=operation?.promise;operation?.controller?.abort();
     const task={name:'stopping',promise:null};operation=task;operationError='';
     task.promise=(async()=>{
@@ -692,6 +728,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         }
       }
       await prior?.catch(()=>{});
+      await priorTun?.catch(()=>{});
       for(const job of jobs.values())job.controller.abort();
       await Promise.allSettled([...jobs.values()].map(j=>j.promise));
       // 插件重载过就只剩落盘记录：先尝试 attach，才能认出「内核其实还在跑」。
@@ -766,6 +803,13 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       .finally(()=>{if(operation===task)operation=null});
     return task.promise;
   }
+  async function stop(){
+    tunController?.abort();
+    const priorTun=tunTask;
+    const res=await stopKernel({waitTun:true});
+    await priorTun?.catch(()=>{});
+    return res;
+  }
   async function shutdown(){closing=true;return stop()}
   async function select({group,name}) {
     if(!alive())throw serviceError('KERNEL_NOT_RUNNING');const state=await view();
@@ -786,7 +830,11 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function proxy({enabled}) {
     if(typeof enabled!=='boolean')throw serviceError('PROXY_STATE_INVALID');
     // 第二个参数是写租约的插件进程：看门狗据此判断租约有没有被新实例接管。
-    if(enabled){if(!alive()||operation)throw serviceError('KERNEL_NOT_RUNNING');await runtime.proxy.enable((await config()).mixedPort,process.pid)}
+    if(enabled){
+      if(tunBusy)throw serviceError('KERNEL_SWITCHING');
+      if(!alive()||operation)throw serviceError('KERNEL_NOT_RUNNING');
+      await runtime.proxy.enable((await config()).mixedPort,process.pid);
+    }
     else await runtime.proxy.restore((await config()).mixedPort);return view();
   }
   async function details({section}) {
@@ -912,32 +960,51 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   async function tunSwitch({enable}={}) {
     if(typeof enable!=='boolean')throw serviceError('TUN_SWITCH_INVALID');
     if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
-    if(tunBusy)return view({controller:false});
+    if(tunBusy||operation)throw serviceError('KERNEL_SWITCHING');
     const old=await config();
     if(enable){
       const info=await runtime.tun.status();
-      if(!info.installed)throw serviceError('TUN_NOT_INSTALLED');
+      if(!info?.installed)throw serviceError('TUN_NOT_INSTALLED');
     }
-    const nextTun={enable,stack:old.tun?.stack??defaultTun.stack};
-    const wasRunning=alive();
-    if(!wasRunning){
+    const nextTun={enable,stack:tunStacks.includes(old.tun?.stack)?old.tun.stack:defaultTun.stack};
+    if(!alive()){
+      if(enable)throw serviceError('KERNEL_NOT_RUNNING');
+      await exclusive(async()=>{
+        const latest=await config();
+        editable();
+        await persistSettings({...latest,tun:{...nextTun,enable:false}});
+      });
+      await runtime.tunStop?.().catch(()=>{});
       operationError='';
-      await save({kernel:old.kernel,mixedPort:old.mixedPort,controllerPort:old.controllerPort,tun:nextTun});
       return view({controller:false});
     }
-    tunBusy=true;operationError='';
-    void (async()=>{
+    const ctl=new AbortController();
+    tunController=ctl;tunBusy=true;operationError='';
+    tunTask=(async()=>{
       let savedNew=false;
       try{
-        await stop();
-        await save({kernel:old.kernel,mixedPort:old.mixedPort,controllerPort:old.controllerPort,tun:nextTun});
-        savedNew=true;
-        await start();
+        await stopKernel({waitTun:false});
+        if(ctl.signal.aborted||closing)return;
+        await exclusive(async()=>{
+          const latest=await config();
+          await persistSettings({...latest,tun:nextTun});
+          savedNew=true;
+        });
+        if(ctl.signal.aborted||closing)return;
+        await startKernel({externalSignal:ctl.signal});
+        if((ctl.signal.aborted||closing)&&alive())await stopKernel({waitTun:false}).catch(()=>{});
       }catch(error){
-        if(savedNew)await save({kernel:old.kernel,mixedPort:old.mixedPort,controllerPort:old.controllerPort,tun:old.tun}).catch(()=>{});
-        operationError=error?.message||'切换 TUN 失败，请检查内核与服务状态';
+        if(enable)await runtime.tunStop?.().catch(()=>{});
+        if(savedNew){
+          await exclusive(async()=>{
+            const latest=await config();
+            await persistSettings({...latest,tun:old.tun});
+          }).catch(()=>{});
+        }
+        if(!ctl.signal.aborted)operationError=error?.message||'切换 TUN 失败，请检查内核与服务状态';
+      }finally{
+        if(tunController===ctl){tunController=null;tunBusy=false;tunTask=null;}
       }
-      finally{tunBusy=false}
     })();
     const out=await view({controller:false});
     out.tun=nextTun;
