@@ -27,13 +27,21 @@ public sealed class FishClashTunService : ServiceBase
     private FileSystemWatcher jobWatcher;
     private string lastJob = "";
     private long lastHostGoneAt = -1;
+    private int hostMisses;
     private int restarts;
     private DateTime lastStart = DateTime.MinValue;
     // C7：宿主已经没了。只在当前 host.json 对应的进程退出时抑制旧任务；一旦新宿主上线，立刻恢复。
     private bool hostGone;
-    // 已经决定退休（插件包没了）：不再拉起内核，也不再重复撤自己。
-    private bool retiring;
+    private bool missingKernelLogged;
     private readonly object gate = new object();
+    private readonly object logLock = new object();
+
+    private enum JobReadState
+    {
+        Enabled,
+        Disabled,
+        Transient
+    }
 
     public FishClashTunService()
     {
@@ -53,7 +61,7 @@ public sealed class FishClashTunService : ServiceBase
         Log("service starting");
         if (!LoadServiceIni()) { Log("service.ini missing or invalid; service idle"); }
         else { Log("kernel=" + kernel + " home=" + home); }
-        Apply();
+        Apply(false);
         try
         {
             jobWatcher = new FileSystemWatcher(baseDir, "job.ini");
@@ -77,12 +85,36 @@ public sealed class FishClashTunService : ServiceBase
 
     protected override void OnShutdown() { OnStop(); }
 
+    private static string ReadAllTextShared(string path, int retries = 4)
+    {
+        for (var i = 0; i <= retries; i++)
+        {
+            try
+            {
+                if (!File.Exists(path)) return null;
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (var reader = new StreamReader(stream))
+                {
+                    var text = reader.ReadToEnd();
+                    if (!string.IsNullOrEmpty(text.Trim()) || i == retries) return text;
+                }
+            }
+            catch (IOException)
+            {
+                if (i == retries) throw;
+            }
+            Thread.Sleep(25);
+        }
+        return null;
+    }
+
     private bool LoadServiceIni()
     {
         try
         {
-            if (!File.Exists(serviceIniPath)) return false;
-            foreach (var raw in File.ReadAllLines(serviceIniPath))
+            var text = ReadAllTextShared(serviceIniPath);
+            if (string.IsNullOrEmpty(text)) return false;
+            foreach (var raw in text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 var line = raw.Trim().TrimStart('\uFEFF');
                 if (line.Length == 0 || line.StartsWith("#")) continue;
@@ -99,13 +131,16 @@ public sealed class FishClashTunService : ServiceBase
     }
 
     // 只接受 home 目录下的 mihomo-runtime.json，拒绝越界路径。
-    private bool ReadJob(out string config, out bool enabled)
+    // 空内容或并发写锁返回 Transient，Tick 保持现状，防止非原子覆写窗口误杀正在运行的内核。
+    private JobReadState ReadJob(out string config, out bool enabled)
     {
         config = null; enabled = false;
         try
         {
-            if (!File.Exists(jobPath)) return false;
-            foreach (var raw in File.ReadAllLines(jobPath))
+            if (!File.Exists(jobPath)) return JobReadState.Disabled;
+            var text = ReadAllTextShared(jobPath);
+            if (text == null || string.IsNullOrEmpty(text.Trim())) return JobReadState.Transient;
+            foreach (var raw in text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 var line = raw.Trim().TrimStart('\uFEFF');
                 if (line.Length == 0 || line.StartsWith("#")) continue;
@@ -117,14 +152,15 @@ public sealed class FishClashTunService : ServiceBase
                 else if (key == "enabled") enabled = value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase);
             }
         }
-        catch (Exception error) { Log("job.ini read failed: " + error.Message); return false; }
-        if (string.IsNullOrEmpty(config)) return false;
+        catch (IOException error) { Log("job.ini busy: " + error.Message); return JobReadState.Transient; }
+        catch (Exception error) { Log("job.ini read failed: " + error.Message); return JobReadState.Disabled; }
+        if (!enabled || string.IsNullOrEmpty(config)) return JobReadState.Disabled;
         var full = Path.GetFullPath(config);
         var root = Path.GetFullPath(home) + Path.DirectorySeparatorChar;
-        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) { Log("rejected config outside home: " + full); return false; }
-        if (!string.Equals(Path.GetFileName(full), "mihomo-runtime.json", StringComparison.OrdinalIgnoreCase)) { Log("rejected unexpected config name: " + full); return false; }
+        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) { Log("rejected config outside home: " + full); return JobReadState.Disabled; }
+        if (!string.Equals(Path.GetFileName(full), "mihomo-runtime.json", StringComparison.OrdinalIgnoreCase)) { Log("rejected unexpected config name: " + full); return JobReadState.Disabled; }
         config = full;
-        return true;
+        return JobReadState.Enabled;
     }
 
     private readonly object tickLock = new object();
@@ -137,10 +173,6 @@ public sealed class FishClashTunService : ServiceBase
             // C7：宿主不在了就自己撤——TUN 服务是 SYSTEM 托管、独立于宿主的 Job，
             // 宿主崩溃后内核还会一直把整机流量劫走。这里停内核 + 把 job.ini 置 0，
             // 等于让虚拟网卡随内核一起消失，用户下一次开 Dock 再重新接管。
-            if (retiring) return;
-            // 插件包被卸载或换了版本：service.ini 里登记的内核已经不在了，这套服务再留着
-            // 只会每次开机刷一条「内核找不到」。空闲（没在用）就整体退休，连目录一起清掉。
-            if (ShouldRetire()) { Retire(); return; }
             long leaseAt = 0;
             bool gone = !string.IsNullOrEmpty(home) && HostIsGone(out leaseAt);
             if (hostGone)
@@ -149,6 +181,7 @@ public sealed class FishClashTunService : ServiceBase
                 if (!gone && leaseAt != lastHostGoneAt)
                 {
                     hostGone = false;
+                    hostMisses = 0;
                     lastHostGoneAt = -1;
                     Log("host resumed: tun service ready");
                 }
@@ -159,7 +192,11 @@ public sealed class FishClashTunService : ServiceBase
             }
             if (gone)
             {
+                hostMisses++;
+                // 连续多次（约 4.5 秒）确认且二次复查仍失联才撤 TUN，避免进程表抖动或重启切换期误杀。
+                if (hostMisses < 3 || !HostIsGone(out leaseAt)) return;
                 hostGone = true;
+                hostMisses = 0;
                 lastHostGoneAt = leaseAt;
                 Log("host is gone: taking the tun down");
                 KillChild();
@@ -167,19 +204,21 @@ public sealed class FishClashTunService : ServiceBase
                 catch (Exception error) { Log("job.ini reset failed: " + error.Message); }
                 return;
             }
+            hostMisses = 0;
             string config; bool enabled;
-            var ok = ReadJob(out config, out enabled);
-            var job = ok ? (enabled ? "1|" + config : "0|") : "missing";
+            var readState = ReadJob(out config, out enabled);
+            if (readState == JobReadState.Transient) return;
+            var job = readState == JobReadState.Enabled ? "1|" + config : "0|";
             if (job != lastJob)
             {
                 lastJob = job;
                 Log("job changed: " + job);
-                Apply();
+                Apply(true, readState, config, enabled);
                 return;
             }
             bool dead;
             lock (gate) { dead = child == null || child.HasExited; if (!dead) return; }
-            if (!ok || !enabled) return;
+            if (readState != JobReadState.Enabled) return;
             if ((DateTime.UtcNow - lastStart).TotalSeconds < 15) restarts++; else restarts = 0;
             if (restarts > 5) { Log("kernel exited repeatedly; watchdog paused"); return; }
             Log("kernel exited; restarting");
@@ -187,50 +226,6 @@ public sealed class FishClashTunService : ServiceBase
         }
         catch (Exception error) { Log("watchdog error: " + error.Message); }
         finally { Monitor.Exit(tickLock); }
-    }
-
-    // 插件包没了、内核文件也就不在：service.ini 是安装时写死的绝对路径，升级换目录、
-    // 或者用户卸载插件，都会让这个路径失效。只有「内核确实不在了」且「进程也没在跑」
-    // 才退休——删除运行中的 exe 不会结束进程，正在接管流量的内核还在跑时撤服务等于断网。
-    private bool ShouldRetire()
-    {
-        if (string.IsNullOrEmpty(kernel)) return false;
-        if (File.Exists(kernel)) return false;
-        // 判活只看进程句柄，不读 job.ini：插件写 job.ini 不是原子的，恰好读到写了一半
-        // 的窗口会把 enabled=1 读成「没在用」，把服务从正在启动的内核脚下删掉。
-        lock (gate) { if (child != null && !child.HasExited) return false; }
-        // 没有活内核，登记的 exe 也没了：这套服务不可能再工作。job.ini 写着 enabled=1
-        // 也一样（升级换目录后旧路径失效的现场），退休并置 0，别让开机后每 1.5 秒
-        // 刷一条「内核找不到」。
-        return true;
-    }
-
-    // 退休 = 停内核 + 撤服务 + 删目录。目录里有本服务自己的 exe，服务进程活着时删不掉，
-    // 所以交给一个延迟几秒的 cmd：等 SCM 把本进程停掉、文件句柄释放之后再删。
-    private void Retire()
-    {
-        retiring = true;
-        Log("kernel package is gone; retiring the tun service");
-        KillChild();
-        try { File.WriteAllText(jobPath, "enabled=0" + Environment.NewLine); lastJob = "0|"; }
-        catch (Exception error) { Log("job.ini reset failed: " + error.Message); }
-        try
-        {
-            var psi = new ProcessStartInfo("cmd.exe", "/c ping -n 4 127.0.0.1 >nul & rd /s /q \"" + baseDir + "\"")
-            { UseShellExecute = false, CreateNoWindow = true };
-            Process.Start(psi);
-        }
-        catch (Exception error) { Log("cleanup spawn failed: " + error.Message); }
-        try
-        {
-            var psi = new ProcessStartInfo("sc.exe", "delete " + ServiceId) { UseShellExecute = false, CreateNoWindow = true };
-            var remover = Process.Start(psi);
-            if (remover != null) remover.WaitForExit(5000);
-            Log("service delete requested");
-        }
-        catch (Exception error) { Log("service delete failed: " + error.Message); }
-        try { Stop(); }
-        catch (Exception error) { Log("service stop failed: " + error.Message); }
     }
 
     // C7：宿主租约（插件在 TUN 接管期间写的 <home>/host.json）。没有租约就不据此
@@ -242,7 +237,8 @@ public sealed class FishClashTunService : ServiceBase
         {
             var lease = Path.Combine(home, "host.json");
             if (!File.Exists(lease)) return false;
-            var text = File.ReadAllText(lease);
+            var text = ReadAllTextShared(lease);
+            if (string.IsNullOrEmpty(text)) return false;
             var pidMatch = Regex.Match(text, "\"pid\"\\s*:\\s*([0-9]+)");
             if (!pidMatch.Success) return false;
             int pid;
@@ -258,7 +254,7 @@ public sealed class FishClashTunService : ServiceBase
                     if (at > 0)
                     {
                         var recorded = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMilliseconds(at);
-                        if (probe.StartTime.ToUniversalTime() > recorded.AddSeconds(5)) return true;
+                        if (probe.StartTime.ToUniversalTime() > recorded.AddSeconds(30)) return true;
                     }
                     return false;
                 }
@@ -269,13 +265,25 @@ public sealed class FishClashTunService : ServiceBase
         catch { return false; }
     }
 
-    private void Apply()
+    private void Apply(bool fromTick)
     {
         string config; bool enabled;
-        var ok = ReadJob(out config, out enabled);
+        var state = ReadJob(out config, out enabled);
+        if (state == JobReadState.Transient && fromTick) return;
+        lastJob = state == JobReadState.Enabled ? "1|" + config : "0|";
+        Apply(fromTick, state, config, enabled);
+    }
+
+    private void Apply(bool fromTick, JobReadState state, string config, bool enabled)
+    {
         KillChild();
-        if (!ok || !enabled) { Log("tun idle"); return; }
-        if (string.IsNullOrEmpty(kernel) || !File.Exists(kernel)) { Log("kernel not found: " + kernel); return; }
+        if (state != JobReadState.Enabled || !enabled) { Log("tun idle"); return; }
+        if (string.IsNullOrEmpty(kernel) || !File.Exists(kernel))
+        {
+            if (!missingKernelLogged) { Log("kernel not found: " + kernel); missingKernelLogged = true; }
+            return;
+        }
+        missingKernelLogged = false;
         if (!File.Exists(config)) { Log("config not found: " + config); return; }
         Launch(config);
     }
@@ -288,6 +296,7 @@ public sealed class FishClashTunService : ServiceBase
         psi.WorkingDirectory = baseDir;
         psi.EnvironmentVariables["TMP"] = baseDir;
         psi.EnvironmentVariables["TEMP"] = baseDir;
+        if (!string.IsNullOrEmpty(home)) psi.EnvironmentVariables["SAFE_PATHS"] = Path.Combine(home, "credentials");
         try
         {
             lock (gate)
@@ -320,14 +329,17 @@ public sealed class FishClashTunService : ServiceBase
 
     private void Log(string message)
     {
-        try
+        lock (logLock)
         {
-            if (logPath == null) return;
-            var line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + message + Environment.NewLine;
-            if (File.Exists(logPath) && new FileInfo(logPath).Length > 512 * 1024) File.WriteAllText(logPath, "");
-            File.AppendAllText(logPath, line);
+            try
+            {
+                if (logPath == null) return;
+                var line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + message + Environment.NewLine;
+                if (File.Exists(logPath) && new FileInfo(logPath).Length > 512 * 1024) File.WriteAllText(logPath, "");
+                File.AppendAllText(logPath, line);
+            }
+            catch { }
         }
-        catch { }
     }
 
     public static void Main()
