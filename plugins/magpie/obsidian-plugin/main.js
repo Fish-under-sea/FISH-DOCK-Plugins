@@ -8,6 +8,20 @@ const http=require('node:http');
 // 可选：拿不到就退化成内置的最简实现，插件仍能打开，只是少了 GC 的辅助函数。
 let rules=null;
 try{ rules=require('./rules'); }catch(error){ console.error('[fish-magpie-memory] rules.js 缺失或损坏：'+(error&&error.message)); }
+function fallbackRoleAgents(view){
+ if(!view||!Array.isArray(view.agents))return [];
+ return view.agents.map(a=>({id:a.id,name:a.name||a.id})).filter(a=>a.id);
+}
+function fallbackStatusLines(st,max=20){
+ if(!st)return [];
+ const out=[];
+ const role=st.role?`（${st.role}）`:'';
+ if(st.running)out.push(`运行中${role}${st.phase?' · '+st.phase:''}${st.of?` · ${st.doing||0}/${st.of}`:''}`);
+ else if(st.error)out.push(`上次失败${role}：${st.error}`);
+ else if(st.phase)out.push(`上次结束${role} · ${st.phase}`);
+ for(const m of (st.messages||[]).slice(-max)){const who=m.tool?m.tool:m.role||'';out.push(who?`${who} · ${m.text||''}`:(m.text||''))}
+ return out;
+}
 const VIEW='fish-magpie-memory';
 
 // The pairing file stays outside the vault. Never persist tokens with saveData().
@@ -85,7 +99,7 @@ class Confirm extends Modal{
  onClose(){this.contentEl.empty()}
 }
 class MagpieView extends ItemView{
- constructor(leaf,plugin){super(leaf);this.plugin=plugin;this.messages=[];this.result='';this.model='';this.agent='';this.controller=null;this.poll=0;this.agents={}}
+ constructor(leaf,plugin){super(leaf);this.plugin=plugin;this.messages=[];this.result='';this.model='';this.agent='';this.controller=null;this.poll=0;this.agents={};this.agentSeq=0}
  getViewType(){return VIEW}
  getDisplayText(){return 'Magpie 共享记忆'}
  getIcon(){return 'bird'}
@@ -104,7 +118,9 @@ class MagpieView extends ItemView{
   agentRow.createEl('span',{cls:'fish-label',text:'记忆 Agent'});
   this.roleSel=agentRow.createEl('select',{attr:{'aria-label':'记忆任务'}});
   for(const [v,t] of [['learn','学习对话'],['organize','整理记忆'],['dream','做梦']])this.roleSel.createEl('option',{text:t,value:v});
+  this.roleSel.addEventListener('change',()=>{this.loadAgents();this.pollStatus()});
   this.agentSel=agentRow.createEl('select',{attr:{'aria-label':'记忆 Agent'}});
+  this.agentSel.addEventListener('change',()=>{this.agent=this.agentSel.value});
   this.button(agentRow,'刷新 Agent',()=>this.loadAgents());
   this.button(agentRow,'重新配对检查',()=>this.checkPairing());
   this.log=root.createDiv({cls:'fish-messages',attr:{'aria-label':'对话与检索结果','aria-live':'polite'}});
@@ -151,14 +167,19 @@ class MagpieView extends ItemView{
  // sends a model, and what a run is sent to is the agent's own route.
  async loadAgents(){
   if(this.controller)return;
-  const role=this.roleSel.value;
+  const seq=++this.agentSeq,role=this.roleSel.value;
   try{
    const view=await call(this.app.vault,'/api/fish-vault/memory/agents?role='+role);
-   this.agents[role]=rules.roleAgents(view,role);
+   if(seq!==this.agentSeq||this.roleSel.value!==role)return;
+   const list=rules?rules.roleAgents(view,role):fallbackRoleAgents(view);
+   this.agents[role]=list;
    this.agentSel.empty();
-   for(const a of this.agents[role])this.agentSel.createEl('option',{text:a.name,value:a.id});
+   for(const a of list)this.agentSel.createEl('option',{text:a.name,value:a.id});
+   const preferred=(view.defaults&&view.defaults[role])||'';
+   const keep=list.some(a=>a.id===this.agent)?this.agent:list.some(a=>a.id===preferred)?preferred:(list[0]?.id||'');
+   this.agentSel.value=keep;
    this.agent=this.agentSel.value;
-   this.status.setText(this.agents[role].length?`${this.agentSel.options.length} 个记忆 Agent 可运行`:`没有能做这项的 Agent，请在 Magpie 记忆页新增一个`);
+   this.status.setText(list.length?`${this.agentSel.options.length} 个记忆 Agent 可运行`:`没有能做这项的 Agent，请在 Magpie 记忆页新增一个`);
   }catch(e){this.showError(e)}
  }
  busy(on){this.send.disabled=on;this.search.disabled=on;this.tidy.disabled=on;this.select.disabled=on;this.stop.disabled=!on}
@@ -220,7 +241,7 @@ class MagpieView extends ItemView{
   const role=this.roleSel.value;
   let st;
   try{st=await call(this.app.vault,'/api/fish-vault/memory/agents/status?role='+role)}catch(e){this.showError(e);return}
-  const lines=rules.statusLines(st);
+  const lines=rules?rules.statusLines(st):fallbackStatusLines(st);
   this.runLog.empty();
   for(const line of lines)this.runLog.createDiv({cls:'fish-runline',text:line});
   const running=!!st?.running;

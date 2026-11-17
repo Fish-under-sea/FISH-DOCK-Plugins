@@ -101,7 +101,7 @@ export async function prepareKnowledgeVault({data,sourceVault=defaultSourceVault
 }
 
 export const obsidianPluginId='fish-magpie-memory';
-export const obsidianResources=['manifest.json','main.js','styles.css'];
+export const obsidianResources=['manifest.json','main.js','styles.css','rules.js'];
 // Owned release files only: never touch data.json, notes or other plugins.
 export async function deployObsidianPlugin(root,{resources=new URL('./obsidian-plugin/',import.meta.url)}={}){
  await readRecord(root);
