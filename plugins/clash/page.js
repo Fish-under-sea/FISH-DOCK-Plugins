@@ -282,7 +282,7 @@
   pop.style.width=Math.round(r.width||280)+'px';
   const natural=Math.round(pop.getBoundingClientRect?.().height||0)||320;
   const below=vh-r.bottom-8, above=r.top-8;
-  const up=below<160&&above>below;
+  const up=below<110&&above>below;
   const room=Math.max(120,up?above:below);
   const maxH=Math.min(natural,room);
   pop.style.maxHeight=maxH+'px';
@@ -397,7 +397,7 @@
   return `${rest} 分`;
  }
  const groups=()=>view?.groups??[];
- const autoGroup=()=>groups().find(g=>/自动选择/.test(g.name))??groups()[0]??null;
+ const autoGroup=()=>groups().find(g=>/节点选择/.test(g.name))??groups().find(g=>g.type==='Selector')??groups()[0]??null;
  const currentGroup=()=>groups().find(g=>g.name===group)??autoGroup();
  const currentNode=()=>{const g=currentGroup();if(!g)return null;return (g.nodes??[]).find(n=>n.name===g.selected)??null};
  function delayInfo(node){
@@ -475,8 +475,10 @@
   if(!list.length)return card('当前节点','<p class="muted">内核运行后显示代理组与可选节点。</p>',{wide:true});
   const current=currentGroup(),dv=nodeDelayView();
   const groupPicker=comboTrigger('group-pick','代理组',current?.name??'',null,anyOp()||ops.has('kernel'),'切换中，请稍候');
-  const nodeDisabled=!view.running||ops.has('select');
-  const nodePicker=comboTrigger('node-pick','节点',dv.label,dv,nodeDisabled,view.running?'切换中，请稍候':'内核运行后可选');
+  const autoGroupLocked=!!(current?.type&&current.type!=='Selector');
+  const nodeDisabled=!view.running||ops.has('select')||autoGroupLocked;
+  const nodeReason=!view.running?'内核运行后可选':(autoGroupLocked?'自动选择组按延迟自动切换；切到「节点选择」可手动选节点':'切换中，请稍候');
+  const nodePicker=comboTrigger('node-pick','节点',dv.label,dv,nodeDisabled,nodeReason);
   return card('当前节点',`<div class="split">${groupPicker}${nodePicker}</div>
    <div class="readout-area" data-stale="${pollFails>=3?'true':'false'}">
     <div class="readout" aria-live="polite" aria-atomic="true">
@@ -655,8 +657,10 @@
   const pair=[['--dock-text',a.font?.text],['--dock-muted',a.font?.dim]];
   for(const [k,v] of pair){ if(v) fb.setProperty(k,v); else fb.removeProperty(k); }
   for(const [id] of GLASS_REGIONS){
+   const blur=a.glass[id].blur;
    style.setProperty(`--g-${id}-fill`,`${a.glass[id].fill}%`);
-   style.setProperty(`--g-${id}-blur`,`${a.glass[id].blur}px`);
+   style.setProperty(`--g-${id}-blur`,`${blur}px`);
+   style.setProperty(`--g-${id}-filter`,blur>0?`blur(${blur}px) saturate(190%) brightness(1.06) contrast(1.03)`:'none');
   }
  }
  function paintLookPresets(){
@@ -1039,6 +1043,7 @@
  }
  // 点卡＝高亮 + 切换启用（两个动作同一次点击）；拖动选文字/双击不触发（selection 非折叠即忽略）。
  function onCardClick(id,event){
+  if(event?.target?.closest?.('button,a,input,select,textarea,label'))return false;
   const sel=typeof window.getSelection==='function'?window.getSelection():null;
   if(sel&&sel.isCollapsed===false)return false;
   const row=view?.subscriptions?.find(s=>s.id===id);

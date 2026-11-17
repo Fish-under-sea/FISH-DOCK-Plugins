@@ -718,3 +718,42 @@ test('F7 额度条随局部更新同步宽度与 hot/warm',async()=>{
  assert.match(String(bar().style.width||''),/^95%$/,'宽度更新到 95%');
  assert.ok(String(bar().className).includes('hot'),'≥90% 用 hot 色');
 });
+test('订阅卡片内部按钮点击不冒泡触发 onCardClick 切换启用',async()=>{
+ const f=fixture();await flush();
+ f.click('section-providers');await flush();
+ const card=f.cards().find(c=>c.dataset.sub==='sub-00000000-0000-0000-0000-000000000001');
+ assert.ok(card,'订阅卡存在');
+ const before=f.calls.filter(c=>c.method==='clash.subscriptionToggle').length;
+ assert.equal(card.onclick({target:{closest:sel=>sel.includes('button')?{}:null}}),false);
+ assert.equal(f.calls.filter(c=>c.method==='clash.subscriptionToggle').length,before,'点卡内按钮不触发切换');
+});
+test('默认优先选「节点选择」Selector 组，且 URLTest 组禁用手动选节点',async()=>{
+ const f=fixture(row=>{
+  row.running=true;
+  row.groups=[
+   {name:'♻️ 自动选择',type:'URLTest',selected:'HK-01',nodes:[{name:'HK-01',label:'HK-01',delay:40}]},
+   {name:'🚀 节点选择',type:'Selector',selected:'JP-01',nodes:[{name:'JP-01',label:'JP-01',delay:55}]}
+  ];
+ });
+ await flush();
+ const gPick=f.element('group-pick');
+ const nPick=f.element('node-pick');
+ assert.ok(gPick,'存在代理组选择器');
+ assert.ok(f.root.innerHTML.includes('节点选择'),'默认优先显示手动选择组而非自动选择组');
+ assert.ok(!nPick.disabled,'节点选择 Selector 组允许手动选节点');
+ // 只有自动选择组时，node-pick 必须禁用并说明不可手动选
+ const fAuto=fixture(row=>{
+  row.running=true;
+  row.groups=[{name:'♻️ 自动选择',type:'URLTest',selected:'HK-01',nodes:[{name:'HK-01',label:'HK-01',delay:40}]}];
+ });
+ await flush();
+ assert.equal(fAuto.element('node-pick').disabled,true,'URLTest 自动组禁用手动选节点');
+ assert.ok(fAuto.root.innerHTML.includes('自动选择组按延迟自动切换'));
+});
+test('appearance blur=0 Filter 契约、字体颜色与下拉滚动条样式完备',()=>{
+ assert.match(pageJs,/blur>0\?`blur\(\$\{blur\}px\)[^`]*`:'none'/);
+ assert.match(pageCss,/\.fc-row\{/);
+ assert.match(pageCss,/\.fc-input\{[^}]*width:36px[^}]*border-radius:999px/);
+ assert.match(pageCss,/\.listbox::-webkit-scrollbar-thumb/);
+ assert.match(pageCss,/\.snackbar::before,\.snackbar::after\{border-radius:999px\}/);
+});

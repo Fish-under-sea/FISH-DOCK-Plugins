@@ -28,6 +28,21 @@
   --sel-bg:rgba(94,155,255,.16);
   --sel-line:var(--dock-accent);
   --glass:rgba(28,29,34,.92);
+  --lg-rim-hi:rgba(255,255,255,.32);
+  --lg-rim-mid:rgba(255,255,255,.16);
+  --lg-rim-lo:rgba(255,255,255,.04);
+  --lg-inset-top:rgba(255,255,255,.15);
+  --lg-inset-base:rgba(255,255,255,.07);
+  --lg-convex-top:rgba(255,255,255,.09);
+  --lg-convex-bot:rgba(255,255,255,.03);
+  --lg-inner-bg:rgba(255,255,255,.06);
+  --lg-inner-line:rgba(255,255,255,.14);
+  --lg-control-line:rgba(255,255,255,.14);
+  --lg-focus-ring:color-mix(in srgb,var(--dock-accent) 44%,rgba(255,255,255,.35));
+  --lg-focus-halo:color-mix(in srgb,var(--dock-accent) 16%,transparent);
+  --lg-shadow:0 12px 32px rgba(0,0,0,.28);
+  --lg-scroll:rgba(255,255,255,.45);
+  --lg-scroll-hover:rgba(255,255,255,.72);
 }
 :root[data-dock-theme=light]{
   color-scheme:light;
@@ -42,6 +57,21 @@
   --c-bad-bg:rgba(192,57,43,.08);
   --sel-bg:rgba(0,95,184,.10);
   --glass:rgba(250,250,252,.94);
+  --lg-rim-hi:rgba(255,255,255,.90);
+  --lg-rim-mid:rgba(15,23,42,.12);
+  --lg-rim-lo:rgba(255,255,255,.38);
+  --lg-inset-top:rgba(255,255,255,.82);
+  --lg-inset-base:rgba(15,23,42,.08);
+  --lg-convex-top:rgba(255,255,255,.38);
+  --lg-convex-bot:rgba(15,23,42,.03);
+  --lg-inner-bg:rgba(255,255,255,.52);
+  --lg-inner-line:rgba(15,23,42,.10);
+  --lg-control-line:rgba(15,23,42,.12);
+  --lg-focus-ring:color-mix(in srgb,var(--dock-accent) 48%,rgba(15,23,42,.20));
+  --lg-focus-halo:color-mix(in srgb,var(--dock-accent) 16%,transparent);
+  --lg-shadow:0 12px 32px rgba(15,23,42,.12);
+  --lg-scroll:rgba(15,23,42,.26);
+  --lg-scroll-hover:rgba(15,23,42,.44);
 }
 
 /* ── 顶部按钮行：页签 + 启停 + 刷新同处一行，不换行，窄了横向滚 ── */
@@ -167,7 +197,8 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 /* ── 内核设置：表单 + TUN 段 + 吸底保存 ── */
 .columns{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;align-content:start}
 .tun-box{border:1px solid var(--line-hair);border-radius:14px;padding:12px 16px;margin:12px 0;background:var(--layer-2)}
-.tun-box legend{float:none;width:auto;padding:0 8px 0 0;margin:0 0 8px;color:var(--dock-muted);font-size:12px}
+.tun-box legend{float:left;width:100%;padding:0;margin:0 0 8px;color:var(--dock-muted);font-size:12px}
+.tun-box>*:not(legend){clear:both}
 .tun-box label{margin:8px 0}
 .tun-service{margin-top:8px;padding-top:8px;border-top:1px solid var(--line-hair)}
 .svc-log{margin:8px 0;max-height:120px;font-size:12px;color:var(--dock-muted)}
@@ -178,8 +209,8 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
    滚动到底时 TUN 服务按钮行不再被压住。 */
 .save-bar{position:sticky;bottom:0;display:flex;justify-content:flex-end;padding:8px 0 4px;margin-top:8px;
  background:color-mix(in srgb,var(--layer-1) var(--g-main-fill,100%),transparent);
- -webkit-backdrop-filter:blur(var(--g-main-blur,0px)) saturate(200%) brightness(1.14);
- backdrop-filter:blur(var(--g-main-blur,0px)) saturate(200%) brightness(1.14);
+ -webkit-backdrop-filter:var(--g-main-filter,blur(var(--g-main-blur,0px)) saturate(190%) brightness(1.06));
+ backdrop-filter:var(--g-main-filter,blur(var(--g-main-blur,0px)) saturate(190%) brightness(1.06));
  border-top:1px solid var(--line-hair)}
 .pane.settings .save-bar{position:static}
 
@@ -220,7 +251,7 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 /* 列表项：行高 = 刻度表 28，行距 = 行高（选项之间不加 margin）。
    组名与节点名带 emoji（🔵 微软服务 / ♻️ 自动选择 …），字形比 12.5px 文字高得多，
    不关进 .lb-ico 盒子就会把行撑到 40px 以上——这就是「选中咋这么大、很丑」的根因。 */
-.lb-option{display:flex;align-items:center;gap:8px;min-height:28px;padding:2px 8px;font-size:12.5px;line-height:18px;cursor:pointer;color:var(--dock-text)}
+.lb-option{display:flex;align-items:center;gap:8px;min-height:28px;padding:2px 8px;font-size:12.5px;line-height:18px;cursor:pointer;color:var(--dock-text);border-radius:14px}
 .lb-option:hover{filter:brightness(1.12)}
 .lb-option[aria-selected=true]{background:var(--sel-bg);box-shadow:inset 2px 0 0 var(--sel-line)}
 .lb-option[data-active=true]{background:var(--dock-control)}
@@ -314,64 +345,77 @@ body[data-has-wall]{
 }
 .look-slider>input[type=range]:focus-visible{outline:2px solid var(--dock-accent);outline-offset:2px;border-radius:14px}
 .look-out{flex:0 0 3.5em;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--dock-muted)}
+.fc-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:28px;margin:4px 0;font-size:12.5px}
+.fc-name{color:var(--dock-muted);font-size:12px}
+.fc-right{display:flex;align-items:center;gap:8px;flex:none;min-width:0}
+input[type=color].fc-input{flex:none;width:36px;min-height:26px;height:26px;padding:2px;border:1px solid var(--line-control);border-radius:999px;background:transparent;cursor:pointer}
+input[type=color].fc-input::-webkit-color-swatch-wrapper{padding:0}
+input[type=color].fc-input::-webkit-color-swatch,input[type=color].fc-input::-moz-color-swatch{border:0;border-radius:999px}
+.fc-hex{font-family:"Cascadia Mono",Consolas,monospace;font-size:12px;line-height:18px;color:var(--dock-muted);min-width:4.8em;text-align:right;white-space:nowrap}
+.fc-clear{min-height:26px;padding:0 8px;font-size:12px}
 
 /* 玻璃本体：Apple Liquid Glass 观感（折射/高光边/内釉），不引依赖。
    底色仍由区域变量控制（fill/blur），另加三样东西让它像玻璃而不是灰色方块：
    1) backdrop 里加 saturate/brightness，透过去的东西更像被玻璃“折射”过；
-   2) ::before 两层柔光（左上冷光、右下壳光），模拟入射光在曲面上的散射；
-   3) ::after 用渐变描出 1px 的高光边（mask 挖空中间），这是最像 iOS 的一层。
-   fill=0 时底色全透，但高光边、柔光与模糊仍在，所以不会是“什么都没有”。 */
+   2) ::before 顶部与底部凸面柔光（按像素封顶），模拟入射光在曲面上的散射；
+   3) ::after 用 360° conic-gradient 描出 1px Fresnel 高光边（mask 挖空中间），四边均衡不缺角。 */
 @supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) and (background: color-mix(in srgb, red, transparent)){
  .card,.subscription,.tun-box,.empty-card,.confirm-bar,.look-card,
  .listbox,.snackbar{
   position:relative;
   background:color-mix(in srgb,var(--layer-1) var(--g-main-fill),transparent);
-  -webkit-backdrop-filter:blur(var(--g-main-blur)) saturate(200%) brightness(1.14);
-  backdrop-filter:blur(var(--g-main-blur)) saturate(200%) brightness(1.14);
+  -webkit-backdrop-filter:var(--g-main-filter,blur(var(--g-main-blur)) saturate(190%) brightness(1.06) contrast(1.03));
+  backdrop-filter:var(--g-main-filter,blur(var(--g-main-blur)) saturate(190%) brightness(1.06) contrast(1.03));
+  border-color:transparent;
   box-shadow:
-   inset 0 1px 0 var(--lg-rim-line),
-   inset 0 -1px 0 var(--lg-rim-shade),
-   0 10px 30px rgba(0,0,0,.22);
+   inset 0 1px 0 var(--lg-inset-top),
+   0 0 0 1px var(--lg-inset-base),
+   var(--lg-shadow);
  }
  .listbox,.snackbar{
   background:color-mix(in srgb,var(--layer-1) var(--g-overlay-fill),transparent);
-  -webkit-backdrop-filter:blur(var(--g-overlay-blur)) saturate(200%) brightness(1.14);
-  backdrop-filter:blur(var(--g-overlay-blur)) saturate(200%) brightness(1.14);
+  -webkit-backdrop-filter:var(--g-overlay-filter,blur(var(--g-overlay-blur)) saturate(190%) brightness(1.06) contrast(1.03));
+  backdrop-filter:var(--g-overlay-filter,blur(var(--g-overlay-blur)) saturate(190%) brightness(1.06) contrast(1.03));
  }
  .card::before,.subscription::before,.tun-box::before,.empty-card::before,
  .confirm-bar::before,.look-card::before,.listbox::before,.snackbar::before{
   content:"";position:absolute;inset:0;border-radius:14px;pointer-events:none;
   background:
-   radial-gradient(130% 85% at 18% -10%, var(--lg-sheen-a), transparent 62%),
-   radial-gradient(90% 70% at 105% 110%, var(--lg-sheen-b), transparent 68%);
+   radial-gradient(420px 110px at 14% 0%, var(--lg-convex-top), transparent 72%),
+   linear-gradient(175deg, var(--lg-convex-top) 0%, transparent 96px, transparent calc(100% - 48px), var(--lg-convex-bot) 100%);
  }
  .card::after,.subscription::after,.tun-box::after,.empty-card::after,
  .confirm-bar::after,.look-card::after,.listbox::after,.snackbar::after{
   content:"";position:absolute;inset:0;border-radius:14px;padding:1px;pointer-events:none;
-  background:linear-gradient(145deg, var(--lg-rim-line), transparent 38%, transparent 62%, var(--lg-rim-line-2));
+  background:conic-gradient(from 315deg at 50% 50%, var(--lg-rim-hi) 0deg, var(--lg-rim-mid) 55deg, var(--lg-rim-lo) 130deg, var(--lg-rim-mid) 195deg, var(--lg-rim-hi) 240deg, var(--lg-rim-mid) 305deg, var(--lg-rim-hi) 360deg);
   -webkit-mask:linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);
   -webkit-mask-composite:xor;mask:linear-gradient(black 0 0) content-box, linear-gradient(black 0 0);mask-composite:exclude;
-  opacity:.75;
+  opacity:.82;
  }
+ .snackbar::before,.snackbar::after{border-radius:999px}
  /* 控件：按钮、输入框、下拉，以及分组胶囊 .segmented 的容器本身。
-    只给“折射+高光边”，不加柔光（小方块上柔光会脏）。 */
- .segmented,button:not(.segmented button),input:not([type=checkbox]):not([type=range]),select,textarea,.combo-trigger{
+    排除颜色块（.fc-input）与下拉内嵌过滤框（.lb-filter），避免双重斜角/拉伸破坏观感。 */
+ .segmented,button:not(.segmented button),input:not([type=checkbox]):not([type=range]):not([type=color]):not(.lb-filter),select,textarea,.combo-trigger{
   position:relative;
   background:color-mix(in srgb,var(--layer-1) var(--g-control-fill),transparent);
-  -webkit-backdrop-filter:blur(var(--g-control-blur)) saturate(190%) brightness(1.12);
-  backdrop-filter:blur(var(--g-control-blur)) saturate(190%) brightness(1.12);
-  box-shadow:inset 0 1px 0 var(--lg-rim-line), inset 0 -1px 0 var(--lg-rim-shade);
+  -webkit-backdrop-filter:var(--g-control-filter,blur(var(--g-control-blur)) saturate(190%) brightness(1.06));
+  backdrop-filter:var(--g-control-filter,blur(var(--g-control-blur)) saturate(190%) brightness(1.06));
+  border-color:var(--lg-control-line);
+  box-shadow:inset 0 1px 0 var(--lg-rim-mid), inset 0 -1px 0 var(--lg-inset-base);
  }
+ .lb-filter{background:var(--lg-inner-bg);border-color:var(--lg-inner-line);box-shadow:none;padding:2px 10px}
+ .listbox .lb-filter:focus,.listbox .lb-filter:focus-visible{outline:none;border-color:var(--lg-focus-ring);box-shadow:0 0 0 2px var(--lg-focus-halo)}
  /* 选中/激活态也是玻璃的一部分：用半透的强调色，而不是一整块不透明色，
     否则它会把下面的壁纸整块盖住，看着像“贴了个色块”。 */
  .lb-option[aria-selected=true]{background:color-mix(in srgb,var(--dock-accent) 22%,transparent);box-shadow:inset 2px 0 0 var(--dock-accent)}
  .lb-option[data-active=true]{background:color-mix(in srgb,var(--dock-accent) 11%,transparent)}
  .headbar button[aria-pressed=true],.segmented button[aria-pressed=true]{background:color-mix(in srgb,var(--dock-accent) 18%,transparent);border-color:color-mix(in srgb,var(--dock-accent) 34%,transparent)}
  .tag.on{background:color-mix(in srgb,var(--c-ok) 20%,transparent)}
- /* 玻璃面上焦点圈照旧可见：半透明底最容易把它吃掉。 */
+ /* 玻璃面上焦点圈照旧可见，同时收敛高亮晕染，不画刺眼纯蓝大边框。 */
  .card :focus-visible,.subscription :focus-visible,.tun-box :focus-visible,
  header :focus-visible,.listbox :focus-visible{
-  outline:2px solid var(--dock-accent);outline-offset:2px;
+  outline:2px solid var(--lg-focus-ring);outline-offset:1px;
+  box-shadow:0 0 0 3px var(--lg-focus-halo);
  }
 }
 /* 减少透明 / 高对比度：退回实底并关掉模糊，不为「玻璃」牺牲可读性。
@@ -404,9 +448,9 @@ body[data-has-wall]{
 
 
 /* ── 滚动条：浮在内容之上的白色细条，不画轨道、不占黑色底 ───────────── */
-.pane,.headbar{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.55) transparent}
-.pane::-webkit-scrollbar,.headbar::-webkit-scrollbar{width:6px;height:6px}
-.pane::-webkit-scrollbar-track,.headbar::-webkit-scrollbar-track{background:transparent}
-.pane::-webkit-scrollbar-thumb,.headbar::-webkit-scrollbar-thumb{background:rgba(255,255,255,.55);border-radius:999px;border:0}
-.pane::-webkit-scrollbar-thumb:hover,.headbar::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.8)}
-.pane::-webkit-scrollbar-corner,.headbar::-webkit-scrollbar-corner{background:transparent}
+.pane,.headbar,.listbox{scrollbar-width:thin;scrollbar-color:var(--lg-scroll) transparent}
+.pane::-webkit-scrollbar,.headbar::-webkit-scrollbar,.listbox::-webkit-scrollbar{width:6px;height:6px}
+.pane::-webkit-scrollbar-track,.headbar::-webkit-scrollbar-track,.listbox::-webkit-scrollbar-track{background:transparent}
+.pane::-webkit-scrollbar-thumb,.headbar::-webkit-scrollbar-thumb,.listbox::-webkit-scrollbar-thumb{background:var(--lg-scroll);border-radius:999px;border:0}
+.pane::-webkit-scrollbar-thumb:hover,.headbar::-webkit-scrollbar-thumb:hover,.listbox::-webkit-scrollbar-thumb:hover{background:var(--lg-scroll-hover)}
+.pane::-webkit-scrollbar-corner,.headbar::-webkit-scrollbar-corner,.listbox::-webkit-scrollbar-corner{background:transparent}
