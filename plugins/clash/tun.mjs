@@ -182,7 +182,7 @@ export function createTun({ context, programData, exec = runExec, platform = pro
   }
 
   // 等服务侧生效：对带时间戳的真实 service.log 从写入前偏移开始扫描，避免被历史日志秒判命中。
-  async function waitFor(kind, beforeLog = '', timeout = 8000) {
+  async function waitFor(kind, beforeLog = '', timeout = 12000) {
     const deadline = Date.now() + timeout;
     const hasTimestamps = /^\d{4}-\d{2}-\d{2} /m.test(beforeLog);
     const anchor = beforeLog.slice(0, Math.min(64, beforeLog.length));
