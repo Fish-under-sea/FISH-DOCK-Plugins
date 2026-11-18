@@ -39,9 +39,13 @@ export function credentialPath(root,name) {
 export async function removeCredential(root,name) {
   await unlink(credentialPath(root,name)).catch(error=>{if(error.code!=='ENOENT')throw error});
 }
-export function fileProvider(id,path) {
-  return {type:'file',path,override:{'additional-prefix':subscriptionPrefix(id)},
+// 过滤机场植入的流量/到期/官网/数值占位假节点，避免它们占用 URLTest 首槽或拖死长连接。
+export const DUMMY_NODE_FILTER='(?i)(?:剩余流量|套餐到期|到期时间|过期时间|距离(?:下次)?重置|重置时间|官方网址|官网[:：]|最新(?:地址|网址)|更新订阅|购买订阅|Traffic\\s*Reset|Expire\\s*Date|^Traffic[:： ]|^Expire[:： ]|^Reset[:： ]|^\\s*[\\d.]+\\s*[GMTP]B\\s*\\|)';
+export function fileProvider(id,path,{excludeFilter}={}){
+  const value={type:'file',path,override:{'additional-prefix':subscriptionPrefix(id)},
     'health-check':{enable:false}};
+  if(excludeFilter)value['exclude-filter']=excludeFilter;
+  return value;
 }
 export async function checkExecutable(path) {
   if(!isAbsolute(path))throw Error('内核路径应为可执行文件绝对路径');

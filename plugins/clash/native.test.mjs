@@ -24,8 +24,9 @@ test('native SafePath: two credentials providers outside config home, same-name 
   write:async(c,n,v)=>{await mkdir(join(root,c),{recursive:true});await writeFile(join(root,c,n),v)}
  }};
  await mkdir(join(root,'credentials'));
- const payload=name=>`proxies:\n  - name: ${name}\n    type: ss\n    server: 127.0.0.1\n    port: 9\n    cipher: aes-128-gcm\n    password: synthetic-only\n`;
- for(const id of [idA,idB])await writeFile(subscriptionPath(root,id),payload('same'));
+ const payload=(name,extra='')=>`proxies:\n  - name: ${name}\n    type: ss\n    server: 127.0.0.1\n    port: 9\n    cipher: aes-128-gcm\n    password: synthetic-only\n${extra}`;
+ await writeFile(subscriptionPath(root,idA),payload('same','  - name: 剩余流量：228.87 GB\n    type: ss\n    server: 127.0.0.1\n    port: 9\n    cipher: aes-128-gcm\n    password: synthetic-only\n'));
+ await writeFile(subscriptionPath(root,idB),payload('same','  - name: Traffic Reset：18 Days Left\n    type: ss\n    server: 127.0.0.1\n    port: 9\n    cipher: aes-128-gcm\n    password: synthetic-only\n'));
  const runtime=createRuntime({...context,geoDir}),controllerPort=await port(),mixedPort=await port(),secret='synthetic-test-only';
  const instance=await runtime.start({kernel:process.env.FISH_TEST_MIHOMO,controllerPort,mixedPort,secret,
   subscriptions:[{id:idA,enabled:true},{id:idB,enabled:true}]});
@@ -37,13 +38,15 @@ test('native SafePath: two credentials providers outside config home, same-name 
   return response.status===204?{}:response.json();
  };
  const proxies=(await request('/proxies')).proxies;
- // Verge 风格组树：主组含自动选择、DIRECT 与两个订阅节点（带来源前缀）。
+ // Verge 风格组树：主组含自动选择、故障转移、DIRECT 与两个真实订阅节点（信息假节点被 exclude-filter 排除）。
  const main=proxies[MAIN];
  assert.ok(main,`应有代理组 ${MAIN}`);
  for(const name of [`[${idA}] same`,`[${idB}] same`])assert.ok(main.all.includes(name),`主组应含 ${name}`);
- assert.ok(main.all.includes('♻️ 自动选择')&&main.all.includes('DIRECT'));
+ assert.ok(!main.all.some(n=>n.includes('剩余流量')||n.includes('Traffic Reset')),'主组不得混入订阅信息假节点');
+ assert.ok(main.all.includes('♻️ 自动选择')&&main.all.includes('🩺 故障转移')&&main.all.includes('DIRECT'));
  const auto=proxies['♻️ 自动选择'];
  assert.deepEqual([...auto.all].sort(),[`[${idA}] same`,`[${idB}] same`].sort());
+ assert.equal(proxies['🐙 GitHub']?.now,MAIN);
  await request(`/proxies/${encodeURIComponent(MAIN)}`,'PUT',{name:`[${idB}] same`});
  assert.equal((await request('/proxies')).proxies[MAIN].now,`[${idB}] same`);
  await writeFile(subscriptionPath(root,idA),payload('changed'));

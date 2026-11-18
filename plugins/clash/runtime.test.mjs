@@ -27,35 +27,58 @@ test('mihomo uses independent local file providers with stable source prefixes a
  assert.equal(c['proxy-providers'][a].override['additional-prefix'],`[${a}] `);
  assert.equal(c['proxy-providers'][a].type,'file');assert.equal(c['proxy-providers'][a].url,undefined);
 });
-test('代理组生成 Verge 风格组树：主组引用 providers，规则按类别分流',()=>{
+test('代理组生成 Verge 风格组树：主组引用 providers，过滤信息假节点且规则按类别分流',()=>{
  const a='sub-00000000-0000-0000-0000-000000000001',b='sub-00000000-0000-0000-0000-000000000002';
  const c=kernelConfig({mixedPort:7895,controllerPort:9099,secret:'synthetic',dataDirectory:'D:/synthetic',subscriptions:[{id:a,enabled:true},{id:b,enabled:true}],geo:true});
  const groups=c['proxy-groups'],names=groups.map(g=>g.name);
- // 组树完整：主选择、自动测速、广告、分类组、直连组、兜底组。
- assert.deepEqual(names,['🚀 节点选择','♻️ 自动选择','🛑 广告拦截','📲 Telegram','🤖 AI 服务','Ⓜ️ 微软服务','🍎 苹果服务','🎯 全球直连','🐟 漏网之鱼']);
+ // 组树完整：主选择、自动测速、故障转移、广告、GitHub/npm、分类组、直连组、兜底组。
+ assert.deepEqual(names,['🚀 节点选择','♻️ 自动选择','🩺 故障转移','🛑 广告拦截','🐙 GitHub','📲 Telegram','🤖 AI 服务','Ⓜ️ 微软服务','🍎 苹果服务','🎯 全球直连','🐟 漏网之鱼']);
  const by=Object.fromEntries(groups.map(g=>[g.name,g]));
- // 主组同时引用自动选择、DIRECT 与全部 provider 节点。
+ // 主组同时引用自动选择、故障转移、DIRECT 与全部 provider 节点；provider 过滤订阅信息假节点。
  assert.equal(by['🚀 节点选择'].type,'select');
- assert.deepEqual(by['🚀 节点选择'].proxies,['♻️ 自动选择','DIRECT']);
+ assert.deepEqual(by['🚀 节点选择'].proxies,['♻️ 自动选择','🩺 故障转移','DIRECT']);
  assert.deepEqual(by['🚀 节点选择'].use,[a,b]);
  assert.equal(by['♻️ 自动选择'].type,'url-test');
  assert.ok(by['♻️ 自动选择'].url.startsWith('https://'));
- assert.equal(by['♻️ 自动选择'].interval,300);
- // 分类组默认直连的（微软/苹果）DIRECT 排第一，走代理的组节点选择排第一。
+ assert.equal(by['♻️ 自动选择'].interval,90);
+ assert.equal(by['♻️ 自动选择']['max-failed-times'],2);
+ assert.equal(by['🩺 故障转移'].type,'fallback');
+ assert.equal(by['🩺 故障转移'].interval,60);
+ assert.equal(by['🩺 故障转移']['max-failed-times'],2);
+ const excludeRe=new RegExp(c['proxy-providers'][a]['exclude-filter'].replace(/^\(\?i\)/,''),'i');
+ for(const junk of ['剩余流量：228.87 GB','套餐到期：长期有效','9️⃣。官网：九云.com','Traffic Reset：18 Days Left','Expire Date：2027/01/06','91.08 GB | 200 GB']){
+  assert.equal(excludeRe.test(junk),true,`应过滤信息占位节点：${junk}`);
+ }
+ for(const real of ['🇭🇰 9️⃣香港2','🇯🇵 9️⃣日本1','🇯🇵 9️⃣日本2','🇺🇸 9️⃣美国1','备用日本1','🇭🇰 Hong Kong 01']){
+  assert.equal(excludeRe.test(real),false,`不得误过滤真实节点：${real}`);
+ }
+ // GitHub/npm 与 TG/AI 默认走代理；国内直连微软/苹果细分规则兜底后，微软/苹果默认直连。
+ assert.equal(by['🐙 GitHub'].proxies[0],'🚀 节点选择');
  assert.equal(by['Ⓜ️ 微软服务'].proxies[0],'DIRECT');
  assert.equal(by['🍎 苹果服务'].proxies[0],'DIRECT');
  assert.equal(by['📲 Telegram'].proxies[0],'🚀 节点选择');
  assert.equal(by['🤖 AI 服务'].proxies[0],'🚀 节点选择');
- // 规则按类别分流，国内直连，最终兜底到漏网之鱼。
+ // 规则顺序：GitHub 与 npm 必须在 microsoft 与 cn 之前，否则会被 GeoSite(microsoft) 误导去 DIRECT；
+ // cn.bing.com 必须在 GEOSITE,bing 之前；海外 QUIC UDP 443 必须在 GEOIP,cn 之后再 REJECT。
  const rules=c.rules;
+ const idx=(pred)=>rules.findIndex(pred);
  assert.equal(rules.at(-1),'MATCH,🐟 漏网之鱼');
- assert.ok(rules.some(r=>r==='GEOSITE,cn,🎯 全球直连'));
- assert.ok(rules.some(r=>r==='GEOIP,cn,🎯 全球直连,no-resolve'));
+ assert.ok(idx(r=>r==='GEOSITE,github,🐙 GitHub')>=0);
+ assert.ok(idx(r=>r==='DOMAIN-SUFFIX,npmjs.org,🐙 GitHub')>=0);
+ assert.ok(idx(r=>r==='DOMAIN-SUFFIX,npmjs.com,🐙 GitHub')>=0);
+ assert.ok(idx(r=>r==='GEOSITE,github,🐙 GitHub')<idx(r=>r.startsWith('GEOSITE,microsoft,')),'github 必须在 microsoft 之前');
+ assert.ok(idx(r=>r==='DOMAIN-SUFFIX,npmjs.org,🐙 GitHub')<idx(r=>r.startsWith('GEOSITE,microsoft,')),'npmjs.org 必须在 microsoft 之前');
+ assert.ok(idx(r=>r==='DOMAIN,cn.bing.com,🎯 全球直连')<idx(r=>r.startsWith('GEOSITE,bing,')),'cn.bing.com 必须在 GEOSITE,bing 之前');
+ assert.ok(idx(r=>r==='GEOSITE,microsoft@cn,🎯 全球直连')<idx(r=>r==='GEOSITE,microsoft,Ⓜ️ 微软服务'));
+ assert.ok(idx(r=>r==='GEOSITE,apple@cn,🎯 全球直连')<idx(r=>r==='GEOSITE,apple,🍎 苹果服务'));
+ assert.ok(idx(r=>r==='GEOSITE,cn,🎯 全球直连')>=0);
+ assert.ok(idx(r=>r==='GEOIP,cn,🎯 全球直连,no-resolve')>=0);
+ assert.ok(idx(r=>r==='AND,((NETWORK,UDP),(DST-PORT,443)),REJECT')>idx(r=>r==='GEOIP,cn,🎯 全球直连,no-resolve'),'QUIC 阻断必须在国内直连之后');
+ assert.ok(idx(r=>r==='AND,((NETWORK,UDP),(DST-PORT,443)),REJECT')<rules.length-1);
  assert.ok(rules.some(r=>r==='GEOSITE,category-ads-all,🛑 广告拦截'));
  assert.ok(rules.some(r=>r.startsWith('GEOSITE,telegram')));
  assert.ok(rules.some(r=>r.startsWith('GEOSITE,openai')));
- assert.ok(rules.some(r=>r.startsWith('GEOSITE,microsoft')));
- assert.ok(rules.some(r=>r.startsWith('GEOSITE,apple')));
+ assert.ok(rules.some(r=>r.startsWith('GEOSITE,anthropic')));
  // 组引用的名称全部存在（组名或内置），不存在悬空引用。
  const known=new Set([...names,'DIRECT','REJECT','REJECT-DROP','PASS','COMPATIBLE']);
  for(const g of groups)for(const name of g.proxies||[])assert.ok(known.has(name),`未知引用 ${name}`);
@@ -63,14 +86,16 @@ test('代理组生成 Verge 风格组树：主组引用 providers，规则按类
  assert.ok(Array.isArray(c['geo-download-urls'])&&c['geo-download-urls'].length>=2);
  assert.ok(c['geo-download-urls'].every(u=>/^https:\/\/.+\/$/.test(u)));
 });
-test('无 geo 数据时降级为不依赖 GEOSITE/GEOIP 的规则，组树仍完整',()=>{
+test('无 geo 数据时降级为不依赖 GEOSITE/GEOIP 的规则，组树仍完整且 GitHub/npm 走代理',()=>{
  const a='sub-00000000-0000-0000-0000-000000000001';
  const c=kernelConfig({mixedPort:7895,controllerPort:9099,secret:'synthetic',dataDirectory:'D:/synthetic',subscriptions:[{id:a,enabled:true}],geo:false});
  // 组树不因缺 geo 而缺失。
- assert.equal(c['proxy-groups'].length,9);
+ assert.equal(c['proxy-groups'].length,11);
  assert.equal(c['proxy-groups'].map(g=>g.name)[0],'🚀 节点选择');
  // 规则不含任何 GEOSITE/GEOIP（否则内核会因缺数据致命退出）。
  assert.ok(!c.rules.some(r=>r.startsWith('GEOSITE')||r.startsWith('GEOIP')),'降级规则不得引用 geo');
+ assert.ok(c.rules.includes('DOMAIN-SUFFIX,github.com,🐙 GitHub'));
+ assert.ok(c.rules.includes('DOMAIN-SUFFIX,npmjs.org,🐙 GitHub'));
  assert.ok(c.rules.includes('DOMAIN-SUFFIX,cn,🎯 全球直连'));
  assert.ok(c.rules.includes('IP-CIDR,192.168.0.0/16,🎯 全球直连,no-resolve'));
  assert.equal(c.rules.at(-1),'MATCH,🐟 漏网之鱼');
@@ -81,11 +106,23 @@ test('无订阅时不生成组树，规则保持纯直连',()=>{
  assert.equal(c['proxy-groups'],undefined);assert.equal(c['proxy-providers'],undefined);
  assert.deepEqual(c.rules,['MATCH,DIRECT']);
 });
-test('TUN 关闭时不生成 tun/dns/sniffer 段，开启时生成完整防慢防漏配置且栈值受控',()=>{
- const base2={mixedPort:7895,controllerPort:9099,secret:'synthetic',dataDirectory:'D:/synthetic',subscriptions:[]};
+test('通用高性能配置：普通代理开启无 fake-ip 的 DNS 与 Sniffer，TUN 模式叠加虚拟网卡与 fake-ip',()=>{
+ const a='sub-00000000-0000-0000-0000-000000000001';
+ const base2={mixedPort:7895,controllerPort:9099,secret:'synthetic',dataDirectory:'D:/synthetic',subscriptions:[{id:a,enabled:true}],geo:true};
  const off=kernelConfig({...base2,tun:{enable:false,stack:'mixed'}});
- assert.equal(off.tun,undefined);assert.equal(off.dns,undefined);assert.equal(off.sniffer,undefined);
+ assert.equal(off.ipv6,false);
+ assert.equal(off.tun,undefined);
  assert.equal(off['find-process-mode'],'off');
+ assert.equal(off['tcp-concurrent'],true);
+ assert.equal(off['unified-delay'],true);
+ assert.equal(off.dns.enable,true);
+ assert.equal(off.dns['enhanced-mode'],undefined,'普通代理模式禁止开启 fake-ip，以免污染系统真实解析');
+ assert.equal(off.dns['respect-rules'],true);
+ assert.ok(off.dns['direct-nameserver']?.length>0);
+ assert.ok(off.dns.fallback?.length>0);
+ assert.equal(off.dns['fallback-filter']?.geoip,true);
+ assert.equal(off.sniffer.enable,true);
+ assert.equal(off.sniffer['override-destination'],true);
  const on=kernelConfig({...base2,tun:{enable:true,stack:'gvisor'}});
  assert.equal(on.ipv6,false);
  assert.equal(on.tun.enable,true);assert.equal(on.tun.stack,'gvisor');
@@ -94,10 +131,19 @@ test('TUN 关闭时不生成 tun/dns/sniffer 段，开启时生成完整防慢�
  assert.deepEqual(on.tun['dns-hijack'],['any:53','tcp://any:53']);assert.equal(on.tun['auto-route'],true);
  assert.ok(on.tun['route-exclude-address'].includes('192.168.0.0/16'));
  assert.equal(on.dns.enable,true);assert.equal(on.dns['enhanced-mode'],'fake-ip');
+ assert.equal(on.dns['respect-rules'],true);
  assert.ok(on.dns['default-nameserver']?.length>0);
- assert.ok(on.dns['proxy-server-nameserver']?.length>0);
+ assert.ok(on.dns['proxy-server-nameserver']?.some(s=>s.startsWith('https://')));
+ assert.ok(on.dns['direct-nameserver']?.length>0);
+ assert.ok(on.dns.fallback?.length>0);
+ assert.equal(on.dns['fallback-filter']?.geoip,true);
  assert.ok(on.dns['fake-ip-filter']?.includes('+.msftncsi.com'));
+ assert.ok(on.dns['fake-ip-filter']?.includes('dns.msftncsi.com'));
  assert.equal(on.sniffer.enable,true);
+ assert.equal(on.sniffer['override-destination'],true);
+ const noGeo=kernelConfig({...base2,geo:false,tun:{enable:true,stack:'mixed'}});
+ assert.equal(noGeo.dns.fallback,undefined,'无 geo 数据时不得启用依赖 GeoIP 的 fallback-filter，防触发在线下载 MMDB 卡死');
+ assert.equal(noGeo.dns['fallback-filter'],undefined);
  const weird=kernelConfig({...base2,tun:{enable:true,stack:'nonsense'}});
  assert.equal(weird.tun.stack,'mixed');
 });

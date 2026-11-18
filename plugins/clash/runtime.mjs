@@ -6,7 +6,7 @@ import http from 'node:http';
 import {mkdir} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {writeFile,rename,readFile,unlink,readdir,stat,rm} from 'node:fs/promises';
-import {createSubscriptionRuntime,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
+import {createSubscriptionRuntime,DUMMY_NODE_FILTER,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
 // C8：看门狗不再用 detached 子进程（Windows 上 detached 不带 CREATE_BREAKAWAY_FROM_JOB，
 // 宿主一死 Job 关闭，看门狗跟着消失），改成任务计划拉起的独立进程。
 import {start as startWatchdogTask,stop as stopWatchdogTask} from './watchdog-task.mjs';
@@ -156,20 +156,69 @@ export function createProxyLease({storage,adapter}){
 export function tunHandoverNeeded(info){
  return !!(info&&info.enabled&&info.state==='running');
 }
+function buildDnsConfig({tunEnabled,withGeo}){
+ const dns={
+  enable:true,
+  ipv6:false,
+  'respect-rules':true,
+  'default-nameserver':['223.5.5.5','119.29.29.29'],
+  'proxy-server-nameserver':['https://223.5.5.5/dns-query','https://doh.pub/dns-query','223.5.5.5'],
+  'direct-nameserver':['223.5.5.5','119.29.29.29'],
+  'direct-nameserver-follow-policy':false,
+  nameserver:['https://223.5.5.5/dns-query','https://doh.pub/dns-query','223.5.5.5','119.29.29.29']
+ };
+ // 仅在 GeoIP.dat 已就绪时启用 geoip fallback-filter，否则 mihomo 会尝试在线拉取 MMDB 导致离线卡死。
+ if(withGeo){
+  dns.fallback=['https://1.1.1.1/dns-query','https://dns.google/dns-query'];
+  dns['fallback-filter']={geoip:true,'geoip-code':'CN',ipcidr:['240.0.0.0/4','0.0.0.0/32']};
+ }
+ if(tunEnabled){
+  dns['enhanced-mode']='fake-ip';
+  dns['fake-ip-range']='198.18.0.1/16';
+  dns['fake-ip-filter-mode']='blacklist';
+  dns['fake-ip-filter']=[
+   '*.lan','*.local','*.home.arpa','localhost.ptlogin2.qq.com','localhost.sec.qq.com',
+   '+.srv.nintendo.net','+.stun.playstation.net','+.stun.*.*','+.stun.*.*.*','+.turn.*.*',
+   'xbox.*.microsoft.com','+.xboxlive.com','+.msftconnecttest.com','+.msftncsi.com',
+   '*.msftncsi.com','dns.msftncsi.com','ipv6.msftconnecttest.com',
+   'time.*.com','time.windows.com','time.apple.com','ntp.*.com','*.ntp.org','*.ntp.org.cn',
+   '+.pool.ntp.org','+.market.xiaomi.com'
+  ];
+ }
+ return dns;
+}
+function buildSnifferConfig(){
+ return {
+  enable:true,
+  'parse-pure-ip':true,
+  'override-destination':true,
+  sniff:{
+   HTTP:{ports:[80,'8080-8880'],'override-destination':true},
+   TLS:{ports:[443,8443]},
+   QUIC:{ports:[443,8443]}
+  },
+  'skip-domain':['Mijia Cloud','+.push.apple.com']
+ };
+}
 export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],dataDirectory,tun,geo=false}){
- const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,'find-process-mode':'off','keep-alive-idle':15,'keep-alive-interval':15,profile:{'store-selected':true}};
+ const tunEnabled=tun?.enable===true;
+ const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,'find-process-mode':'off','keep-alive-idle':15,'keep-alive-interval':15,ipv6:false,profile:{'store-selected':true}};
  const enabled=subscriptions.filter(s=>s.enabled!==false);
+ const withGeo=Boolean(geo&&enabled.length);
  if(enabled.length){
-  value['proxy-providers']=Object.fromEntries(enabled.map(s=>[s.id,fileProvider(s.id,subscriptionPath(dataDirectory,s.id))]));
+  value['proxy-providers']=Object.fromEntries(enabled.map(s=>[s.id,fileProvider(s.id,subscriptionPath(dataDirectory,s.id),{excludeFilter:DUMMY_NODE_FILTER})]));
   // Verge 风格组树（内化为 FISH Dock 自己的命名与分流）：
-  // 主组可手选也可自动；分类组默认直连还是走代理按国内使用习惯排序；
-  // 规则用 geosite 分流国内直连 + 漏网之鱼兜底。
-  const MAIN='🚀 节点选择',AUTO='♻️ 自动选择',DIRECT_GROUP='🎯 全球直连',FINAL='🐟 漏网之鱼';
+  // 1) 主组含自动选择与故障转移兜底，并用 exclude-filter 排除机场信息假节点；
+  // 2) 独立出 🐙 GitHub 组（涵盖 github + npm 官方源）排在 microsoft 之前，避免被 GeoSite(microsoft) 误导直连；
+  // 3) cn.bing.com 与 microsoft@cn / apple@cn 优先直连，国内流量放行后再拒海外 UDP 443（QUIC）让浏览器瞬切 TCP HTTP/2。
+  const MAIN='🚀 节点选择',AUTO='♻️ 自动选择',FALLBACK='🩺 故障转移',GITHUB='🐙 GitHub',DIRECT_GROUP='🎯 全球直连',FINAL='🐟 漏网之鱼';
   const category=(name,first)=>({name,type:'select',proxies:[first]});
   value['proxy-groups']=[
-   {name:MAIN,type:'select',proxies:[AUTO,'DIRECT'],use:enabled.map(s=>s.id)},
-   {name:AUTO,type:'url-test',url:'https://www.gstatic.com/generate_204',interval:300,tolerance:50,use:enabled.map(s=>s.id)},
+   {name:MAIN,type:'select',proxies:[AUTO,FALLBACK,'DIRECT'],use:enabled.map(s=>s.id)},
+   {name:AUTO,type:'url-test',url:'https://www.gstatic.com/generate_204',interval:90,timeout:3000,tolerance:50,'max-failed-times':2,'expected-status':'204',use:enabled.map(s=>s.id)},
+   {name:FALLBACK,type:'fallback',url:'https://www.gstatic.com/generate_204',interval:60,timeout:3000,'max-failed-times':2,'expected-status':'204',use:enabled.map(s=>s.id)},
    {name:'🛑 广告拦截',type:'select',proxies:['REJECT','DIRECT',MAIN]},
+   {name:GITHUB,type:'select',proxies:[MAIN,'DIRECT']},
    category('📲 Telegram',MAIN),
    category('🤖 AI 服务',MAIN),
    {name:'Ⓜ️ 微软服务',type:'select',proxies:['DIRECT',MAIN]},
@@ -178,19 +227,32 @@ export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],d
    {name:FINAL,type:'select',proxies:[MAIN,'DIRECT']}
   ];
   if(geo){
-   // 有 geo 数据时按类别分流（与 Clash Verge 同构）。
+   // 有 geo 数据时按类别分流（GitHub/npm 先于 microsoft 与 cn，避免被微软规则带偏直连）。
    value.rules=[
     'GEOSITE,category-ads-all,🛑 广告拦截',
+    `GEOSITE,github,${GITHUB}`,
+    `DOMAIN-SUFFIX,npmjs.org,${GITHUB}`,
+    `DOMAIN-SUFFIX,npmjs.com,${GITHUB}`,
+    `DOMAIN-SUFFIX,npm.community,${GITHUB}`,
     'GEOSITE,telegram,📲 Telegram',
     'GEOSITE,openai,🤖 AI 服务',
+    'GEOSITE,anthropic,🤖 AI 服务',
+    'DOMAIN-SUFFIX,claude.ai,🤖 AI 服务',
+    'DOMAIN,copilot.microsoft.com,🤖 AI 服务',
+    'DOMAIN,gemini.google.com,🤖 AI 服务',
+    'DOMAIN,aistudio.google.com,🤖 AI 服务',
+    `DOMAIN,cn.bing.com,${DIRECT_GROUP}`,
     'GEOSITE,bing,🤖 AI 服务',
+    `GEOSITE,microsoft@cn,${DIRECT_GROUP}`,
+    `GEOSITE,apple@cn,${DIRECT_GROUP}`,
     'GEOSITE,microsoft,Ⓜ️ 微软服务',
     'GEOSITE,apple,🍎 苹果服务',
     'GEOIP,telegram,📲 Telegram,no-resolve',
-    'GEOSITE,cn,🎯 全球直连',
-    'GEOIP,private,🎯 全球直连,no-resolve',
-    'GEOIP,cn,🎯 全球直连,no-resolve',
-    'MATCH,🐟 漏网之鱼'
+    `GEOSITE,cn,${DIRECT_GROUP}`,
+    `GEOIP,private,${DIRECT_GROUP},no-resolve`,
+    `GEOIP,cn,${DIRECT_GROUP},no-resolve`,
+    'AND,((NETWORK,UDP),(DST-PORT,443)),REJECT',
+    `MATCH,${FINAL}`
    ];
    value['geodata-mode']=true;
    // geo-auto-update 关掉（2.1.8）：geo 文件随包发布、启动时由 ensureGeoData 落到内核目录，
@@ -202,29 +264,30 @@ export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],d
    value['geo-download-urls']=['https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/','https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/'];
   }else{
    // 无 geo 数据（离线/下载失败）：不引用 GEOSITE/GEOIP，保证内核能启动；
-   // 仍保留 .cn 域名与内网直连，其余走漏网之鱼。
+   // 明确护住 GitHub/npm 走代理，保留 .cn 域名与内网直连，其余走漏网之鱼。
    value.rules=[
-    'DOMAIN-SUFFIX,cn,🎯 全球直连',
-    'IP-CIDR,127.0.0.0/8,🎯 全球直连,no-resolve',
-    'IP-CIDR,10.0.0.0/8,🎯 全球直连,no-resolve',
-    'IP-CIDR,172.16.0.0/12,🎯 全球直连,no-resolve',
-    'IP-CIDR,192.168.0.0/16,🎯 全球直连,no-resolve',
-    'IP-CIDR,169.254.0.0/16,🎯 全球直连,no-resolve',
-    'IP-CIDR6,fe80::/10,🎯 全球直连,no-resolve',
-    'MATCH,🐟 漏网之鱼'
+    `DOMAIN-SUFFIX,github.com,${GITHUB}`,
+    `DOMAIN-SUFFIX,githubusercontent.com,${GITHUB}`,
+    `DOMAIN-SUFFIX,githubassets.com,${GITHUB}`,
+    `DOMAIN-SUFFIX,npmjs.org,${GITHUB}`,
+    `DOMAIN-SUFFIX,npmjs.com,${GITHUB}`,
+    `DOMAIN-SUFFIX,cn,${DIRECT_GROUP}`,
+    `IP-CIDR,127.0.0.0/8,${DIRECT_GROUP},no-resolve`,
+    `IP-CIDR,10.0.0.0/8,${DIRECT_GROUP},no-resolve`,
+    `IP-CIDR,172.16.0.0/12,${DIRECT_GROUP},no-resolve`,
+    `IP-CIDR,192.168.0.0/16,${DIRECT_GROUP},no-resolve`,
+    `IP-CIDR,169.254.0.0/16,${DIRECT_GROUP},no-resolve`,
+    `IP-CIDR6,fe80::/10,${DIRECT_GROUP},no-resolve`,
+    `MATCH,${FINAL}`
    ];
   }
  }else value.rules=['MATCH,DIRECT'];
- if(tun?.enable){
-  value.ipv6=false;
+ value.dns=buildDnsConfig({tunEnabled,withGeo});
+ value.sniffer=buildSnifferConfig();
+ if(tunEnabled){
   value.tun={enable:true,stack:['mixed','gvisor','system'].includes(tun.stack)?tun.stack:'mixed',
    mtu:1500,'strict-route':true,'dns-hijack':['any:53','tcp://any:53'],'auto-route':true,'auto-detect-interface':true,
    'route-exclude-address':['127.0.0.0/8','10.0.0.0/8','100.64.0.0/10','169.254.0.0/16','172.16.0.0/12','192.168.0.0/16','224.0.0.0/4','255.255.255.255/32']};
-  value.dns={enable:true,ipv6:false,'enhanced-mode':'fake-ip','fake-ip-range':'198.18.0.1/16',
-   'default-nameserver':['223.5.5.5','119.29.29.29'],'proxy-server-nameserver':['223.5.5.5','119.29.29.29'],
-   nameserver:['https://dns.alidns.com/dns-query','https://doh.pub/dns-query'],
-   'fake-ip-filter':['*.lan','*.local','localhost.ptlogin2.qq.com','+.srv.nintendo.net','+.stun.playstation.net','xbox.*.microsoft.com','+.xboxlive.com','+.msftconnecttest.com','+.msftncsi.com','*.msftncsi.com','time.*.com','ntp.*.com','*.ntp.org.cn','+.pool.ntp.org']};
-  value.sniffer={enable:true,'parse-pure-ip':true,sniff:{HTTP:{ports:[80,'8080-8880'],'override-destination':true},TLS:{ports:[443,8443]},QUIC:{ports:[443,8443]}},'skip-domain':['Mijia Cloud','+.push.apple.com']};
  }
  return value;
 }
