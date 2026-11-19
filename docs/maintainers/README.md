@@ -1,8 +1,8 @@
 # 插件维护者指南
 
-2.0.0 把当时的四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉。OFM 已于 2026-10-25 暂停维护，2.3.0 起从官方目录与活动构建链退役，历史适配层见 [docs/archive/ofm](../archive/ofm/README.md) 。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线上游 tag 加我们自己的补丁，当前 `v0.1.4344+fish.48`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md) 。
+2.0.0 把当时的四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉。OFM 已于 2026-10-25 暂停维护，2.3.0 起从官方目录与活动构建链退役，历史适配层见 [docs/archive/ofm](../archive/ofm/README.md) 。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线上游 tag 加我们自己的补丁，当前 `v0.1.4530+fish.49`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md) 。
 
-**当前版本**（以 `catalog/stable.json` 为唯一权威）：飞书 **2.2.0**、Clash **2.4.8**、Magpie **2.4.8**（Magpie exe `v0.1.4344+fish.48`，在 `fish.47` 之上清除供应商底栏遮罩与 `.mo-node` 黑圈、统一 `.rt` / 网关搜索框与模型徽章 / 侧栏与弹层菜单 / 模型胶囊 `.mchip` 液态玻璃、未用连线改白、提高未选 Agent 图标可见度并同步 `distillRow()` 实时审阅计数；Clash 重构通用双模式 DNS/Sniffer 与规则顺序，独立 `🐙 GitHub` 组并分离 npm/Bing 国内/微软与苹果 `@cn` 直连，拦截海外 UDP 443、过滤订阅伪节点、强化 `♻️ 自动选择` 与 `🩺 故障转移`，并将无 Geo 安全回退与 TUN 状态等待延至 `12000 ms`）。发行走 `v2.x.y` 之类的总 tag，一个 release 里放当次要发的包——不必三插件同版。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+**当前版本**（以 `catalog/stable.json` 为唯一权威）：飞书 **2.2.0**、Clash **2.4.9**、Magpie **2.4.9**（Magpie exe `v0.1.4530+fish.49`，追平上游 `v0.1.4530` 并重扫 163 条液态玻璃表面规则；Clash 修复 Issue #57 严格沙箱 CSP 下壁纸上传失败，改用 `createImageBitmap` + `FileReader` 兜底并拆分报错提示）。发行走 `v2.x.y` 之类的总 tag，一个 release 里放当次要发的包——不必三插件同版。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
 
 ## 身份表
 

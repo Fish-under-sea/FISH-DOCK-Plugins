@@ -83,7 +83,7 @@
   SUBSCRIPTION_NO_CACHE:'请先更新已启用订阅，获取可用缓存',
   // 运行中换订阅：热重载失败时插件自己会重启一次内核；两次都失败才回滚启用集。
   SUBSCRIPTION_SWITCH_FAILED:'订阅切换没能生效：已回滚到原启用集；请刷新后重试，反复失败请打开插件日志查看原始错误码',
-  APPEARANCE_WALLPAPER_INVALID:'背景图片不受支持或超出上限：请选 2 MB 以内的 PNG、JPEG、GIF 或 WebP 图片',
+  APPEARANCE_WALLPAPER_INVALID:'背景图片不受支持或超出上限：请选 PNG、JPEG、GIF 或 WebP 图片（页面压缩上限 1.5 MiB / 存储上限 2 MiB）',
   APPEARANCE_SAVE_FAILED:'外观设置保存失败：请检查插件资料目录的可用空间与写入权限后重试',
   DETAIL_SECTION_INVALID:'详情类别无效',
   PLUGIN_STOPPING:'插件正在停用',
@@ -779,42 +779,59 @@
  // 仍然自动压缩：手机原图直接丢进来也能成，只是压得少一点、画质更好。
  const WALL_MAX_DATA = 1536 * 1024;
  function loadImageFile(file){
+  if(typeof createImageBitmap==='function')return createImageBitmap(file);
   return new Promise((resolve,reject)=>{
-   const url=URL.createObjectURL(file);
-   const img=new Image();
-   img.onload=()=>{URL.revokeObjectURL(url);resolve(img)};
-   img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error("image decode failed"))};
-   img.src=url;
+   const reader=new FileReader();
+   reader.onerror=()=>reject(new Error('image read failed'));
+   reader.onload=()=>{
+    const img=new Image();
+    img.onload=()=>resolve(img);
+    img.onerror=()=>reject(new Error('image decode failed'));
+    img.src=String(reader.result||'');
+   };
+   reader.readAsDataURL(file);
   });
  }
  // 逐级降质、再降尺寸，直到 data URL 进预算；实在不行返回 "".
  async function shrinkWallpaper(file){
   const img=await loadImageFile(file);
-  let scale=Math.min(1,3840/Math.max(img.width,img.height));
-  for(let round=0;round<8;round++){
-   const w=Math.max(320,Math.round(img.width*scale)), h=Math.max(320,Math.round(img.height*scale));
-   const canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
-   const g=canvas.getContext("2d");
-   if(!g)return "";
-   g.drawImage(img,0,0,w,h);
-   for(const q of [0.92,0.86,0.8,0.72,0.64,0.56]){
-    const url=canvas.toDataURL("image/jpeg",q);
-    if(url.length<=WALL_MAX_DATA)return url;
+  try{
+   const w0=img.width||img.naturalWidth, h0=img.height||img.naturalHeight;
+   if(!w0||!h0)throw new Error('image decode failed');
+   let scale=Math.min(1,3840/Math.max(w0,h0));
+   for(let round=0;round<8;round++){
+    const w=Math.max(320,Math.round(w0*scale)), h=Math.max(320,Math.round(h0*scale));
+    const canvas=document.createElement("canvas");canvas.width=w;canvas.height=h;
+    const g=canvas.getContext("2d");
+    if(!g)return "";
+    g.drawImage(img,0,0,w,h);
+    for(const q of [0.92,0.86,0.8,0.72,0.64,0.56]){
+     const url=canvas.toDataURL("image/jpeg",q);
+     if(url.length<=WALL_MAX_DATA)return url;
+    }
+    scale*=0.75;
    }
-   scale*=0.75;
-  }
-  return "";
+   return "";
+  }finally{img.close?.()}
  }
 
  function readWallpaperFile(file){
   if(!file)return false;
-  if(!/^image\//.test(file.type||'')){lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw();return false}
+  const okType=/^image\//.test(file.type||'')||(!file.type&&/\.(png|jpe?g|gif|webp)$/i.test(file.name||''));
+  if(!okType){lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw();return false}
   void (async()=>{
+   let data;
    try{
-    const data=await shrinkWallpaper(file);
-    if(!data){lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw();return false}
-    await setWallpaper({data});
-   }catch{lookErr=ERROR_TEXT.APPEARANCE_WALLPAPER_INVALID;draw()}
+    data=await shrinkWallpaper(file);
+   }catch{
+    lookErr='背景图片解码失败：请确认文件未损坏，并选择 PNG、JPEG、GIF 或 WebP 图片';
+    draw();return;
+   }
+   if(!data){
+    lookErr='背景图片压缩后仍超过 1.5 MiB 传输上限，请换一张分辨率更小或体积更轻的图片';
+    draw();return;
+   }
+   await setWallpaper({data});
   })();
   return true;
  }
