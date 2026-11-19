@@ -17,6 +17,7 @@ test('真实 sandbox 页面：按钮、回车、错误反馈、多订阅落盘�
  const {chromium}=require(resolve(process.env.FISH_TEST_PLAYWRIGHT));
  const repo=process.env.FISH_TEST_RESOURCE_ROOT?pathToFileURL(resolve(process.env.FISH_TEST_RESOURCE_ROOT)+sep):new URL('../../',import.meta.url);
  const {createClash}=await import(new URL('plugins/clash/service.mjs',repo));
+ const {readAppearance,savePatch,saveWallpaper}=await import(new URL('plugins/clash/appearance-store.mjs',repo));
  const bridge=await readFile(resolve(process.env.FISH_TEST_BRIDGE),'utf8');
  const root=await mkdtemp(join(resolve(process.env.FISH_TEST_TMP), 'clash-browser-'));
  const dataDirectory=join(root,'data');await mkdir(dataDirectory,{recursive:true});
@@ -157,6 +158,98 @@ test('真实 sandbox 页面：按钮、回车、错误反馈、多订阅落盘�
   await page.screenshot({path:join(root,'result.png'),fullPage:true});
   console.log(JSON.stringify({sandbox:'allow-scripts',savedSubscriptions:saved.subscriptions.length,
    saveCalls:calls.filter(x=>x==='clash.subscriptionSave').length,configSaved:true,browserErrors,artifact:root}));
+ }finally{
+  if(browser)await browser.close();
+  if(edge.exitCode===null)edge.kill();
+  await new Promise(r=>server.close(r));
+ }
+});
+
+test('真实 sandbox 页面（严格 CSP）：外观背景图片上传走 createImageBitmap 且区分解码失败',{
+ skip:enabled?false:'设置 FISH_TEST_EDGE 和 FISH_TEST_PLAYWRIGHT 以启用真实浏览器测试',timeout:45000
+},async()=>{
+ const require=createRequire(import.meta.url);
+ const {chromium}=require(resolve(process.env.FISH_TEST_PLAYWRIGHT));
+ const repo=process.env.FISH_TEST_RESOURCE_ROOT?pathToFileURL(resolve(process.env.FISH_TEST_RESOURCE_ROOT)+sep):new URL('../../',import.meta.url);
+ const {createClash}=await import(new URL('plugins/clash/service.mjs',repo));
+ const {readAppearance,savePatch,saveWallpaper}=await import(new URL('plugins/clash/appearance-store.mjs',repo));
+ const bridge=await readFile(resolve(process.env.FISH_TEST_BRIDGE),'utf8');
+ const root=await mkdtemp(join(resolve(process.env.FISH_TEST_TMP), 'clash-wall-browser-'));
+ const dataDirectory=join(root,'data');await mkdir(dataDirectory,{recursive:true});
+ const browserErrors=[];
+ const storage={
+  async read(category,name){try{return await readFile(join(dataDirectory,category,name),'utf8')}catch(e){if(e.code==='ENOENT')return null;throw e}},
+  async write(category,name,value){await mkdir(join(dataDirectory,category),{recursive:true});await writeFile(join(dataDirectory,category,name),value,'utf8')}
+ };
+ const service=createClash({context:{dataDirectory,storage,secrets:storage},runtime:{proxy:{active:()=>false,restore:async()=>{}}},defaultKernel:'D:/synthetic/mihomo.exe'});
+ const server=createServer(async(req,res)=>{
+  try{
+   if(req.url==='/'){
+    res.setHeader('Content-Type','text/html; charset=utf-8');
+    res.end(`<iframe id="plugin" sandbox="allow-scripts" src="/ticket/plugins/clash/page.html" style="width:1100px;height:900px"></iframe><script>
+     window.addEventListener('message',event=>{const row=event.data;if(row?.type!=='fish:call')return;
+      fetch('/rpc',{method:'POST',body:JSON.stringify(row)}).then(r=>r.json()).then(result=>
+       event.source.postMessage({type:'fish:result',ticket:row.ticket,id:row.id,...result},'*'));
+     });</script>`);return;
+   }
+   if(req.url==='/rpc'){
+    let body='';for await(const b of req)body+=b;
+    const {method,params}=JSON.parse(body);
+    res.setHeader('Content-Type','application/json');
+    try{
+     const result=method==='clash.appearance'?await readAppearance(storage)
+      :method==='clash.appearanceSave'?await savePatch(storage,params)
+      :method==='clash.appearanceWallpaper'?await saveWallpaper(storage,params)
+      :await service[method.replace(/^clash\./,'')](params);
+     res.end(JSON.stringify({result}));
+    }catch(e){res.end(JSON.stringify({error:e.message,code:e.code}));}
+    return;
+   }
+   const url=new URL(req.url,'http://localhost');
+   if(url.pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}
+   if(url.pathname==='/ticket/bridge.js'){res.setHeader('Content-Type','text/javascript');res.end(bridge);return;}
+   const relative=url.pathname.replace(/^\/ticket\//,'');
+   let bytes=await readFile(new URL(relative,repo));
+   if(relative==='plugins/clash/page.html'){
+    bytes=Buffer.from(bytes.toString().replace('<head>','<head><script src="/ticket/bridge.js"></script>'));
+    res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'");
+   }
+   res.setHeader('Content-Type',relative.endsWith('.js')?'text/javascript':relative.endsWith('.css')?'text/css':'text/html; charset=utf-8');res.end(bytes);
+  }catch{res.writeHead(500);res.end('fixture error');}
+ });
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const profile=join(root,'edge');await mkdir(profile,{recursive:true});
+ const edge=spawn(process.env.FISH_TEST_EDGE,['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check',
+  '--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{windowsHide:true,stdio:'ignore'});
+ let browser;
+ try{
+  let port;const deadline=Date.now()+15000;
+  while(Date.now()<deadline){
+   try{port=Number((await readFile(join(profile,'DevToolsActivePort'),'utf8')).split('\n')[0]);break}catch{}
+   if(edge.exitCode!==null)throw Error('Edge 启动退出 '+edge.exitCode);
+   await new Promise(r=>setTimeout(r,100));
+  }
+  assert.ok(port,'浏览器 CDP 应就绪');
+  browser=await chromium.connectOverCDP('http://127.0.0.1:'+port);
+  const page=await browser.contexts()[0].newPage();
+  page.on('console',m=>{if(m.type()==='error')browserErrors.push(m.text())});
+  page.on('pageerror',e=>browserErrors.push(e.message));
+  await page.goto('http://127.0.0.1:'+server.address().port+'/');
+  const frame=page.frameLocator('#plugin');
+  await frame.locator('[data-action="section-appearance"]').click();
+  await frame.locator('#look-wall-file').waitFor({state:'attached'});
+  const tinyPng=join(root,'wall.png');
+  await writeFile(tinyPng,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=','base64'));
+  await frame.locator('#look-wall-file').setInputFiles(tinyPng);
+  await frame.locator('.look-thumb').waitFor();
+  const savedLook=JSON.parse(await storage.read('config','appearance.json'));
+  assert.match(savedLook.wallpaper,/^data:image\/jpeg;base64,/,'壁纸经 createImageBitmap 压缩并落盘');
+  assert.equal(await frame.locator('body[data-has-wall]').count(),1,'body 应标记 data-has-wall');
+  const badPng=join(root,'bad.png');
+  await writeFile(badPng,Buffer.from('not-a-valid-png'));
+  await frame.locator('#look-wall-file').setInputFiles(badPng);
+  await frame.locator('[role="alert"]').filter({hasText:'解码失败'}).waitFor();
+  assert.deepEqual(browserErrors,[]);
  }finally{
   if(browser)await browser.close();
   if(edge.exitCode===null)edge.kill();

@@ -790,3 +790,11 @@ test('输入框 placeholder 命中次要文字 --dock-muted、内核设置防溢
  assert.match(pageJs,/wantDown=Math\.min\(natural,240\)/,'下拉优先向下滚出空间再测量位置');
  assert.match(pageJs,/below<72&&above>below/,'仅底部实在不足 72px 时才向上翻');
 });
+test('壁纸上传禁止走 blob: URL（CSP img-src 不允许），且区分解码失败与压缩超限文案',()=>{
+ assert.doesNotMatch(pageJs,/URL\.createObjectURL/,'沙箱 CSP img-src 只有 self 与 data:，禁止使用 blob: URL');
+ assert.match(pageJs,/createImageBitmap\(file\)/,'优先使用 createImageBitmap 直接解码 File');
+ assert.match(pageJs,/readAsDataURL\(file\)/,'保留 FileReader data: URL 兼容兜底');
+ assert.match(pageJs,/背景图片解码失败/);
+ assert.match(pageJs,/压缩后仍超过 1\.5 MiB/);
+ assert.match(pageJs,/页面压缩上限 1\.5 MiB \/ 存储上限 2 MiB/);
+});
