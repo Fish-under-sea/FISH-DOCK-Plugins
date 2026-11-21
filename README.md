@@ -35,23 +35,19 @@
 
 每个插件独立保存配置与凭据，按需启动，不共享业务密钥。插件仓只发布插件资源，桌面安装包请前往 [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock) 。
 
-当前发行（以 `catalog/stable.json` 为唯一权威）：Magpie **2.5.0**（原生标识 `v0.1.4650+fish.50`，要求 FISH Dock ≥ 2.3.4）、Clash **2.5.0**（内置 `mihomo v1.19.34`，要求 FISH Dock ≥ 2.0.0）、飞书 **2.2.0**。本版详见 [2.5.0 发行说明](docs/releases/2.5.0.md) （Magpie 追平上游 `v0.1.4650`、接入 Dock 玻璃与字体「跟随」、顶栏玻璃自动透明并收敛强调色对玻璃底色的染色；Clash 升级 `mihomo v1.19.34`、新增用户级环境变量代理开关、接入 Dock 玻璃与字体「跟随」并补齐深色字体单独设置）；上版详见 [2.4.9 发行说明](docs/releases/2.4.9.md) 。
+当前发行（以 `catalog/stable.json` 为唯一权威）：Magpie **2.5.0**（要求 FISH Dock ≥ 2.3.4）、Clash **2.5.0**（内置 mihomo 1.19.34，要求 FISH Dock ≥ 2.0.0）、飞书 **2.2.0**；详见 [2.5.0 发行说明](docs/releases/2.5.0.md) 。
 
-**最近版本**（当前 2.5.0；每一版的完整说明见 [docs/releases](docs/releases) ）
+**最近版本**（完整更新见 [docs/releases](docs/releases) ）
 
-- **2.5.0** · Magpie（`fish.50`）：追平上游 `v0.1.4650` 并重扫 165 条玻璃表面规则，接入 Dock 液态玻璃与字体「跟随」（补齐 SSE 桥接与 Node 24 断流修复），玻璃模式下顶部服务条自动透明并收敛强调色对玻璃底色的染色；Clash：内置 `mihomo` 升级至 `v1.19.34`，新增显式环境变量代理开关（`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 与看门狗租约还原），接入 Dock 玻璃与字体「跟随」并补齐深色字体单独设置。→ [说明](docs/releases/2.5.0.md)
-- **2.4.9** · Magpie（`fish.49`）：追平上游 `v0.1.4530` 并重扫 163 条液态玻璃表面规则；Clash：修复严格沙箱 CSP（`img-src 'self' data:`）下 `blob:` URL 导致壁纸上传必败（改用 `createImageBitmap` + `FileReader` 兜底），分离格式/解码/超限报错文案。→ [说明](docs/releases/2.4.9.md)
-- **2.4.8** · Magpie（`fish.48`）：清除 `#view-providers .after-list::before` 遮罩背景条与 `.mo-node` 黑圈，统一路由卡/网关搜索与徽章/侧栏与弹层菜单/模型胶囊 `.mchip` 液态玻璃、未用连线改白、提升未选 Agent 图标可见度并同步 `distillRow()` 实时审阅计数。Clash：重构通用规则与双模式（系统代理真实 IP + TUN Fake-IP）DNS/Sniffer 管线，独立 `🐙 GitHub` 代理组接管 GitHub/npm 流量，修正 `cn.bing.com` 与微软/苹果国内服务直连，拦截海外 UDP 443（QUIC），过滤订阅信息伪节点并启用 `♻️ 自动选择` 与 `🩺 故障转移`。→ [说明](docs/releases/2.4.8.md)
-- **2.4.7** · Magpie（`fish.47`）：补全 `.rt`、`.lib-card`、`.msk-*`、`.pr-*`、`.pu-*` 等外圈卡片与内层液态玻璃，清除 `.rt-hub` 4px 黑环与路由组/请求列表等黑块悬浮选中态，统一全站玻璃按钮样式；补齐 `--ctl-fg`、暗色字体权重与全局 `::placeholder` 调色命中；替换 Obsidian 紫色晶石图标。Clash：修复 TUN 服务自删、读写竞态断连、无内核独立开启与并发锁，优化 TUN 网速路由与 DNS 配置，修正输入框次要文字着色、节点组弹窗向下滚动展开、长日志换行与设置页头部 `16px` 边距。→ [说明](docs/releases/2.4.7.md)
-- **2.4.6** · Magpie：追平上游 `v0.1.4344`（`fish.46`），Obsidian 记忆 UX 收敛、`.lib-memrun` 常驻全汉化与一键整理开关、`menuButton` 二次点击关闭、`rules.js` 随包部署、记忆提示词与 `AGENTS.md` 重写（`Sandbox.Write` 允许 `dreams/` 并移除 `memories/` 直接写入），修复 `#000000` 玻璃颜色 `0%` 不透明度仍残余黑底与分隔线及 Agents 页 `Obsidian 记忆 Agent` 详情重叠；Clash：补全 `.banner` 运行提示条 360° Fresnel 液态玻璃胶囊。→ [说明](docs/releases/2.4.6.md)
-- **2.4.5** · Magpie：Obsidian 记忆功能纳入 `.obsidian` 统一工作区正式 Agent（`fish.45`）；用量四页签等 159 条液态玻璃表面规则与独立玻璃颜色（`fishGlassColor`）解耦强调色，修复侧边栏真全透与零滤镜（`fish.44`）。Clash：TUN 服务恢复（`job.ini` 监听/BOM 剥离/`hostGone`）与切换回滚修复，对齐 360° Fresnel 液态玻璃、滚动条/过滤框与下拉交互。→ [说明](docs/releases/2.4.5.md)
-- **2.4.4** · Magpie：外观页签图标补齐；底图遮挡改为 `--wall-veil` 并在滑块松手后重画，从此真正生效；回滚改坏的侧栏内滚；玻璃覆盖改由 `tools/glass-surfaces.mjs` 从 `app.css` 生成。Clash：适配宿主页桥 2 MiB 上限，壁纸预算 1.5 MiB，超限不再假死。→ [说明](docs/releases/2.4.4.md)
-- **2.4.3** · Clash 外观页一卡一行、浮空白色滚动条、壁纸自动压缩；Magpie 侧边栏与外观页秩序。→ [说明](docs/releases/2.4.3.md)
-- **2.4.2** · 玻璃可读性：壁纸遮罩随内容区不透明度；Clash 外观页细节修正。→ [说明](docs/releases/2.4.2.md)
-- **2.4.1** · Clash 外观页保存条与下拉定位。→ [说明](docs/releases/2.4.1.md)
-- **2.4.0** · 外观独立成页、液态玻璃改四区域调节、Clash 也有外观设置；Magpie 内置记忆 Agent。→ [说明](docs/releases/2.4.0.md)
-- **2.3.9 / 2.3.8 / 2.3.7** · 修复 2.3.8 无法启动；Obsidian 窗口与提示；跟进上游与独立共享知识库。→ [2.3.9](docs/releases/2.3.9.md) · [2.3.8](docs/releases/2.3.8.md) · [2.3.7](docs/releases/2.3.7.md)
-- **2.2.x 及更早** · 见 [docs/releases](docs/releases)。
+- **2.5.0** · Magpie 追平上游、接入 Dock 玻璃/字体跟随并透明顶栏；Clash 升级 mihomo 1.19.34、新增环境变量代理与深色字体设置。→ [说明](docs/releases/2.5.0.md)
+- **2.4.9** · Magpie 追平上游与玻璃覆盖重扫；Clash 修复沙箱 CSP 下壁纸上传失败。→ [说明](docs/releases/2.4.9.md)
+- **2.4.8** · Magpie 清理遮罩与统一卡片玻璃；Clash 重构分流规则、DNS 与 GitHub 代理组。→ [说明](docs/releases/2.4.8.md)
+- **2.4.7** · Magpie 补全全站玻璃与字体调色；Clash 修复 TUN 竞态与设置页排版。→ [说明](docs/releases/2.4.7.md)
+- **2.4.6** · Magpie 追平上游并收敛 Obsidian 记忆体验；Clash 补全提示条玻璃胶囊。→ [说明](docs/releases/2.4.6.md)
+- **2.4.5** · Magpie 纳入统一工作区记忆 Agent 并解耦玻璃色；Clash 修复 TUN 恢复与玻璃样式。→ [说明](docs/releases/2.4.5.md)
+- **2.4.4** · Magpie 修复壁纸遮挡与玻璃表生成；Clash 适配 2 MiB 壁纸传输上限。→ [说明](docs/releases/2.4.4.md)
+- **2.4.3 / 2.4.2 / 2.4.1 / 2.4.0** · 外观独立分页、四区域液态玻璃、壁纸压缩与 Clash 外观页。→ [2.4.3](docs/releases/2.4.3.md) · [2.4.2](docs/releases/2.4.2.md) · [2.4.1](docs/releases/2.4.1.md) · [2.4.0](docs/releases/2.4.0.md)
+- **2.3.x 及更早** · 见 [docs/releases](docs/releases) 。
 
 > ⚠️ **2.0.0 是 breaking 版本**：插件清单新增 `behaviors` 字段，FISH Dock 1.2.3 及更早的宿主用 `deny_unknown_fields` 解析，会以「plugin.json 格式无效或含未知字段」直接拒装。**旧宿主请先把 Dock 升到 2.0.0**，再安装这些插件。
 
