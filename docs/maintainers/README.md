@@ -1,8 +1,8 @@
 # 插件维护者指南
 
-2.0.0 把当时的四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉。OFM 已于 2026-10-25 暂停维护，2.3.0 起从官方目录与活动构建链退役，历史适配层见 [docs/archive/ofm](../archive/ofm/README.md) 。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线上游 tag 加我们自己的补丁，当前 `v0.1.4530+fish.49`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md) 。
+2.0.0 把当时的四个官方插件一起升到大版本：飞书、Clash、Magpie、OFM 全部 2.0.0，配套 FISH Dock 2.0.0+。作者改为数组、维护者字段整体去掉。OFM 已于 2026-10-25 暂停维护，2.3.0 起从官方目录与活动构建链退役，历史适配层见 [docs/archive/ofm](../archive/ofm/README.md) 。Magpie 随包的原生服务早已不是官方版：2.0.1 起是**源码自编译**（基线上游 tag 加我们自己的补丁，当前 `v0.1.4650+fish.50`），原因与补丁清单见 [自编译说明](../../plugins/magpie/tools/README.md) 。
 
-**当前版本**（以 `catalog/stable.json` 为唯一权威）：飞书 **2.2.0**、Clash **2.4.9**、Magpie **2.4.9**（Magpie exe `v0.1.4530+fish.49`，追平上游 `v0.1.4530` 并重扫 163 条液态玻璃表面规则；Clash 修复 Issue #57 严格沙箱 CSP 下壁纸上传失败，改用 `createImageBitmap` + `FileReader` 兜底并拆分报错提示）。发行走 `v2.x.y` 之类的总 tag，一个 release 里放当次要发的包——不必三插件同版。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
+**当前版本**（以 `catalog/stable.json` 为唯一权威）：飞书 **2.2.0**、Clash **2.5.0**、Magpie **2.5.0**（Magpie exe `v0.1.4650+fish.50`，追平上游 `v0.1.4650`、接入 Dock 玻璃与字体「跟随」、玻璃模式顶栏自动透明并收敛强调色对玻璃底色的染色；Clash 内置内核升级至 `mihomo v1.19.34`，新增用户级环境变量代理开关并同步租约与看门狗恢复，接入 Dock 玻璃与字体「跟随」并补齐深色字体单独设置）。发行走 `v2.x.y` 之类的总 tag，一个 release 里放当次要发的包——不必三插件同版。发行工具生成标准 ZIP 插件包、逐资源 SHA-256、商店目录及总摘要；桌面安装器与业务插件分别在各自仓库发布。
 
 ## 身份表
 
@@ -28,11 +28,11 @@
 
 | 资源 | 当前开发验证来源 | 处理方式 |
 | --- | --- | --- |
-| Magpie | `yetone/magpie`，基线 `v0.1.4344`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/` 最新补丁自行构建（版本标识 `v0.1.4344+fish.48` / FileVersion `0.1.4344.48`） | 独立进程；逐文件摘要记录于插件清单 |
-| mihomo | v1.19.15，`mihomo-windows-amd64-compatible-v1.19.15.zip` | 校验下载后暂存可执行文件，首次按需启动 |
+| Magpie | `yetone/magpie`，基线 `v0.1.4650`，按 [自编译说明](../../plugins/magpie/tools/README.md) 加 `patches/` 最新补丁自行构建（版本标识 `v0.1.4650+fish.50` / FileVersion `0.1.4650.50`） | 独立进程；逐文件摘要记录于插件清单 |
+| mihomo | v1.19.34，`mihomo-windows-amd64-compatible-v1.19.34.zip` | 校验下载后暂存可执行文件，首次按需启动 |
 | Node SDK | 同版 Dock 仓的 `sdk/node/plugin.mjs` | 复制到各插件，与宿主 API 1 联调 |
 
-当前验证的 mihomo ZIP SHA-256：`e9251191e459816c1aca55d495eabd50d525e83aff0cd445608d69da7e0f470c`。发行前重新核对上游版本、资源名、来源、许可证与真实摘要，切勿用开发目录的文件名替代上游证据。
+当前验证的 mihomo ZIP SHA-256：`cd6738d4648cc1a5f48049a1343b697ab510889d648f045c5c780fc1ab443a79`。发行前重新核对上游版本、资源名、来源、许可证与真实摘要，切勿用开发目录的文件名替代上游证据。
 
 Windhawk 属于 Dock 宿主。其固定下载、安装、提权和源码编译的实现不在业务插件仓重复维护。自动回归使用合成安装与编译夹具；真实系统安装或应用仍需要用户在界面确认。
 
