@@ -510,42 +510,70 @@
  }
  function networkCard(){
   const system=view.systemProxy===true,tun=view.tun?.enable===true,tunInstalled=view.tunService?.installed===true;
-  const envOn=view.envProxy!==false,envActive=view.envProxyActive===true;
+  const envOn=view.envProxy===true;
   const opBusy=anyOp()||!!view.operation||view.tunSwitching===true;
-  const status=tun
-   ?(view.running?'TUN 模式已启用：应用通过虚拟网卡访问网络。':'TUN 开关已勾选，但内核未运行：启动内核后生效，或可先关闭开关。')
-   :system?`系统代理已接管：浏览器等应用走 127.0.0.1:${view.mixedPort}。`
-   :'未接管系统网络：只有内置代理端口可用，其他应用需要自行配置。';
-  // 禁用原因是独立一行 muted 小字（同时进 title）：混进同一句会把「开启」胶囊压成竖排圆块。
   const proxyReason=view.tunSwitching?'TUN 切换中，请稍候':!view.running&&!system?'内核未运行，无法接管系统代理':'';
   const tunReason=view.tunSwitching?'TUN 正在切换，请稍候'
    :!view.configured?'先完成内核配置'
    :!tunInstalled&&!tun?'需先安装 TUN 服务'
    :!view.running&&!tun?'内核未运行，无法开启 TUN 模式':'';
-  const tunNote=tunInstalled&&view.running?' · 切换会重启内核':'';
-  const envSub=envActive
-   ?`已写入 HTTP_PROXY / HTTPS_PROXY / NO_PROXY → 127.0.0.1:${view.mixedPort}，停止内核时还原`
-   :envOn
-    ?(view.running?'已开启：将在下次启动或重启内核时生效':'已默认开启，启动内核后自动写入用户环境变量')
-    :'为 AGY / CLI 工具显式写入 HTTP_PROXY、HTTPS_PROXY 与 NO_PROXY';
-  return card('网络设置',`<div class="switch-row"><div><strong>系统代理</strong>
-    <p class="small muted">${system?'已写入系统代理设置':'由 Dock 写入，停止内核时还原'}</p></div>
-    ${button('proxy',system?'关闭':'开启',`role="switch" aria-checked="${system}" title="${esc(proxyReason||'接管系统代理')}"`,opBusy||(!view.running&&!system))}</div>
-   ${proxyReason?`<p class="reason">${esc(proxyReason)}</p>`:''}
-   <div class="switch-row"><div><strong>TUN 虚拟网卡</strong>
-    <p class="small muted">${tun?'已启用':'未启用'}${tunNote}</p></div>
-    ${button('tun-toggle',view.tunSwitching?'切换中…':tun?'关闭':'开启',`role="switch" aria-checked="${tun}" title="${esc(tunReason||'切换 TUN')}"`,opBusy||!view.configured||(!tunInstalled&&!tun)||(!view.running&&!tun))}</div>
-   ${tunReason?`<p class="reason">${esc(tunReason)}</p>`:''}
-   <div class="switch-row"><div><strong>环境变量代理（HTTP_PROXY）</strong>
-    <p class="small muted">${esc(envSub)}</p></div>
-    ${button('env-proxy',envOn?'关闭':'开启',`role="switch" aria-checked="${envOn}" title="为 AGY / CLI 工具写入用户环境变量 HTTP_PROXY / HTTPS_PROXY / NO_PROXY"`,opBusy)}</div>
-   <p class="status-line">${esc(status)}</p>`);
+  const tunHint=tunReason||(tunInstalled&&view.running?'切换 TUN，切换会重启内核':'切换 TUN');
+  const envHint='为 AGY / CLI 工具写入用户环境变量 HTTP_PROXY / HTTPS_PROXY / NO_PROXY';
+  return card('网络设置',`<div class="switch-list">
+   <div class="switch-row"><strong>系统代理</strong>
+    ${button('proxy',system?'关闭':'开启',`role="switch" aria-checked="${system}" title="${esc(proxyReason||'由 Dock 写入，停止内核时还原')}"`,opBusy||(!view.running&&!system))}</div>
+   <div class="switch-row"><strong>TUN 虚拟网卡</strong>
+    ${button('tun-toggle',view.tunSwitching?'切换中…':tun?'关闭':'开启',`role="switch" aria-checked="${tun}" title="${esc(tunHint)}"`,opBusy||!view.configured||(!tunInstalled&&!tun)||(!view.running&&!tun))}</div>
+   <div class="switch-row"><strong>环境变量代理</strong>
+    ${button('env-proxy',envOn?'关闭':'开启',`role="switch" aria-checked="${envOn}" title="${esc(envHint)}"`,opBusy)}</div>
+  </div>`);
+ }
+ function routeOutlet(mode){
+  if(!view.running)return '未运行';
+  if(mode==='direct')return 'DIRECT（直连）';
+  const list=groups();
+  let g=list.find(x=>/节点选择/.test(x.name))??list[0];
+  let label='';
+  for(let depth=0;depth<6&&g;depth++){
+   const picked=g.nodes?.find(n=>n.name===g.selected);
+   label=picked?.label??g.selected??'';
+   if(!picked||picked.type!=='group')break;
+   g=list.find(x=>x.name===picked.name);
+  }
+  return label||'未选择';
  }
  function modeCard(){
-  const current=view.mode||'rule',hint=MODES.find(m=>m[0]===current)?.[2]??'';
+  const current=view.mode||'rule';
+  const system=view.systemProxy===true,tun=view.tun?.enable===true;
+  const envOn=view.envProxy===true,envActive=view.envProxyActive===true;
   const row=MODES.map(([key,label])=>button('mode-set',label,`data-mode="${key}" aria-pressed="${current===key}"`,
    anyOp()||!view.running)).join('');
-  return card('代理模式',`<div class="segmented">${row}</div><p class="status-line">${esc(hint)}</p>${!view.running?'<p class="reason">内核运行后可切换模式</p>':''}`);
+  const badge=view.tunSwitching?'切换中'
+   :!view.running?'未运行'
+   :tun?'TUN 生效中'
+   :system?'系统代理中'
+   :'端口运行中';
+  const takeover=!view.running
+   ?(tun?'待启动（已选 TUN）':'未运行')
+   :tun?'TUN 虚拟网卡'
+   :system?`系统代理 · :${view.mixedPort}`
+   :`本地端口 · :${view.mixedPort}`;
+  const envText=envActive?`已生效 · :${view.mixedPort}`
+   :envOn?(view.running?'已开启 · 待写入':'已开启 · 启动生效')
+   :'未开启';
+  const modeLabel={rule:'规则分流',global:'全局代理',direct:'全部直连'}[current]??'规则分流';
+  const outlet=routeOutlet(current);
+  return card('代理模式',`<div class="segmented">${row}</div>
+   <div class="route-card">
+    <div class="route-head"><span class="route-title">当前网络状态</span>
+     <span class="tag ${view.running&&!view.tunSwitching?'on':'off'}">${esc(badge)}</span></div>
+    <div class="kv-list">
+     <div class="kv"><span class="k">流量接管</span><span class="v${view.running&&(tun||system)?' good':''}">${esc(takeover)}</span></div>
+     <div class="kv"><span class="k">环境变量</span><span class="v${envActive?' good':''}">${esc(envText)}</span></div>
+     <div class="kv"><span class="k">分流方式</span><span class="v">${esc(modeLabel)}</span></div>
+     <div class="kv"><span class="k">当前出口</span><span class="v" title="${esc(outlet)}">${esc(outlet)}</span></div>
+    </div>
+   </div>`);
  }
  function siteCard(){
   const list=sites?.sites,ok=list?list.filter(s=>s.ok).length:0;
@@ -1141,7 +1169,8 @@
   const enabling=!(view?.tun?.enable===true);
   if(anyOp()||!!view?.operation||view?.tunSwitching)return false;
   if(enabling&&(!view?.running||!view?.tunService?.installed))return false;
-  return optimistic('tunSwitch',{enable:enabling},()=>{view.tun={...(view.tun||{}),enable:enabling}},()=>{},'切换 TUN');
+  const prevEnv=view.envProxy;
+  return optimistic('tunSwitch',{enable:enabling},()=>{view.tun={...(view.tun||{}),enable:enabling};view.envProxy=enabling},()=>{view.envProxy=prevEnv},'切换 TUN');
  }
  function changeMode(mode){
   if(anyOp()||!!view?.operation||view?.tunSwitching)return false;
@@ -1222,7 +1251,7 @@
    if(a==='ip-cancel'){cancelOp('ip');return}
    if(a==='stop-inline')return run('stop');
    if(a==='proxy')return setProxy(!view.systemProxy);
-   if(a==='env-proxy')return setEnvProxy(view.envProxy===false);
+   if(a==='env-proxy')return setEnvProxy(!(view.envProxy===true));
    if(a==='tun-toggle')return toggleTun();
    if(a==='mode-set')return changeMode(b.dataset.mode);
    if(a==='site-test')return testSites();
