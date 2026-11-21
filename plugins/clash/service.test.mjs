@@ -885,7 +885,7 @@ test('tunSwitch 失败回滚与流程锁：停机拒开、失败清理 TUN、切
 
 
 
-test('环境变量代理默认开启：启动写租约、停止还原，并支持在线/离线切换与参数校验', async () => {
+test('环境变量代理随 TUN 默认联动：关闭时默认关，TUN 开关同步联动且停机/异常退出必还原', async () => {
  const f = fixture();
  let envEnabled = false;
  const envCalls = [];
@@ -895,32 +895,137 @@ test('环境变量代理默认开启：启动写租约、停止还原，并支�
   active: () => envEnabled,
  };
  await f.service.save(kernel);
- assert.equal((await f.service.view()).envProxy, true, '默认开启环境变量代理');
+ assert.equal((await f.service.view()).envProxy, false, '未开启 TUN 时默认关闭环境变量代理');
  assert.equal((await f.service.view()).envProxyActive, false);
 
+ // TUN 关闭且用户未开启时，启动内核不写环境变量代理
  await f.service.start();
- assert.deepEqual(envCalls, [['enable', 7895]]);
- assert.equal((await f.service.view()).envProxyActive, true);
-
- // 运行中关闭会立刻恢复环境变量并持久化配置
- await f.service.envProxy({ enabled: false });
- assert.deepEqual(envCalls.at(-1), ['restore', 7895]);
- assert.equal((await f.service.view()).envProxy, false);
+ assert.deepEqual(envCalls, []);
  assert.equal((await f.service.view()).envProxyActive, false);
 
- // 运行中重新开启会立刻写入当前 mixedPort
+ // 手动在运行中开启，立刻写入环境变量并在停机后自动清理
  await f.service.envProxy({ enabled: true });
  assert.deepEqual(envCalls.at(-1), ['enable', 7895]);
  assert.equal((await f.service.view()).envProxy, true);
  assert.equal((await f.service.view()).envProxyActive, true);
 
- // 停止内核后自动清理环境变量代理
  await f.service.stop();
  assert.deepEqual(envCalls.at(-1), ['restore', 7895]);
  assert.equal((await f.service.view()).envProxyActive, false);
 
- // 离线也可持久化开关，且非法参数抛出 ENV_PROXY_STATE_INVALID
+ // 运行中开启 TUN 会自动开启 envProxy；关闭 TUN 会自动关闭并清理 envProxy
+ await f.runtime.tun.install({ kernel: kernel.kernel });
+ await f.service.start();
+ const switchingOn = await f.service.tunSwitch({ enable: true });
+ assert.equal(switchingOn.envProxy, true, '开启 TUN 时立即联动开启 envProxy');
+ const afterTunOn = await settledTun(f.service);
+ assert.equal(afterTunOn.tun.enable, true);
+ assert.equal(afterTunOn.envProxy, true);
+ assert.equal(afterTunOn.envProxyActive, true);
+ assert.deepEqual(envCalls.at(-1), ['enable', 7895]);
+
+ const switchingOff = await f.service.tunSwitch({ enable: false });
+ assert.equal(switchingOff.envProxy, false, '关闭 TUN 时立即联动关闭 envProxy');
+ const afterTunOff = await settledTun(f.service);
+ assert.equal(afterTunOff.tun.enable, false);
+ assert.equal(afterTunOff.envProxy, false);
+ assert.equal(afterTunOff.envProxyActive, false);
+ assert.deepEqual(envCalls.at(-1), ['restore', 7895]);
+ await f.service.stop();
+
+ // 离线 save 切换 tun.enable 与卸载 TUN 服务时同样联动 envProxy 并还原残余租约
+ await f.service.save({ ...kernel, tun: { enable: true, stack: 'mixed' } });
+ assert.equal((await f.service.view({ controller: false })).envProxy, true, 'save 开启 TUN 自动开启 envProxy');
+ envEnabled = true;
+ await f.service.uninstallTunService();
+ assert.equal((await f.service.view({ controller: false })).envProxy, false, '卸载 TUN 服务自动关闭 envProxy');
+ assert.equal(envEnabled, false, '卸载 TUN 服务时清理遗留环境变量');
+
+ // 托管 TUN 服务意外停止（serviceDead）时也必须清理环境变量代理
+ const { createHash } = await import('node:crypto');
+ const fp = createHash('sha256').update('k-secret').digest('hex').slice(0, 16);
+ const disk2 = new Map();
+ disk2.set('config/clash.json', JSON.stringify({ ...kernel, mixedPort: 7895, controllerPort: 9099, envProxy: true, tun: { enable: true, stack: 'mixed' } }));
+ disk2.set('secret/keys/controller.key', 'k-secret');
+ disk2.set('config/run-state.json', JSON.stringify({ schema: 1, pid: null, mode: 'service', mixedPort: 7895, controllerPort: 9099, startedAt: Date.now(), subscriptions: [], secretFingerprint: fp }));
+ const f2 = fixture(disk2, { tunInstalled: true, external: { pid: null, subscriptions: [] } });
+ let deadEnv = true;
+ f2.runtime.envProxy = { enable: async () => { deadEnv = true; }, restore: async () => { deadEnv = false; }, active: () => deadEnv };
+ f2.runtime.tun.status = async () => ({ installed: true, enabled: true, state: 'running' });
+ await f2.service.view();
+ f2.runtime.tun.status = async () => ({ installed: true, enabled: false, state: 'stopped' });
+ const deadView = await f2.service.view({ controller: false });
+ assert.equal(deadView.running, false);
+ assert.equal(deadEnv, false, '服务意外停止时自动还原环境变量代理');
+
+ // 非法参数校验仍抛出 ENV_PROXY_STATE_INVALID
  await f.service.envProxy({ enabled: false });
  assert.equal((await f.service.view()).envProxy, false);
  await assert.rejects(f.service.envProxy({ enabled: 'yes' }), (err) => err.code === 'ENV_PROXY_STATE_INVALID');
+});
+
+test('provider-only 节点（mihomo v1.19.34）：view/siteTest/nodeTest 合并 /providers/proxies 并走 healthcheck', async () => {
+ let requests = [];
+ let subId = '';
+ const providerRequest = async (path) => {
+  requests.push(path);
+  const nodeName = `[${subId}] HK-01`;
+  if (path === '/version') return { version: '1.19.34' };
+  if (path === '/configs') return { mode: 'rule' };
+  if (path === '/rules') return { rules: [] };
+  if (path === '/proxies') {
+   return {
+    proxies: {
+     GLOBAL: { now: '🚀 节点选择', all: ['🚀 节点选择', '♻️ 自动选择', 'DIRECT'] },
+     '🚀 节点选择': { now: '♻️ 自动选择', all: ['♻️ 自动选择', 'DIRECT', nodeName] },
+     '♻️ 自动选择': { now: nodeName, all: [nodeName] },
+     DIRECT: { type: 'Direct', now: '', all: null },
+    },
+   };
+  }
+  if (path === '/providers/proxies') {
+   return {
+    providers: {
+     [subId]: {
+      name: subId,
+      proxies: [{ name: nodeName, type: 'Trojan', history: [{ delay: 42 }] }],
+     },
+    },
+   };
+  }
+  if (path.startsWith('/proxies/') && path.includes('/delay?')) {
+   const err = Error('NODE_STALE');
+   err.code = 'NODE_STALE';
+   throw err;
+  }
+  if (path.startsWith(`/providers/proxies/${encodeURIComponent(subId)}/`) && path.includes('/healthcheck?')) {
+   return { delay: path.includes('youtube') ? 0 : 65 };
+  }
+  return {};
+ };
+ const f = fixture(new Map(), { request: providerRequest });
+ await f.service.save(kernel);
+ const added = await add(f, 'SubP');
+ subId = added.id;
+ await f.service.reload();
+ await settled(f.service);
+ await f.service.start();
+
+ const state = await f.service.view();
+ const mainGroup = state.groups.find((g) => g.name === '🚀 节点选择');
+ const pNode = mainGroup.nodes.find((n) => n.name === `[${subId}] HK-01`);
+ assert.equal(pNode?.delay, 42, 'view 应从 /providers/proxies 补全节点延迟');
+ assert.equal(pNode?.type, 'Trojan', 'view 应从 /providers/proxies 补全节点类型');
+
+ const sites = await f.service.siteTest();
+ assert.equal(sites.node, `[${subId}] HK-01`, 'resolveLeaf 应能穿透 provider 叶子节点');
+ assert.deepEqual(sites.sites.map((s) => s.ok), [true, true, true, false]);
+ assert.equal(sites.sites[0].delay, 65);
+ assert.ok(requests.some((p) => p.startsWith(`/providers/proxies/${encodeURIComponent(subId)}/`) && p.includes('/healthcheck?')));
+
+ const nodeRes = await f.service.nodeTest({ group: '🚀 节点选择' });
+ assert.deepEqual(nodeRes.delays, [
+  { name: 'DIRECT', delay: null },
+  { name: `[${subId}] HK-01`, delay: 65 },
+ ]);
 });
