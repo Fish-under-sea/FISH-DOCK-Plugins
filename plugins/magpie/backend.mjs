@@ -7,7 +7,17 @@ import {fileURLToPath} from 'node:url';
 import {createPlugin} from './sdk.mjs';
 import {createGateway} from '../../shared/gateway.mjs';
 import {createRuntime,isRetryableFailure,packagedExecutablePath,recordGatewayError,startWithBackoff} from './runtime.mjs';
-let service,pluginContext,launching,lastFailure;
+let service,pluginContext,launching,lastFailure,magpieGlassOn=false;
+const dockThemeListeners=new Set();
+let currentDockTheme=null;
+const dockThemeBridge={
+ get:()=>currentDockTheme,
+ set:value=>{
+  currentDockTheme=value&&typeof value==='object'?value:null;
+  for(const fn of [...dockThemeListeners])try{fn(currentDockTheme)}catch{}
+ },
+ subscribe:fn=>{dockThemeListeners.add(fn);return ()=>dockThemeListeners.delete(fn);}
+};
 // 默认服务路径每次从 import.meta.url 解析，不持久化包内绝对路径。
 const defaultExecutable=fileURLToPath(new URL('../../service/magpie.exe',import.meta.url));
 async function exists(file){try{await fs.stat(file);return true}catch{return false}}
@@ -30,7 +40,7 @@ function launchGateway(port){
 }
 const plugin=createPlugin({id:'fish.magpie',activate:async context=>{
  pluginContext=context;
- const runtime=createRuntime(context,{sourceVault:defaultSourceVault(),connectObsidian:true});
+ const runtime=createRuntime(context,{sourceVault:defaultSourceVault(),connectObsidian:true,dockTheme:dockThemeBridge,onGlassState:on=>{magpieGlassOn=!!on}});
  // gateway 会把启动异常换成人话（原始 code 就丢了），这里留一份给失败日志和重试判定。
  const tracked={async start(options){try{return await runtime.start(options)}catch(error){lastFailure=error;throw error}}};
  service=createGateway({context,runtime:tracked,kind:'magpie',defaultExecutable:defaultExecutable});await service.load();
@@ -56,7 +66,8 @@ const plugin=createPlugin({id:'fish.magpie',activate:async context=>{
   if(!await exists(path.join(root,importRecord)))throw Error('请先启动 Magpie，完成知识库准备');
   return openObsidianVault(root);
  },
- 'gateway.view':()=>service.view(),'gateway.save':params=>service.save(params),
- 'gateway.start':()=>{void launchGateway();return service.view()},'gateway.stop':()=>{void service.stop();return service.view()}
+ 'gateway.view':()=>({...service.view(),magpieGlassOn}),'gateway.save':params=>service.save(params),
+ 'gateway.theme':params=>{dockThemeBridge.set(params);return {ok:true}},
+ 'gateway.start':()=>{void launchGateway();return {...service.view(),magpieGlassOn}},'gateway.stop':()=>{magpieGlassOn=false;void service.stop();return {...service.view(),magpieGlassOn}}
 },onError:()=>{void service?.stop().finally(()=>{process.exitCode=1})}});
 process.stdin.once('end',()=>{void service?.stop()});

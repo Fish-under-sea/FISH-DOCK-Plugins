@@ -328,3 +328,69 @@ test('没有接管方时 /api/open 维持原样（旧宿主行为不变）',asyn
   assert.equal(up.requests.length,1);
  }finally{await proxy.stop();await closeServer(up.server)}
 });
+
+
+test('embedProxy 提供 dock-theme 查询/SSE 推送与 glass-state 回调', async (t) => {
+ let currentTheme = { dockMode: 'glass', appearance: { glass: { enabled: true, cardOp: 28, cardBlur: 14 } } };
+ const listeners = new Set();
+ const dockTheme = {
+  get: () => currentTheme,
+  subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+ };
+ const glassStates = [];
+ const port = await freePort();
+ const upstreamPort = await freePort();
+ const proxy = await embedProxy({ port, upstreamPort, dockTheme, onGlassState: (on) => glassStates.push(on) });
+ t.after(() => proxy.stop());
+
+ // GET /api/fish/dock-theme
+ const res = await fetch(`http://127.0.0.1:${port}/api/fish/dock-theme`);
+ assert.equal(res.status, 200);
+ const body = await res.json();
+ assert.equal(body.available, true);
+ assert.deepEqual(body.theme, currentTheme);
+
+ // POST /api/fish/glass-state 校验来源/方法
+ const wrongMethod = await fetch(`http://127.0.0.1:${port}/api/fish/glass-state`);
+ assert.equal(wrongMethod.status, 405);
+ const crossOrigin = await fetch(`http://127.0.0.1:${port}/api/fish/glass-state`, {
+  method: 'POST', headers: { Origin: 'http://evil.test', 'content-type': 'application/json' }, body: '{"on":true}',
+ });
+ assert.equal(crossOrigin.status, 403);
+ const okPost = await fetch(`http://127.0.0.1:${port}/api/fish/glass-state`, {
+  method: 'POST', headers: { Origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' }, body: '{"on":true}',
+ });
+ assert.equal(okPost.status, 204);
+ assert.deepEqual(glassStates, [true]);
+
+ // SSE /api/fish/dock-theme/stream 初始推送与后续更新
+ const ac = new AbortController();
+ const streamRes = await fetch(`http://127.0.0.1:${port}/api/fish/dock-theme/stream`, { signal: ac.signal });
+ assert.equal(streamRes.status, 200);
+ assert.match(streamRes.headers.get('content-type') || '', /text\/event-stream/);
+ const reader = streamRes.body.getReader();
+ t.after(async () => { await reader.cancel().catch(() => {}); ac.abort(); });
+ const dec = new TextDecoder();
+ const chunk1 = dec.decode((await reader.read()).value);
+ assert.match(chunk1, /"cardOp":28/);
+
+ const nextTheme = { dockMode: 'glass', appearance: { glass: { enabled: true, cardOp: 55, cardBlur: 20 } } };
+ currentTheme = nextTheme;
+ for (const fn of listeners) fn(nextTheme);
+ const chunk2 = dec.decode((await reader.read()).value);
+ assert.match(chunk2, /"cardOp":55/);
+ await reader.cancel().catch(() => {});
+ ac.abort();
+});
+
+test('embedProxy 未配置 dockTheme 时可用性为 false，stream 返回 404', async (t) => {
+ const port = await freePort();
+ const upstreamPort = await freePort();
+ const proxy = await embedProxy({ port, upstreamPort });
+ t.after(() => proxy.stop());
+ const info = await fetch(`http://127.0.0.1:${port}/api/fish/dock-theme`);
+ assert.equal(info.status, 200);
+ assert.deepEqual(await info.json(), { available: false, theme: null });
+ const stream = await fetch(`http://127.0.0.1:${port}/api/fish/dock-theme/stream`);
+ assert.equal(stream.status, 404);
+});

@@ -127,3 +127,44 @@ test('读取提示状态失败保持隐藏，设置入口可重试',async()=>{
  assert.equal(f.elements.knowledge.hidden,false);
  assert.equal(f.elements['knowledge-error'].textContent,'');
 });
+
+
+test('gateway-page 转发 FishDock.theme 并同步 magpieGlassOn 与透明 CSS 规则', async () => {
+ let onTheme = null;
+ const calls = [];
+ const elements = Object.fromEntries(
+  ['state', 'connection', 'executable', 'port', 'error', 'start', 'stop', 'open', 'form', 'refresh', 'settings', 'configuration']
+   .map((id) => [id, { value: '', textContent: '', hidden: false, disabled: false, listeners: {}, attributes: {},
+    addEventListener(type, cb) { this.listeners[type] = cb; }, setAttribute(k, v) { this.attributes[k] = v; }, focus() {}, querySelector() { return { disabled: false }; } }]),
+ );
+ const docEl = { dataset: {} };
+ const row = { state: 'running', executable: 'C:/magpie.exe', port: 3425, url: 'http://127.0.0.1:3425/', error: null, magpieGlassOn: true };
+ const context = {
+  document: { getElementById: (id) => elements[id], documentElement: docEl, body: { dataset: {} } },
+  setTimeout: () => 1, clearTimeout() {},
+  FishDock: {
+   theme: { onChange(fn) { onTheme = fn; } },
+   call: async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'gateway.view') return structuredClone(row);
+    return structuredClone(row);
+   },
+  },
+ };
+ const source = fs.readFileSync(new URL('./gateway-page.js', import.meta.url), 'utf8');
+ vm.runInNewContext(source, context, { filename: 'gateway-page.js' });
+ await flush();
+
+ assert.equal(docEl.dataset.magpieGlass, '1', 'magpieGlassOn=true 时设置 data-magpie-glass=1');
+ assert.equal(typeof onTheme, 'function', '订阅了 FishDock.theme.onChange');
+ const snap = { dockMode: 'glass', appearance: { glass: { enabled: true, cardOp: 22 } } };
+ onTheme(snap);
+ onTheme(structuredClone(snap));
+ await flush();
+ assert.equal(calls.filter((c) => c.method === 'gateway.theme').length, 1, '相同快照不重复推送 gateway.theme');
+ assert.deepEqual(calls.find((c) => c.method === 'gateway.theme').params, snap);
+
+ const css = fs.readFileSync(new URL('./gateway-page.css', import.meta.url), 'utf8');
+ assert.match(css, /:root\[data-dock-glass="1"\][^\{]*:root\[data-magpie-glass="1"\][^\{]*\{[^}]*background:\s*transparent/);
+ assert.match(css, /@media\s*\(prefers-reduced-transparency:\s*reduce\),\s*\(forced-colors:\s*active\)/);
+});

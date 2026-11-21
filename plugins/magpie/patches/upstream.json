@@ -1,58 +1,21 @@
 {
   "schema": 1,
   "upstream": "yetone/magpie",
-  "baseTag": "v0.1.4530",
-  "baseSha": "85642380651d695f1e5c9456d72c75e6846ac2ec",
-  "fetchedAt": "2026-11-19T18:06:13.9802321+08:00",
-  "patch": "magpie-v0.1.4344+fish.48.patch",
-  "versionTag": "v0.1.4530+fish.49",
-  "fileVersion": "0.1.4530.49",
+  "baseTag": "v0.1.4650",
+  "baseSha": "a53f08e11dede7319e785d7259b1d580f2c2c3bd",
+  "fetchedAt": "2026-11-21T17:52:10.0537852+08:00",
+  "patch": "magpie-v0.1.4650+fish.50.patch",
+  "versionTag": "v0.1.4650+fish.50",
+  "fileVersion": "0.1.4650.50",
   "product": "magpie fish",
-  "result": "conflicts",
+  "result": "resolved",
   "counts": {
     "files": 254,
-    "hunks": 450,
-    "appliedFiles": 245,
-    "appliedHunks": 432,
-    "conflictFiles": 9,
-    "conflictHunks": 18
+    "hunks": 452,
+    "appliedFiles": 254,
+    "appliedHunks": 452,
+    "conflictFiles": 0,
+    "conflictHunks": 0
   },
-  "conflicts": [
-    {
-      "file": "internal/gateway/gateway.go",
-      "hunks": 1
-    },
-    {
-      "file": "internal/gateway/memory_mcp.go",
-      "hunks": 1
-    },
-    {
-      "file": "internal/gui/app.go",
-      "hunks": 1
-    },
-    {
-      "file": "internal/gui/assets/app.js",
-      "hunks": 5
-    },
-    {
-      "file": "internal/gui/assets/i18n.js",
-      "hunks": 1
-    },
-    {
-      "file": "internal/gui/assets/plugins/library/i18n.js",
-      "hunks": 5
-    },
-    {
-      "file": "internal/gui/assets/videogen.js",
-      "hunks": 1
-    },
-    {
-      "file": "internal/gui/core_budget_test.go",
-      "hunks": 1
-    },
-    {
-      "file": "internal/settingsapi/settingsapi.go",
-      "hunks": 2
-    }
-  ]
+  "conflicts": []
 }

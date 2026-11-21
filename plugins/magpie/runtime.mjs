@@ -154,7 +154,7 @@ async function gatewayPortFor({configured,prefs,port,upstreamPort}){
  }
  return {port:0,fellBack:false};
 }
-export function createRuntime(context,{sourceVault='',connectObsidian=false}={}){
+export function createRuntime(context,{sourceVault='',connectObsidian=false,dockTheme=null,onGlassState=null}={}){
  return {async start({executable,port,gatewayPort,signal,onPhase=()=>{}}){
   // 阶段名只用于失败记录与页面进度，内部记住最后一个是哪一段。
   let phase=null;const track=value=>{phase=value;onPhase(value)};
@@ -183,7 +183,7 @@ export function createRuntime(context,{sourceVault='',connectObsidian=false}={})
   let knowledgeRoot='';
  const proxy=await embedProxy({port,upstreamPort,key,signal,openFolder:context.openFolder,
   chooseFolder:typeof context.dialogs?.chooseFolder==='function'?options=>context.dialogs.chooseFolder(options):null,
-  obsidian:{root:()=>knowledgeRoot,open:uri=>openObsidianUri(uri)}});
+  obsidian:{root:()=>knowledgeRoot,open:uri=>openObsidianUri(uri)},dockTheme,onGlassState});
 	// #30：listeningPort / fellBack 要留到 return 那一行用，声明必须在 try 外面——
 	// 之前写在 try 里，启动成功时 return 反而抛 ReferenceError，插件永远报服务异常。
 	let portable,child,bridge,knowledge,listeningPort=0,fellBack=false;

@@ -77,8 +77,8 @@ function requestBody(req,limit,signal){
 // Only the handoff routes are buffered. Model streams remain untouched.
 export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120,240],signal,
  openFolder=(target,options)=>openInExplorer(target,spawn,process.platform,options),chooseFolder=null,
- fallbackChoice=defaultFallbackChoice,home=os.homedir(),obsidian=null}){
- const sockets=new Set(),lifetime=new AbortController();
+ fallbackChoice=defaultFallbackChoice,home=os.homedir(),obsidian=null,dockTheme=null,onGlassState=null}){
+ const sockets=new Set(),sseClients=new Set(),lifetime=new AbortController();
  const revealEnabled=String(process.env.FISH_MAGPIE_REVEAL??'')!=='0';
  // Dock 把管理页装在跨站 iframe 里（宿主是 tauri://），浏览器不会把 magpie 那条
  // SameSite=None/Partitioned 的鉴权 cookie 带回来：HTML 能出来，boot.js / app.css
@@ -94,6 +94,38 @@ export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120
  const cookie=value=>value.replace(/;\s*(?:SameSite=[^;]*|Secure|Partitioned)(?=;|$)/gi,'')+'; SameSite=None; Secure; Partitioned';
  const server=http.createServer(async(req,res)=>{
   let pathname;try{pathname=new URL(req.url,'http://127.0.0.1').pathname}catch{res.writeHead(400);res.end();return}
+  if(pathname==='/api/fish/dock-theme'){
+   if(req.method!=='GET'){req.resume();res.writeHead(405,{allow:'GET'});res.end();return}
+   req.resume();
+   res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});
+   res.end(JSON.stringify({available:Boolean(dockTheme),theme:dockTheme?.get?.()??null}));
+   return;
+  }
+  if(pathname==='/api/fish/dock-theme/stream'){
+   if(req.method!=='GET'){req.resume();res.writeHead(405,{allow:'GET'});res.end();return}
+   if(!dockTheme){req.resume();res.writeHead(404,{'content-type':'application/json'});res.end(JSON.stringify({available:false}));return}
+   req.resume();
+   res.writeHead(200,{'content-type':'text/event-stream; charset=utf-8','cache-control':'no-cache','connection':'keep-alive'});
+   const push=theme=>{try{if(!res.destroyed)res.write(`data: ${JSON.stringify(theme??null)}\n\n`)}catch{}};
+   push(dockTheme.get?.()??null);
+   const off=typeof dockTheme.subscribe==='function'?dockTheme.subscribe(push):null;
+   const client={res,off};sseClients.add(client);
+   const cleanup=()=>{sseClients.delete(client);try{off?.()}catch{}};
+   res.once('close',cleanup);
+   return;
+  }
+  if(pathname==='/api/fish/glass-state'){
+   if(req.method!=='POST'){req.resume();res.writeHead(405,{allow:'POST'});res.end();return}
+   if(!req.url.startsWith('/')||req.url.startsWith('//')||!sameOrigin(req,port)){req.resume();res.writeHead(403);res.end('forbidden');return}
+   try{
+    const chunks=[];let size=0;
+    for await(const chunk of req){size+=chunk.length;if(size>1024){res.writeHead(413);res.end();return}chunks.push(chunk)}
+    const data=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    onGlassState?.(Boolean(data?.on));
+    res.writeHead(204,{'cache-control':'no-store'});res.end();
+   }catch{if(!res.headersSent){res.writeHead(400,{'content-type':'application/json'});res.end(JSON.stringify({error:'参数格式无效'}))}}
+   return;
+  }
   if(/^\/api\/(?:update|whatsnew)(?:\/|$)/.test(pathname)){
    req.resume();res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});
    res.end(JSON.stringify({managed:true,state:'managed',releases:[],message:'版本由 FISH Dock 插件管理'}));return;
@@ -227,6 +259,6 @@ export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120
   upstream.on('response',()=>socket.destroy());upstream.on('error',()=>socket.destroy());upstream.end();
  });
  await bind(server,port,retries,delays);
- return {async stop(){lifetime.abort();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve))}};
+ return {async stop(){lifetime.abort();for(const c of sseClients){try{c.off?.()}catch{}c.res.destroy()}sseClients.clear();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve))}};
 }
 export async function freePort(){const server=http.createServer();await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});const port=server.address().port;await new Promise(resolve=>server.close(resolve));return port}

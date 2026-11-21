@@ -6,6 +6,10 @@ function render(row) {
  last = row;
  const running = row.state === 'running';
  document.body.dataset.running = String(running);
+ if (document.documentElement?.dataset) {
+  if (row.magpieGlassOn === true) document.documentElement.dataset.magpieGlass = '1';
+  else delete document.documentElement.dataset.magpieGlass;
+ }
  $('state').textContent = (row.state === 'starting' && phases[row.phase]) || states[row.state] || row.state;
  $('connection').textContent = running ? `127.0.0.1:${row.port}` : '';
  if (!dirty) { $('executable').value = row.executable; $('port').value = row.port; }
@@ -90,5 +94,16 @@ if($('knowledge')){
  };
  $('knowledge-open').onclick=async()=>{try{await FishDock.call('knowledge.open');$('knowledge-status').textContent='已请求打开新库；若插件未加载，请在 Obsidian 社区插件中允许并重载 Magpie 共享记忆'}catch(error){$('knowledge-error').textContent=error.message}};
  void knowledgeView();
+}
+// 转发宿主 Dock 主题给支持 gateway.theme 的插件（供跨源服务页面如 Magpie 实现「跟随」），旧插件静默忽略。
+let lastDockThemeSig = '';
+if (typeof FishDock?.theme?.onChange === 'function') {
+ FishDock.theme.onChange(theme => {
+  let sig = '';
+  try { sig = JSON.stringify(theme); } catch { return; }
+  if (!sig || sig === lastDockThemeSig) return;
+  lastDockThemeSig = sig;
+  void FishDock.call('gateway.theme', theme).catch(() => {});
+ });
 }
 void run('gateway.view');
