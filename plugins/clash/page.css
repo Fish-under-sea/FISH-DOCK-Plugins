@@ -171,15 +171,20 @@ button:disabled,input:disabled,select:disabled,textarea:disabled{opacity:.5;curs
 /* 详情卡的行列表：行距只由行高决定（.cards>.card 的 8px 块间距到此为止，不摊进行间）。 */
 .kv-list{display:grid;gap:0;align-content:start;min-width:0}
 .status-line{margin:0;font-size:12px;line-height:18px;color:var(--dock-muted)}
-/* 开关行：按钮不参与压缩、文案可换行，禁用原因另起一行 muted 小字。 */
-.switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px}
-.switch-row>div{flex:1 1 auto;min-width:0}
+/* 开关列表：平分左侧「网络设置」卡高度，单行白字与右侧按钮居中对齐。 */
+.switch-list{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+.switch-row{flex:1 1 0;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;padding:4px 0}
+.switch-list>.switch-row:not(:last-child){border-bottom:1px solid var(--lg-inner-line)}
+.switch-row>strong{font-size:12.5px;line-height:18px;font-weight:600;white-space:nowrap}
 .switch-row>button{flex:0 0 auto;white-space:nowrap}
-.switch-row strong{font-size:12.5px}
-.switch-row p{margin:4px 0 0}
 .segmented{display:flex;gap:4px;padding:4px;border-radius:999px;background:var(--dock-bg);border:1px solid var(--line-control)}
 .segmented button{flex:1;border:0;background:transparent}
 .segmented button[aria-pressed=true]{background:var(--dock-line);color:var(--dock-text)}
+/* 右侧「代理模式」内嵌网络状态子卡：不用 backdrop-filter 避免与外层 .card 叠糊。 */
+.route-card{flex:1 1 auto;display:flex;flex-direction:column;justify-content:space-between;gap:4px;padding:8px 12px;border-radius:14px;background:var(--lg-inner-bg);border:1px solid var(--lg-inner-line);min-width:0}
+.route-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:26px}
+.route-title{font-size:12px;font-weight:600;line-height:18px;color:var(--dock-text)}
+.route-card .kv>.v{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .site-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:28px;font-size:12.5px;line-height:28px;font-variant-numeric:tabular-nums}
 /* 延迟三态：正常绿/黄/红，「已超时」红，「未测速」灰。色 + 文字双通道，不只靠颜色。 */
 .n-delay{white-space:nowrap;font-size:12px;font-variant-numeric:tabular-nums}

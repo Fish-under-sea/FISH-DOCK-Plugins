@@ -132,7 +132,7 @@ test('被 stretch 拉高的容器不把多余高度摊给各行：grid 一律 al
  assert.match(pageCss,/\.combo\{[^}]*justify-content:flex-start/,'下拉列不摊 gap（label 与触发器高度只由刻度表决定）');
 });
 test('详情卡行距只由行高决定：.kv 行包在 .kv-list 里，不吞 .card 的 8px 块间距',()=>{
- assert.equal((pageJs.match(/class="kv-list"/g)||[]).length,4,'Clash 信息 / 系统信息 / IP / 网站测试四处都用同一行组件');
+ assert.equal((pageJs.match(/class="kv-list"/g)||[]).length,5,'Clash 信息 / 系统信息 / IP / 网站测试 / 代理模式网络状态五处都用同一行组件');
  assert.match(pageCss,/\.kv-list\{[^}]*gap:0[^}]*align-content:start/,'行列表内不加 gap，行距＝行高');
 });
 test('描边口径：卡片与容器用 --line-hair，--line-control 只留给输入框/按钮/触发器',()=>{
@@ -800,18 +800,59 @@ test('壁纸上传禁止走 blob: URL（CSP img-src 不允许），且区分解�
 });
 
 
-test('网络设置卡片渲染环境变量代理开关（env-proxy）并下发 clash.envProxy RPC', async () => {
+test('网络设置卡片去噪、对齐，代理模式卡片展示当前网络状态，并支持 env-proxy / TUN 联动', async () => {
  const f = fixture();
  await flush();
  const btn = f.buttons().find((b) => b.dataset.action === 'env-proxy');
  assert.ok(btn, '网络设置卡片包含 env-proxy 开关');
- assert.ok(f.root.innerHTML.includes('HTTP_PROXY / HTTPS_PROXY'), '显示环境变量代理说明');
+ assert.ok(f.root.innerHTML.includes('HTTP_PROXY / HTTPS_PROXY'), 'title 保留环境变量代理说明');
+
+ // 网络设置卡内部不含绿色小字（.small.muted）与 .status-line，行对齐且均分卡片高度
+ const netMatch = /<article class="card"><h2 class="card-title">网络设置<\/h2>[\s\S]*?<\/article>/.exec(f.root.innerHTML);
+ assert.ok(netMatch, '渲染网络设置卡片');
+ assert.equal(netMatch[0].includes('class="small muted"'), false, '网络设置不再渲染绿色说明小字');
+ assert.equal(netMatch[0].includes('class="status-line"'), false, '网络设置不再渲染底部 status-line');
+ assert.ok(netMatch[0].includes('class="switch-list"'), '开关列表使用等高布局 容器');
+
+ // 代理模式卡片包含当前网络状态子卡
+ assert.ok(f.root.innerHTML.includes('当前网络状态'));
+ assert.ok(f.root.innerHTML.includes('流量接管'));
+ assert.ok(f.root.innerHTML.includes('环境变量'));
+ assert.ok(f.root.innerHTML.includes('分流方式'));
+ assert.ok(f.root.innerHTML.includes('当前出口'));
+
+ // 默认关闭时点击传入 enabled: true；开启后点击传入 enabled: false
  f.calls.length = 0;
  await f.click('env-proxy');
  await flush();
- const call = f.calls.find((c) => c.method === 'clash.envProxy');
- assert.ok(call, '点击开关发起 clash.envProxy RPC');
- assert.equal(call.params.enabled, false, '默认开启时点击传入 enabled: false');
+ const onCall = f.calls.find((c) => c.method === 'clash.envProxy');
+ assert.ok(onCall, '点击开关发起 clash.envProxy RPC');
+ assert.equal(onCall.params.enabled, true, '默认关闭时点击传入 enabled: true');
+
+ f.calls.length = 0;
+ f.row.envProxy = true;
+ f.click('view');
+ await flush();
+ await f.click('env-proxy');
+ await flush();
+ const offCall = f.calls.find((c) => c.method === 'clash.envProxy');
+ assert.equal(offCall?.params?.enabled, false, '开启后点击传入 enabled: false');
+
+ // 运行中切换 TUN 乐观更新 envProxy 并反映到网络状态卡
+ f.row.running = true;
+ f.row.systemProxy = true;
+ f.row.tunService = { installed: true, state: 'running', canElevate: true };
+ f.click('view');
+ await flush();
+ assert.ok(f.root.innerHTML.includes('系统代理 · :7895'));
+ f.calls.length = 0;
+ const release = f.block();
+ f.click('tun-toggle');
+ const htmlOpt = f.root.innerHTML;
+ assert.ok(/<button[^>]*data-action="tun-toggle"[^>]*aria-checked="true"/.test(htmlOpt), '开启 TUN 乐观生效');
+ assert.ok(/<button[^>]*data-action="env-proxy"[^>]*aria-checked="true"/.test(htmlOpt), '开启 TUN 乐观联动 envProxy');
+ release();
+ await flush();
 });
 
 test('外观页渲染「跟随」玻璃与字体模式、深色单独设置、响应 FishDock.theme 且无强调色', async () => {
