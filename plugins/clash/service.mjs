@@ -229,7 +229,11 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       await clearRunState();return null;
     }
     if(record.mode!=='service'&&!processAlive(record.pid)){
-      // 内核已经退出：这是正常停机后的残留记录，静默丢弃。
+      // 内核已经退出：清理可能遗留的系统/环境变量代理租约，再静默丢弃运行态记录。
+      await Promise.allSettled([
+        runtime.proxy?.restore?.(record.mixedPort),
+        runtime.envProxy?.restore?.(record.mixedPort)
+      ]);
       await clearRunState();return null;
     }
     try{await probeController(record.controllerPort,key)}
@@ -301,10 +305,11 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const saved=JSON.parse(await context.storage.read('config','clash.json')||'{}');
       const legacy=/\/packages\/fish\.clash\/\d+\.\d+\.\d+\/[a-f0-9]{64}\/service\/mihomo\.exe$/i;
       const bundled=saved.bundled===true||legacy.test(String(saved.kernel).replaceAll('\\','/'));
+      const tunEnabled=saved.tun?.enable===true;
       settings={kernel:saved.kernel??defaultKernel,mixedPort:saved.mixedPort??defaults.mixedPort,
         controllerPort:saved.controllerPort??defaults.controllerPort,bundled,
-        envProxy:saved.envProxy!==false,
-        tun:{enable:saved.tun?.enable===true,stack:tunStacks.includes(saved.tun?.stack)?saved.tun.stack:defaultTun.stack}};
+        envProxy:saved.envProxy!==undefined?saved.envProxy===true:tunEnabled,
+        tun:{enable:tunEnabled,stack:tunStacks.includes(saved.tun?.stack)?saved.tun.stack:defaultTun.stack}};
       if(bundled)settings.kernel=defaultKernel;
       const raw=await context.storage.read('config','subscriptions.json');
       if(raw) {
@@ -379,6 +384,44 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     finally{await reader.cancel().catch(()=>{})}
     return JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');
   }
+  // mihomo v1.19+ 中 proxy-providers 挂载的节点仅位于 /providers/proxies，
+  // 直接打 /proxies/<name>/delay 会返回 404；统一合并目录并把 provider 节点路由到 healthcheck。
+  async function fetchProxiesCatalog() {
+    const [directRes,provRes]=await Promise.all([
+      request('/proxies'),
+      request('/providers/proxies').catch(()=>null)
+    ]);
+    const rawProxies=directRes?.proxies||{};
+    const proxies={...rawProxies};
+    const directNames=new Set(Object.keys(rawProxies));
+    const providerByName=new Map();
+    for(const [provName,prov] of Object.entries(provRes?.providers||{})){
+      if(!Array.isArray(prov?.proxies))continue;
+      for(const item of prov.proxies){
+        if(!item?.name)continue;
+        providerByName.set(item.name,provName);
+        const prev=proxies[item.name];
+        if(!prev)proxies[item.name]=item;
+        else if(!prev.history?.length&&item.history?.length)proxies[item.name]={...prev,history:item.history};
+      }
+    }
+    return {proxies,directNames,providerByName};
+  }
+  async function testProxyDelay(name,{url,timeout,timeoutMs,directNames,providerByName}) {
+    const query=`url=${encodeURIComponent(url)}&timeout=${timeout}`;
+    const prov=providerByName.get(name);
+    if(prov&&!directNames.has(name)){
+      return request(`/providers/proxies/${encodeURIComponent(prov)}/${encodeURIComponent(name)}/healthcheck?${query}`,{timeoutMs});
+    }
+    try{
+      return await request(`/proxies/${encodeURIComponent(name)}/delay?${query}`,{timeoutMs});
+    }catch(error){
+      if(error?.code==='NODE_STALE'&&prov){
+        return request(`/providers/proxies/${encodeURIComponent(prov)}/${encodeURIComponent(name)}/healthcheck?${query}`,{timeoutMs});
+      }
+      throw error;
+    }
+  }
   function sourceNode(name,proxies={}) {
     const source=subscriptions.find(s=>name.startsWith(`[${s.id}] `));
     const info=proxies[name];
@@ -400,7 +443,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       subscriptions:subscriptions.map(s=>({...s,updating:jobs.has(s.id)})),
       running:alive(),operation:operation?.name??null,tunSwitching:tunBusy,error:operationError,
       errorCode:null,attached,kernelPid,attachError,systemProxy:runtime.proxy.active?.()??false,
-      envProxy:c.envProxy!==false,envProxyActive:runtime.envProxy?.active?.()??false,
+      envProxy:c.envProxy===true,envProxyActive:runtime.envProxy?.active?.()??false,
       os:`${os.platform()==='win32'?'Windows':os.platform()} ${os.release()}`,
       arch:os.arch(),cpu:cpuLabel(),memoryTotal:os.totalmem(),pluginVersion,
       uptimeMs:alive()&&startedAt?Date.now()-startedAt:null,
@@ -413,19 +456,25 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       if(serviceDead){
         running=null;startedAt=0;kernelPid=null;attached=false;ipCache=null;
         state.running=false;state.uptimeMs=null;state.kernelPid=null;state.attached=false;
-        await clearRunState().catch(()=>{});
+        await Promise.allSettled([
+          clearRunState(),
+          runtime.proxy?.restore?.(c.mixedPort),
+          runtime.envProxy?.restore?.(c.mixedPort)
+        ]);
+        state.systemProxy=runtime.proxy.active?.()??false;
+        state.envProxyActive=runtime.envProxy?.active?.()??false;
       }
     }
     if(!state.error&&attachError)state.error=attachError.message;
     if(attachError)state.errorCode=attachError.code;
     if(controller&&state.running)try{
       // /rules 只用于概览卡片的规则数量；拿不到不影响主视图。
-      const [version,proxies,status,rules]=await Promise.all([
-        request('/version'),request('/proxies'),request('/configs'),request('/rules').catch(()=>null)]);
+      const [version,catalog,status,rules]=await Promise.all([
+        request('/version'),fetchProxiesCatalog(),request('/configs'),request('/rules').catch(()=>null)]);
       state.version=version.version;state.mode=status.mode;
       state.rulesCount=Array.isArray(rules?.rules)?rules.rules.length:null;
-      state.groups=Object.entries(proxies.proxies||{}).filter(([name,p])=>isProxyGroup(name,p)).map(([name,p])=>({
-        name,type:p.type??null,selected:p.now,nodes:p.all.map(name=>sourceNode(name,proxies.proxies))}));
+      state.groups=Object.entries(catalog.proxies).filter(([name,p])=>isProxyGroup(name,p)).map(([name,p])=>({
+        name,type:p.type??null,selected:p.now,nodes:p.all.map(name=>sourceNode(name,catalog.proxies))}));
     }catch(error){
       // 「内核在跑但控制器不可达」与「内核根本没起」是两件事，页面要能分开显示。
       state.error='控制器暂未响应，请刷新或停止内核';
@@ -470,6 +519,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       if(params.envProxy!==undefined){
         if(typeof params.envProxy!=='boolean')throw serviceError('ENV_PROXY_STATE_INVALID');
         next.envProxy=params.envProxy;
+      }else if(params.tun!==undefined&&next.tun.enable!==(old.tun?.enable===true)){
+        next.envProxy=next.tun.enable;
       }
       next.bundled=!!defaultKernel&&next.kernel.replaceAll('\\','/').toLowerCase()===defaultKernel.replaceAll('\\','/').toLowerCase();
       await persistSettings(next);
@@ -636,7 +687,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
       const c=await config();editable();
       await runtime.tun.uninstall();
-      await persistSettings({...c,tun:{...c.tun,enable:false}});
+      await persistSettings({...c,tun:{...c.tun,enable:false},envProxy:false});
+      await runtime.envProxy?.restore?.(c.mixedPort).catch(()=>{});
       return view({controller:false});
     });
   }
@@ -649,10 +701,11 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     running=null;kernelPid=null;
     // 只有真的写过运行态才清：没起来的一轮不该在磁盘上留下一个空记录。
     try{if(await readRunState())await clearRunState()}catch{}
-    try{await runtime.proxy.restore((await config()).mixedPort)}
-    catch(error){console.error('[clash] 启动失败后恢复系统代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
-    try{await runtime.envProxy?.restore((await config()).mixedPort)}
-    catch(error){console.error('[clash] 启动失败后恢复环境变量代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
+    const restorePort=(await config()).mixedPort;
+    await Promise.allSettled([
+      (async()=>{try{await runtime.proxy.restore(restorePort)}catch(error){console.error('[clash] 启动失败后恢复系统代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}})(),
+      (async()=>{try{await runtime.envProxy?.restore?.(restorePort)}catch(error){console.error('[clash] 启动失败后恢复环境变量代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}})()
+    ]);
   }
   async function startKernel({externalSignal=null}={}) {
     if(operation?.name==='starting')return operation.promise;
@@ -698,7 +751,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
           mixedPort:c.mixedPort,controllerPort:c.controllerPort,startedAt,
           subscriptions:enabled.map(s=>s.id),secretFingerprint:secretFingerprint(secret)});
       }catch{/* 落盘失败只影响重载后能否 attach */}
-      if(c.envProxy!==false&&runtime.envProxy){
+      if(c.envProxy===true&&runtime.envProxy){
         try{await runtime.envProxy.enable(c.mixedPort,process.pid)}
         catch(error){console.error('[clash] 写入环境变量代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
       }
@@ -725,22 +778,29 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     const prior=operation?.promise;operation?.controller?.abort();
     const task={name:'stopping',promise:null};operation=task;operationError='';
     task.promise=(async()=>{
-      // ── 第一件事：把系统代理与环境变量代理还回去 ────────────────────────────
+      // ── 第一件事：把系统代理与环境变量代理并行还回去 ──────────────────────────
       const result={kernel:'absent',proxy:'skipped',code:null,message:'',ok:true};
       let proxyError=null;
-      try{const current=await config();await runtime.proxy.restore(current.mixedPort);result.proxy='restored'}
-      catch(error){
-        proxyError=error;result.proxy='failed';result.ok=false;
-        if(error?.code){
-          result.code=error.code;
-          // #44：把被拒的键名与 Win32 码带进结果，页面与日志不用再猜是哪一步。
-          const why=[typeof error?.key==='string'&&error.key?`写入 ${error.key} 失败`:'',
-            Number.isInteger(error?.win32)&&error.win32>0?`Win32 ${error.win32}`:''].filter(Boolean).join('，');
-          result.message=`系统代理恢复失败（${error.code}${why?`：${why}`:''}）`;
-        }
-      }
-      try{const current=await config();await runtime.envProxy?.restore(current.mixedPort)}
-      catch(error){console.error('[clash] 恢复环境变量代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
+      const current=await config();
+      await Promise.all([
+        (async()=>{
+          try{await runtime.proxy.restore(current.mixedPort);result.proxy='restored'}
+          catch(error){
+            proxyError=error;result.proxy='failed';result.ok=false;
+            if(error?.code){
+              result.code=error.code;
+              // #44：把被拒的键名与 Win32 码带进结果，页面与日志不用再猜是哪一步。
+              const why=[typeof error?.key==='string'&&error.key?`写入 ${error.key} 失败`:'',
+                Number.isInteger(error?.win32)&&error.win32>0?`Win32 ${error.win32}`:''].filter(Boolean).join('，');
+              result.message=`系统代理恢复失败（${error.code}${why?`：${why}`:''}）`;
+            }
+          }
+        })(),
+        (async()=>{
+          try{await runtime.envProxy?.restore(current.mixedPort)}
+          catch(error){console.error('[clash] 恢复环境变量代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
+        })()
+      ]);
       await prior?.catch(()=>{});
       await priorTun?.catch(()=>{});
       for(const job of jobs.values())job.controller.abort();
@@ -933,12 +993,12 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   }
   async function siteTest() {
     if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
-    const {proxies}=await request('/proxies');
-    const leaf=resolveLeaf(proxies??{});
+    const catalog=await fetchProxiesCatalog();
+    const leaf=resolveLeaf(catalog.proxies);
     if(!leaf)throw serviceError('NODE_UNAVAILABLE');
     const sites=await Promise.all(siteTargets.map(async target=>{
       try{
-        const result=await request(`/proxies/${encodeURIComponent(leaf)}/delay?url=${encodeURIComponent(target.url)}&timeout=5000`,{timeoutMs:6000});
+        const result=await testProxyDelay(leaf,{url:target.url,timeout:5000,timeoutMs:6000,...catalog});
         const delay=Number.isFinite(result?.delay)&&result.delay>0?result.delay:null;
         return {...target,delay,ok:delay!==null,kind:delay===null?'node':null,code:null,
           reason:delay===null?'节点不通，延迟测试失败':''};
@@ -964,7 +1024,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
   const TEST_CONCURRENCY=8,DELAY_TIMEOUT_MS=2500,TEST_BUDGET_MS=9000;
   async function nodeTest({group:groupName}={}) {
     if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
-    const state=await view();
+    const [state,catalog]=await Promise.all([view(),fetchProxiesCatalog()]);
     const target=groupName?state.groups.find(row=>row.name===groupName):state.groups[0];
     if(!target)throw serviceError('NODE_UNAVAILABLE');
     const names=target.nodes.filter(node=>node.type!=='group').slice(0,200).map(node=>node.name);
@@ -977,8 +1037,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         if(Date.now()>deadline)return;
         const name=names[index];
         try{
-          const result=await request(`/proxies/${encodeURIComponent(name)}/delay?url=${encodeURIComponent(delayUrl)}&timeout=${DELAY_TIMEOUT_MS}`,
-            {timeoutMs:DELAY_TIMEOUT_MS+500});
+          const result=await testProxyDelay(name,{url:delayUrl,timeout:DELAY_TIMEOUT_MS,timeoutMs:DELAY_TIMEOUT_MS+500,...catalog});
           delays.push({name,delay:Number.isFinite(result?.delay)&&result.delay>0?result.delay:null});
         }catch{delays.push({name,delay:null})}
       }
@@ -1006,9 +1065,12 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       await exclusive(async()=>{
         const latest=await config();
         editable();
-        await persistSettings({...latest,tun:{...nextTun,enable:false}});
+        await persistSettings({...latest,tun:{...nextTun,enable:false},envProxy:false});
       });
-      await runtime.tunStop?.().catch(()=>{});
+      await Promise.allSettled([
+        runtime.tunStop?.(),
+        runtime.envProxy?.restore?.(old.mixedPort)
+      ]);
       operationError='';
       return view({controller:false});
     }
@@ -1021,7 +1083,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         if(ctl.signal.aborted||closing)return;
         await exclusive(async()=>{
           const latest=await config();
-          await persistSettings({...latest,tun:nextTun});
+          await persistSettings({...latest,tun:nextTun,envProxy:enable});
           savedNew=true;
         });
         if(ctl.signal.aborted||closing)return;
@@ -1032,7 +1094,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         if(savedNew){
           await exclusive(async()=>{
             const latest=await config();
-            await persistSettings({...latest,tun:old.tun});
+            await persistSettings({...latest,tun:old.tun,envProxy:old.envProxy});
           }).catch(()=>{});
         }
         if(!ctl.signal.aborted)operationError=error?.message||'切换 TUN 失败，请检查内核与服务状态';
@@ -1042,6 +1104,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     })();
     const out=await view({controller:false});
     out.tun=nextTun;
+    out.envProxy=enable;
     return out;
   }
   return {view,save,tunSwitch,subscriptionSave,subscriptionToggle,subscriptionRemove,start,stop,shutdown,select,mode,reload,proxy,envProxy,details,nodeTest,

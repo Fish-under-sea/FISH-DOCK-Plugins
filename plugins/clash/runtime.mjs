@@ -727,13 +727,9 @@ if($r.action -eq 'read'){
  catch{Reply @{ok=$false;key='';win32=(Code $_.Exception);message=[string]$_.Exception.Message}}
 }else{
  foreach($k in @('HTTP_PROXY','HTTPS_PROXY','NO_PROXY')){
-  try{$v=$r.values.$k;if($null -eq $v){Remove-ItemProperty -LiteralPath $p -Name $k -ErrorAction SilentlyContinue}else{New-ItemProperty -LiteralPath $p -Name $k -Value ([string]$v) -PropertyType String -Force|Out-Null}}
+  try{$v=$r.values.$k;[System.Environment]::SetEnvironmentVariable($k,$(if($null -eq $v -or $v -eq ''){$null}else{[string]$v}),'User')}
   catch{Reply @{ok=$false;key=$k;win32=(Code $_.Exception);message=[string]$_.Exception.Message};exit 0}
  }
- try{
-  Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FishEnvBroadcast{[DllImport("user32.dll",SetLastError=true,CharSet=CharSet.Unicode)]public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out UIntPtr lpdwResult);}';
-  $res=[UIntPtr]::Zero;[void][FishEnvBroadcast]::SendMessageTimeoutW([IntPtr]0xffff,0x001A,[UIntPtr]::Zero,'Environment',2,1500,[ref]$res)
- }catch{}
  Reply @{ok=$true}
 }`;
  return runPowerShellJson(source,{action,values},{platformError:'环境变量代理接管仅支持 Windows',opLabel:'环境变量代理',timeoutError:'环境变量代理操作超时'});

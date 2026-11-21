@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createServer} from 'node:net';
+import {createClash} from './service.mjs';
 import {createRuntime} from './runtime.mjs';
 import {subscriptionPath} from './subscriptions.mjs';
 const idA='sub-00000000-0000-0000-0000-000000000001',idB='sub-00000000-0000-0000-0000-000000000002';
@@ -54,7 +55,34 @@ test('native SafePath: two credentials providers outside config home, same-name 
  const after=(await request('/proxies')).proxies;
  assert.ok(after[MAIN].all.includes(`[${idA}] changed`));assert.ok(after[MAIN].all.includes(`[${idB}] same`));
  assert.equal(after[MAIN].now,`[${idB}] same`);
- assert.equal(await context.storage.read('config','system-proxy.json'),null);
  await instance.stop();
+ // 回归（mihomo v1.19+）：createClash 对 provider-only 节点需合并 /providers/proxies，
+ // 让 view 识别真实协议类型、siteTest/nodeTest 不因 /proxies/<name>/delay 404 失败或报 NODE_UNAVAILABLE。
+ const svcCtx={
+  dataDirectory:root,
+  storage:context.storage,
+  secrets:{read:async()=>secret,write:async()=>{}}
+ };
+ const safeRuntime={
+  ...runtime,
+  proxy:{enable:async()=>{},restore:async()=>{},active:()=>false},
+  envProxy:{enable:async()=>{},restore:async()=>{},active:()=>false}
+ };
+ await context.storage.write('config','clash.json',JSON.stringify({kernel:process.env.FISH_TEST_MIHOMO,mixedPort,controllerPort,envProxy:false,tun:{enable:false,stack:'mixed'}}));
+ await context.storage.write('config','subscriptions.json',JSON.stringify({schema:2,subscriptions:[{id:idB,name:'SubB',enabled:true,status:'ready',hasCache:true,nodeCount:1,lastSuccess:Date.now()}]}));
+ const svc=createClash({context:svcCtx,runtime:safeRuntime});
+ t.after(()=>svc.shutdown().catch(()=>{}));
+ await svc.start();
+ const svcView=await svc.view();
+ const svcMain=svcView.groups.find(g=>g.name===MAIN);
+ const leafNode=svcMain?.nodes.find(n=>n.name===`[${idB}] same`);
+ assert.equal(leafNode?.type,'Shadowsocks','真实 mihomo v1.19.34 下应从 /providers/proxies 补全节点类型');
+ const siteRes=await svc.siteTest();
+ assert.equal(siteRes.node,`[${idB}] same`,'siteTest 在真实 mihomo 上不得因 NODE_UNAVAILABLE 失败');
+ assert.equal(siteRes.sites.every(s=>s.code!=='CONTROLLER_TIMEOUT'),true,'siteTest 不得误报 CONTROLLER_TIMEOUT');
+ const nodeRes=await svc.nodeTest({group:MAIN});
+ assert.ok(nodeRes.delays.some(d=>d.name===`[${idB}] same`),'nodeTest 应覆盖 provider 节点');
+ await svc.stop();
+ assert.equal(await context.storage.read('config','system-proxy.json'),null);
  assert.equal(await context.storage.read('tmp','mihomo-runtime.json'),'');
 });
