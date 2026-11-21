@@ -89,6 +89,12 @@ activate:async context=>{
 
 完整的能力声明、浏览器与 Node API、按需创建、文件拖入、关闭回收和接入验收见 **[Dock 外部原生窗口 Hook](native-window-hook.md)**。该接口随 Dock 2.2.0 发布，旧宿主不支持；当前实现仍在验收。
 
+## 液态玻璃与主题联动 Hook
+
+无论是跑在 Dock 内部 / 外部原生窗口的页面（`window.FishDock.theme`、`FishDock.theme.follow()`、`data-dock-glass`、`--dock-glass-*`），还是跑在 Magpie 沙箱帧里的扩展页（`magpie.glass()`、`magpie.onGlass()`、`data-magpie-glass`、`--magpie-glass-<region>-fill/-blur`、`--fish-glass-tint`、`--wall-veil`、`--ctl-fg`），都通过统一的玻璃与主题钩子随宿主外观自动切换。
+
+完整的 CSS 变量表、状态属性、JS 订阅接口、三条硬约束与降级写法见 **[液态玻璃与主题联动 Hook](liquid-glass-hooks.md)**。
+
 ## 页面 SDK
 
 页面只使用宿主注入的 `window.FishDock.call(method,params)`：

@@ -321,6 +321,6 @@ E5（长条宽度跟随主岛）与 C4 是同一项，已随 C4 解决。
 
 - **B4 现在是 B1 的替代路径**：窗口下限已降到 32×32，能缩到实际大小的插件不需要逐像素命中；只有用大窗口装小内容时才需要。
 - **E4 只在动画期间逐帧**：静止时仍是「变化才推」，不会持续占带宽。
+- **限额与错误口径**：单次文件拖入最多 4096 个文件并对 UTF-16 路径总量预留协议帧空间（超限整批拒绝，不截断）；后端事件输入队列上限为 32 帧，过载时不阻塞宿主主线程。后端窗口调用失败返回 `{ code: "WINDOW_OPERATION_FAILED", message }`，页面侧业务错误附带 `error.code`，参数不合格在本地桥即拒绝。
 
-
-宿主侧规格、SDK 与最小协议示例见 [Dock 开发说明](https://github.com/Fish-under-sea/FISH-Dock/blob/main/app/docs/plugin-windows-2.2.0.md) 和 [window-file-drop 示例](https://github.com/Fish-under-sea/FISH-Dock/tree/main/sdk/examples/window-file-drop)。发布前将本文与最终实现逐项复核。
+宿主侧 `window.FishDock` 浏览器桥、`Node SDK` 与最小协议示例见 [bridge.js](https://github.com/Fish-under-sea/FISH-Dock/blob/main/sdk/browser/bridge.js)、[plugin.mjs](https://github.com/Fish-under-sea/FISH-Dock/blob/main/sdk/node/plugin.mjs) 与 [window-file-drop 示例](https://github.com/Fish-under-sea/FISH-Dock/tree/main/sdk/examples/window-file-drop)。发布前将本文与最终实现逐项复核。

@@ -140,6 +140,9 @@ node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.t
 | 文档 | 讲什么 |
 | --- | --- |
 | [插件开发者指南](docs/developers/README.md) | 仓库边界、`plugin.json` 的字段、后台 SDK 与页面、行为钩子、读与调用的声明 |
+| [液态玻璃与主题联动 Hook](docs/developers/liquid-glass-hooks.md) | 宿主 `FishDock.theme` 与 Magpie `magpie.onGlass` 的 CSS 变量、状态属性、JS 钩子与降级写法 |
+| [外部原生窗口 Hook](docs/developers/native-window-hook.md) | 插件外部原生窗口、`file-drop`、`dock` 几何与 `dialogs` 宿主能力接口 |
+| [自启动按钮钩子](docs/developers/autostart-hook.md) | `behaviors.autostart` 与 `FISH_PLUGIN_AUTOSTART=1` 的唯一行为契约 |
 | [插件维护者指南](docs/maintainers/README.md) | 身份表（作者与状态说明只在一处维护）、固定来源与资源、发行流程、开发暂存 |
 | [自编译 Magpie](plugins/magpie/tools/README.md) | 补丁清单与每一处为什么补、构建命令、版本标识、跟着上游升级时会踩的坑 |
 | [签到&探针说明](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) | 宿主提供哪些读与调用、「预装插件美化」开关怎么工作、素材为什么编进 exe |
