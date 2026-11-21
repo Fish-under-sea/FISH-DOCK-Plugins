@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createProxyLease, createRuntime, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet, killProcess, pruneTmp} from './runtime.mjs';
+import {createProxyLease, createEnvProxyLease, mergeNoProxy, createRuntime, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet, killProcess, pruneTmp} from './runtime.mjs';
 import {createServer} from 'node:http';
 import {mkdtemp,writeFile,readFile,readdir,rm,mkdir,utimes} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
@@ -568,4 +568,83 @@ test('TUN 服务启动失败或停机收尾仍会禁用 job 并恢复系统代�
  await rt.tunStop();
  assert.ok(disableCalls>=2,'即使服务处于 stopped 状态，只要 enabled=true 收尾也必须调用 disable 清 job');
  await rm(dir,{recursive:true,force:true});
+});
+
+
+test('mergeNoProxy 保留已有例外并去重补齐本机回环', () => {
+ assert.equal(mergeNoProxy(''), 'localhost,127.0.0.1,::1');
+ assert.equal(mergeNoProxy('*.local, 127.0.0.1 , example.com'), '*.local,127.0.0.1,example.com,localhost,::1');
+});
+
+test('环境变量代理租约持久化原值、仅在仍属自身时还原，并处理坏记录与陈旧值', async () => {
+ let live = { HTTP_PROXY: 'http://foreign:8888', HTTPS_PROXY: null, NO_PROXY: 'corp.local' };
+ let saved = null;
+ const store = { read: async () => saved, write: async (_c, _n, v) => { saved = v; } };
+ const adapter = { read: async () => ({ ...live }), write: async (v) => { live = { ...v }; } };
+ const lease = createEnvProxyLease({ storage: store, adapter });
+
+ await lease.enable(7895);
+ assert.equal(lease.active(), true);
+ assert.equal(live.HTTP_PROXY, 'http://127.0.0.1:7895');
+ assert.equal(live.HTTPS_PROXY, 'http://127.0.0.1:7895');
+ assert.equal(live.NO_PROXY, 'corp.local,localhost,127.0.0.1,::1');
+
+ // 正常还原
+ const res = await lease.restore(7895);
+ assert.equal(res.act, 'restore');
+ assert.equal(live.HTTP_PROXY, 'http://foreign:8888');
+ assert.equal(live.HTTPS_PROXY, null);
+ assert.equal(live.NO_PROXY, 'corp.local');
+ assert.equal(saved, '');
+
+ // 外部篡改时放弃覆盖并清空租约
+ await lease.enable(7895);
+ live.HTTP_PROXY = 'http://external:9999';
+ const skipped = await lease.restore(7895);
+ assert.equal(skipped.act, 'discard');
+ assert.equal(live.HTTP_PROXY, 'http://external:9999');
+ assert.equal(saved, '');
+
+ // 损坏恢复记录丢弃且抛 ENV_PROXY_RESTORE_RECORD_INVALID
+ saved = JSON.stringify({ schema: 2, previous: {} });
+ await assert.rejects(lease.restore(7895), (err) => err.code === 'ENV_PROXY_RESTORE_RECORD_INVALID');
+ assert.equal(saved, '');
+
+ // 无租约但环境仍指向自有端口时清理陈旧项
+ live = { HTTP_PROXY: 'http://127.0.0.1:7895', HTTPS_PROXY: 'http://127.0.0.1:7895', NO_PROXY: 'localhost,127.0.0.1,::1' };
+ const stale = await lease.restore(7895);
+ assert.equal(stale.act, 'cleared-stale');
+ assert.equal(live.HTTP_PROXY, null);
+ assert.equal(live.HTTPS_PROXY, null);
+});
+
+test('看门狗 recover 同时恢复 system-proxy.json 与 env-proxy.json', async (t) => {
+ const { recover } = await import('./watchdog.mjs');
+ const dir = await mkdtemp(join(tmpdir(), 'clash-watchdog-env-'));
+ t.after(() => rm(dir, { recursive: true, force: true }));
+ const sysPath = join(dir, 'system-proxy.json');
+ const envPath = join(dir, 'env-proxy.json');
+ const pid = process.pid;
+ await writeFile(sysPath, JSON.stringify({
+  schema: 1, owner: { pid },
+  previous: { ProxyEnable: 0, ProxyServer: null, ProxyOverride: null },
+  owned: { ProxyEnable: 1, ProxyServer: '127.0.0.1:7895', ProxyOverride: '<local>' },
+ }));
+ await writeFile(envPath, JSON.stringify({
+  schema: 1, owner: { pid },
+  previous: { HTTP_PROXY: null, HTTPS_PROXY: null, NO_PROXY: null },
+  owned: { HTTP_PROXY: 'http://127.0.0.1:7895', HTTPS_PROXY: 'http://127.0.0.1:7895', NO_PROXY: 'localhost,127.0.0.1,::1' },
+ }));
+ let sys = { ProxyEnable: 1, ProxyServer: '127.0.0.1:7895', ProxyOverride: '<local>' };
+ let env = { HTTP_PROXY: 'http://127.0.0.1:7895', HTTPS_PROXY: 'http://127.0.0.1:7895', NO_PROXY: 'localhost,127.0.0.1,::1' };
+ await recover({
+  leasePath: sysPath, parentPid: pid, mihomoPid: 0,
+  read: async () => ({ ...sys }), write: async (v) => { sys = { ...v }; },
+  envRead: async () => ({ ...env }), envWrite: async (v) => { env = { ...v }; },
+ });
+ assert.equal(sys.ProxyEnable, 0);
+ assert.equal(env.HTTP_PROXY, null);
+ assert.equal(env.HTTPS_PROXY, null);
+ assert.equal(existsSync(sysPath), false);
+ assert.equal(existsSync(envPath), false);
 });

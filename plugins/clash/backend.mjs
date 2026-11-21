@@ -72,7 +72,7 @@ createPlugin({id:'fish.clash',activate:async context=>{
  // promise，两者不会抢注册表。
  void runtime.recoverStaleOnce();
 },deactivate:async()=>{if(service)await service.shutdown();service=null},commands:{
- ...Object.fromEntries(['view','save','tunSwitch','subscriptionSave','subscriptionToggle','subscriptionRemove','select','mode','reload','proxy','details','nodeTest',
+ ...Object.fromEntries(['view','save','tunSwitch','subscriptionSave','subscriptionToggle','subscriptionRemove','select','mode','reload','proxy','envProxy','details','nodeTest',
   'tunService','installTunService','uninstallTunService','ipInfo','siteTest'].map(name=>[`clash.${name}`,params=>service[name](params)])),
  // 外观（背景图片与液态玻璃）不进 service 的视图模型：它是界面偏好，
  // 与内核状态无关，所以不随 clash.view 轮询回传，也不会因为内核没起而不可用。

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
-import {readFile,writeFile,mkdir,mkdtemp} from 'node:fs/promises';
+import {readFile,writeFile,mkdir,mkdtemp,rm} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
 
@@ -254,5 +254,146 @@ test('真实 sandbox 页面（严格 CSP）：外观背景图片上传走 create
   if(browser)await browser.close();
   if(edge.exitCode===null)edge.kill();
   await new Promise(r=>server.close(r));
+ }
+});
+
+
+test('真实 sandbox 页面：Dock Glass Follow 跟随与深色字体单独设置生效且无强调色', {
+ skip: enabled ? false : '设置 FISH_TEST_EDGE 和 FISH_TEST_PLAYWRIGHT 以启用真实浏览器测试', timeout: 45000,
+}, async () => {
+ const require = createRequire(import.meta.url);
+ const { chromium } = require(resolve(process.env.FISH_TEST_PLAYWRIGHT));
+ const base = process.env.FISH_TEST_TMP || undefined;
+ const tempDir = await mkdtemp(join(base || resolve('.'), 'clash-browser-follow-'));
+ const bridgeRaw = await readFile(resolve(process.env.FISH_TEST_BRIDGE), 'utf8');
+ // 在隔离测试的 bridge 注入最小 FishDock.theme API，以与新版宿主一致的方式派发 fish:theme。
+ const bridge = bridgeRaw
+  .replace(
+   "if (row.type === 'fish:theme') {",
+   "if (row.type === 'fish:theme') {\n      window.__fishTestCurTheme = row;\n      window.__fishTestThemeListeners?.forEach((fn) => fn(row));",
+  )
+  .replace(
+   'Object.freeze({ call, setLayout, openExternal, windows, fileDrop, dock })',
+   `Object.freeze({ call, setLayout, openExternal, windows, fileDrop, dock,
+    theme: Object.freeze({
+      current: () => window.__fishTestCurTheme || null,
+      onChange(fn) {
+        (window.__fishTestThemeListeners ||= new Set()).add(fn);
+        if (window.__fishTestCurTheme) fn(window.__fishTestCurTheme);
+        return () => window.__fishTestThemeListeners.delete(fn);
+      },
+    }) })`,
+  );
+
+ const rootDir = resolve('.');
+ const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+ let lookState = {
+  veil: 35, wallpaper: '', font: { text: '#222222', dim: '#555555' },
+  fontDark: { text: '', dim: '' }, fontDarkOn: false, fontFollow: false,
+  glass: { preset: 'off', main: { fill: 100, blur: 0 }, overlay: { fill: 100, blur: 0 }, control: { fill: 100, blur: 0 } },
+ };
+ const rowState = {
+  kernel: 'D:/mihomo.exe', mixedPort: 7895, controllerPort: 9099, configured: true, running: false,
+  tun: { enable: false, stack: 'mixed' }, systemProxy: false, envProxy: true, envProxyActive: false,
+  groups: [], subscriptions: [], mode: 'rule',
+ };
+ const server = createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://127.0.0.1');
+  if (url.pathname === '/') {
+   res.setHeader('Content-Type', 'text/html; charset=utf-8');
+   res.end(`<iframe id="plugin" sandbox="allow-scripts" src="/ticket/plugins/clash/page.html" style="width:980px;height:820px"></iframe><script>
+    window.addEventListener('message', event => {
+     const row = event.data; if (row?.type !== 'fish:call') return;
+     fetch('/rpc', { method: 'POST', body: JSON.stringify(row) }).then(r => r.json()).then(result =>
+      event.source.postMessage({ type: 'fish:result', ticket: row.ticket, id: row.id, ...result }, '*'));
+    });
+   </script>`);
+   return;
+  }
+  if (url.pathname === '/rpc') {
+   let body = ''; for await (const b of req) body += b;
+   const { method, params } = JSON.parse(body);
+   res.setHeader('Content-Type', 'application/json');
+   if (method === 'clash.appearance') { res.end(JSON.stringify({ result: lookState })); return; }
+   if (method === 'clash.appearanceSave') {
+    lookState = {
+     ...lookState,
+     ...(params.font ? { font: { ...lookState.font, ...params.font } } : {}),
+     ...(params.fontDark ? { fontDark: { ...lookState.fontDark, ...params.fontDark } } : {}),
+     ...(params.fontDarkOn !== undefined ? { fontDarkOn: params.fontDarkOn } : {}),
+     ...(params.fontFollow !== undefined ? { fontFollow: params.fontFollow } : {}),
+     ...(params.glass?.preset ? { glass: { preset: params.glass.preset, main: { fill: 100, blur: 0 }, overlay: { fill: 100, blur: 0 }, control: { fill: 100, blur: 0 } } } : {}),
+    };
+    res.end(JSON.stringify({ result: lookState })); return;
+   }
+   res.end(JSON.stringify({ result: rowState })); return;
+  }
+  if (url.pathname === '/ticket/bridge.js') { res.setHeader('Content-Type', 'text/javascript'); res.end(bridge); return; }
+  if (url.pathname.startsWith('/ticket/')) {
+   const relative = url.pathname.slice('/ticket/'.length);
+   const target = resolve(rootDir, relative);
+   const ext = relative.slice(relative.lastIndexOf('.'));
+   let bytes = await readFile(target);
+   if (relative === 'plugins/clash/page.html') {
+    bytes = Buffer.from(bytes.toString().replace('<head>', '<head><script src="/ticket/bridge.js"></script>'));
+   }
+   res.setHeader('Content-Type', mime[ext] || 'application/octet-stream');
+   res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'");
+   res.end(bytes); return;
+  }
+  res.statusCode = 404; res.end();
+ });
+
+ let browser;
+ try {
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  browser = await chromium.launch({
+   executablePath: process.env.FISH_TEST_EDGE,
+   headless: true,
+   args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle' });
+  const frame = page.frame({ url: /page\.html/ });
+  assert.ok(frame, 'sandbox iframe loaded');
+
+  const pushTheme = (payload) => page.evaluate((p) => {
+   document.getElementById('plugin').contentWindow.postMessage({ type: 'fish:theme', ticket: 'ticket', ...p }, '*');
+  }, payload);
+
+  await pushTheme({
+   mode: 'dark', dockMode: 'glass',
+   appearance: { glass: { enabled: true, cardOp: 32, cardBlur: 18, overlayOp: 48, overlayBlur: 22, controlOp: 36, controlBlur: 10 } },
+  });
+
+  await frame.click('[data-action="section-appearance"]');
+  await frame.waitForSelector('[data-action="look-preset"][data-preset="follow"]');
+  // 确认 Clash 无强调色
+  assert.equal(await frame.locator('[data-accent]').count(), 0);
+  await frame.click('[data-action="look-preset"][data-preset="follow"]');
+  await frame.waitForFunction(() => document.documentElement.dataset.followDockGlass === '1');
+  const vars = await frame.evaluate(() => ({
+   fill: document.documentElement.style.getPropertyValue('--g-main-fill'),
+   blur: document.documentElement.style.getPropertyValue('--g-main-blur'),
+  }));
+  assert.deepEqual(vars, { fill: '32%', blur: '18px' });
+
+  // 深色字体单独设置随 Dock dark/light 主题切换
+  await frame.click('[data-action="fc-dark-on"][data-dark-on="true"]');
+  await frame.waitForSelector('input[data-fc-group="fontDark"][data-fc-key="text"]');
+  await frame.evaluate(() => {
+   const el = document.querySelector('input[data-fc-group="fontDark"][data-fc-key="text"]');
+   el.value = '#112233';
+   el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await frame.waitForFunction(() => document.body.style.getPropertyValue('--dock-text') === '#112233');
+  await pushTheme({ mode: 'light', dockMode: 'light', appearance: { glass: { enabled: false } } });
+  await frame.waitForFunction(() => document.body.style.getPropertyValue('--dock-text') === '#222222');
+ } finally {
+  if (browser) await browser.close();
+  server?.close();
+  await rm(tempDir, { recursive: true, force: true }).catch(() => {});
  }
 });

@@ -151,6 +151,120 @@ export function createProxyLease({storage,adapter}){
  // why 只把键名与 Win32 码写成短句，供上层日志复用（#44）。
  return {enable,restore,recoverStale,active:()=>active,why};
 }
+const ENV_PROXY_KEYS=['HTTP_PROXY','HTTPS_PROXY','NO_PROXY'];
+const DEFAULT_NO_PROXY=['localhost','127.0.0.1','::1'];
+// mergeNoProxy 保留用户原有绕过表并补齐本机回环，去重保序。
+export function mergeNoProxy(existing){
+ const parts=[];
+ const seen=new Set();
+ for(const raw of String(existing??'').split(',')){
+  const item=raw.trim();
+  if(!item)continue;
+  const key=item.toLowerCase();
+  if(!seen.has(key)){seen.add(key);parts.push(item)}
+ }
+ for(const item of DEFAULT_NO_PROXY){
+  const key=item.toLowerCase();
+  if(!seen.has(key)){seen.add(key);parts.push(item)}
+ }
+ return parts.join(',');
+}
+const envSnapshot=value=>{
+ if(!value||typeof value!=='object'||Array.isArray(value))return false;
+ for(const key of ENV_PROXY_KEYS){
+  const item=value[key];
+  if(item===null||item===undefined)continue;
+  if(typeof item!=='string')return false;
+ }
+ return true;
+};
+// createEnvProxyLease 为 AGY / CLI 工具接管用户级 HTTP_PROXY / HTTPS_PROXY / NO_PROXY，
+// 租约保存在 config/env-proxy.json，结构与 createProxyLease 对称。
+export function createEnvProxyLease({storage,adapter}){
+ let active=false;
+ const norm=v=>(v===undefined?null:v);
+ const same=(a,b)=>ENV_PROXY_KEYS.every(k=>norm(a[k])===norm(b[k]));
+ function why(error){
+  const parts=[];
+  if(typeof error?.key==='string'&&error.key)parts.push(`写入 ${error.key} 失败`);
+  if(Number.isInteger(error?.win32)&&error.win32>0)parts.push(`Win32 ${error.win32}`);
+  return parts.length?`：${parts.join('，')}`:'';
+ }
+ async function discard(){try{await storage.write('config','env-proxy.json','')}catch{}}
+ async function restore(port){
+  let raw;
+  try{raw=await storage.read('config','env-proxy.json')}
+  catch(error){throw coded('ENV_PROXY_READ_FAILED','读取环境变量代理恢复记录失败',error)}
+  if(!raw){
+   active=false;
+   if(Number.isInteger(port)&&port>=1024&&port<=65535){
+    try{
+     const current=await adapter.read();
+     const target=`http://127.0.0.1:${port}`;
+     if(current?.HTTP_PROXY===target||current?.HTTPS_PROXY===target){
+      await adapter.write({
+       ...current,
+       HTTP_PROXY:current.HTTP_PROXY===target?null:norm(current.HTTP_PROXY),
+       HTTPS_PROXY:current.HTTPS_PROXY===target?null:norm(current.HTTPS_PROXY)
+      });
+      return {act:'cleared-stale'};
+     }
+    }catch{}
+   }
+   return {act:'nothing'};
+  }
+  let record=null;
+  try{record=JSON.parse(raw)}catch{}
+  if(!record||typeof record!=='object'||record.schema!==1||!envSnapshot(record.previous)||!envSnapshot(record.owned)){
+   await discard();active=false;
+   throw serviceError('ENV_PROXY_RESTORE_RECORD_INVALID');
+  }
+  let current;
+  try{current=await adapter.read()}
+  catch(error){throw coded('ENV_PROXY_READ_FAILED','读取当前用户环境变量代理设置失败',error)}
+  try{
+   const restored=same(current,record.owned);
+   if(restored)await adapter.write(record.previous);
+   await storage.write('config','env-proxy.json','');
+   active=false;
+   return {act:restored?'restore':'discard'};
+  }catch(error){
+   const failure=coded('ENV_PROXY_WRITE_FAILED',`恢复环境变量代理失败${why(error)}，请检查环境变量写入权限`,error);
+   failure.key=typeof error?.key==='string'?error.key:null;
+   failure.win32=Number.isInteger(error?.win32)?error.win32:0;
+   throw failure;
+  }
+ }
+ async function enable(port,ownerPid){
+  if(!Number.isInteger(port)||port<1024||port>65535)throw serviceError('PROXY_PORT_INVALID');
+  const proxyUrl=`http://127.0.0.1:${port}`;
+  try{await restore()}catch(error){if(error?.code!=='ENV_PROXY_RESTORE_RECORD_INVALID')throw error}
+  let previous;
+  try{previous=await adapter.read()}
+  catch(error){throw coded('ENV_PROXY_READ_FAILED','读取当前用户环境变量代理设置失败',error)}
+  const owned={HTTP_PROXY:proxyUrl,HTTPS_PROXY:proxyUrl,NO_PROXY:mergeNoProxy(previous?.NO_PROXY)};
+  const owner=Number.isInteger(ownerPid)&&ownerPid>0?{pid:ownerPid,at:Date.now()}:undefined;
+  await storage.write('config','env-proxy.json',JSON.stringify({schema:1,previous,owned,...(owner?{owner}:{})}));
+  try{await adapter.write(owned);active=true}
+  catch(error){
+   await restore().catch(()=>{});
+   const failure=coded('ENV_PROXY_WRITE_FAILED',`写入环境变量代理失败${why(error)}，请检查环境变量写入权限`,error);
+   failure.key=typeof error?.key==='string'?error.key:null;
+   failure.win32=Number.isInteger(error?.win32)?error.win32:0;
+   throw failure;
+  }
+ }
+ async function recoverStale(){
+  let raw;
+  try{raw=await storage.read('config','env-proxy.json')}catch{return {act:'unreadable'}}
+  if(!raw)return {act:'nothing'};
+  try{return await restore()}catch(error){
+   if(error?.code==='ENV_PROXY_RESTORE_RECORD_INVALID')return {act:'discard'};
+   throw error;
+  }
+ }
+ return {enable,restore,recoverStale,active:()=>active,why};
+}
 // 普通模式启动前是否需要让 TUN 服务交出内核：服务已装（job.ini enabled=1）且服务正在
 // 跑，说明内核此刻挂在 SYSTEM 服务名下，占着同一个控制器端口。
 export function tunHandoverNeeded(info){
@@ -358,16 +472,18 @@ export async function pruneTmp(dataDirectory){
 }
 export function createRuntime(context){
  const adapter=context.proxyAdapter||{async read(){return powershell('read')},async write(values){await powershell('write',values)}};
+ const envAdapter=context.envProxyAdapter||{async read(){return powershellEnv('read')},async write(values){await powershellEnv('write',values)}};
  const lease=createProxyLease({storage:context.storage,adapter});
+ const envLease=createEnvProxyLease({storage:context.storage,adapter:envAdapter});
  const tun=context.tun||null;
- // C8：看门狗任务只在「系统代理被本插件接管」期间存在。start/stop 由任务计划执行，
+ // C8：看门狗任务只在「系统代理或环境变量代理被本插件接管」期间存在。start/stop 由任务计划执行，
  // 这里只负责生命周期；失败只记日志，绝不拦住开/关代理。
  const watchdog=context.watchdogTask||{start:startWatchdogTask,stop:stopWatchdogTask};
  const watchdogLeasePath=join(context.dataDirectory,'config','system-proxy.json');
  let watchdogPort=0,watchdogKernelPid=0;
  const logWatchdog=error=>console.error('[clash] 看门狗任务操作失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''));
  function armWatchdog(){
-  if(!lease.active())return;
+  if(!lease.active()&&!envLease.active())return;
   const payload={leasePath:watchdogLeasePath,mihomoPid:watchdogKernelPid,port:watchdogPort,ownerPid:process.pid};
   // fire-and-forget：任务计划要起一次 pwsh，不能让「开代理」等它。
   Promise.resolve().then(()=>watchdog.start(payload)).then(result=>{
@@ -375,11 +491,17 @@ export function createRuntime(context){
   }).catch(logWatchdog);
  }
  function disarmWatchdog(){
+  if(lease.active()||envLease.active())return;
   Promise.resolve().then(()=>watchdog.stop()).then(result=>{
    if(result&&result.ok===false)console.error('[clash] 看门狗任务注销失败：'+(result.error??'UNKNOWN'));
   }).catch(logWatchdog);
  }
- // 恢复系统代理成功＝不再需要看门狗；失败则保留任务，让它下次还能重试（C8）。
+ function forceDisarmWatchdog(){
+  Promise.resolve().then(()=>watchdog.stop()).then(result=>{
+   if(result&&result.ok===false)console.error('[clash] 看门狗任务注销失败：'+(result.error??'UNKNOWN'));
+  }).catch(logWatchdog);
+ }
+ // 恢复系统代理/环境变量代理均不再需要看门狗后注销任务（C8）。
  const proxy={...lease,
   enable:async(port,ownerPid)=>{await lease.enable(port,ownerPid);watchdogPort=port;armWatchdog()},
   restore:async port=>{const result=await lease.restore(port);disarmWatchdog();return result},
@@ -388,18 +510,35 @@ export function createRuntime(context){
    if(result?.act==='restore'||result?.act==='discard')disarmWatchdog();
    return result;
   }};
+ const envProxy={...envLease,
+  enable:async(port,ownerPid)=>{await envLease.enable(port,ownerPid);watchdogPort=port;armWatchdog()},
+  restore:async port=>{const result=await envLease.restore(port);disarmWatchdog();return result},
+  recoverStale:async()=>{
+   const result=await envLease.recoverStale();
+   if(result?.act==='restore'||result?.act==='discard')disarmWatchdog();
+   return result;
+  }};
  // 启动自愈只跑一次，且 start() 会先等它：上一次 Dock 被强杀留下的租约要先还原，
- // 否则可能与随后的「启用系统代理」抢注册表（先写新租约、再被旧记录还原掉）。
+ // 否则可能与随后的「启用代理」抢注册表（先写新租约、再被旧记录还原掉）。
  let recovery=null;
  function recoverStaleOnce(){
-  return recovery??=proxy.recoverStale().then(result=>{
-   if(result?.act==='restore')console.error('[clash] 已还原上次意外退出遗留的系统代理');
-   return result;
-  }).catch(error=>{
-   // #44：带上被拒的键名与 Win32 码，下一次出现时不用再猜是注册表哪一步。
-   console.error('[clash] 系统代理自愈失败：'+(error?.code??'UNKNOWN')+proxy.why(error)+' '+(error?.message??''));
-   return {act:'failed'};
-  });
+  return recovery??=(async()=>{
+   let sysResult={act:'nothing'};
+   try{
+    sysResult=await proxy.recoverStale();
+    if(sysResult?.act==='restore')console.error('[clash] 已还原上次意外退出遗留的系统代理');
+   }catch(error){
+    console.error('[clash] 系统代理自愈失败：'+(error?.code??'UNKNOWN')+proxy.why(error)+' '+(error?.message??''));
+    sysResult={act:'failed'};
+   }
+   try{
+    const envResult=await envProxy.recoverStale();
+    if(envResult?.act==='restore')console.error('[clash] 已还原上次意外退出遗留的环境变量代理');
+   }catch(error){
+    console.error('[clash] 环境变量代理自愈失败：'+(error?.code??'UNKNOWN')+envProxy.why(error)+' '+(error?.message??''));
+   }
+   return sysResult;
+  })();
  }
  let viaService=false;
  async function waitController(c,limit=8000){
@@ -505,6 +644,7 @@ export function createRuntime(context){
    // 一个死内核——用户看到的就是「偶发掉线、网络回环、整机没网」。
    child.once('exit',()=>{
     void proxy.restore(c.mixedPort).catch(()=>{});
+    void envProxy.restore(c.mixedPort).catch(()=>{});
     void (async()=>{try{const info=await tun?.status();if(info?.enabled)await tun.disable()}catch{/* 服务未装或已停 */}})();
    });
    // C8：Dock/插件进程被强杀时，退出回调没机会跑。看门狗改成任务计划拉起的进程
@@ -514,7 +654,7 @@ export function createRuntime(context){
    return {alive,stop,pid:child.pid,mode:'process'};
   }catch(error){await stop();throw error}
  }
- return {start,proxy,tun,proxiedGet,writeConfig,swapConfig,recoverStaleOnce,configPath:()=>join(context.dataDirectory,'tmp',RUNTIME_CONFIG),
+ return {start,proxy,envProxy,tun,proxiedGet,writeConfig,swapConfig,recoverStaleOnce,configPath:()=>join(context.dataDirectory,'tmp',RUNTIME_CONFIG),
   // 插件重载后留下的内核不由本实例 spawn，只能按 pid 结束；processAlive 供 attach 判活。
   kill:killProcess,processAlive,
   // 停止时若内核由 TUN 服务托管，一并让服务停下，避免遗留提升权限的内核。
@@ -527,14 +667,38 @@ export function createRuntime(context){
  },
  tunRefreshLease:pid=>tun?.refreshLease?.(pid)??Promise.resolve(false),
   // C8：插件停用/关闭时不再保留看门狗任务（代理还在接管时由 proxy.restore 负责）。
-  stop:async()=>{disarmWatchdog()},shutdown:async()=>{disarmWatchdog()},
+  stop:async()=>{forceDisarmWatchdog()},shutdown:async()=>{forceDisarmWatchdog()},
   ...createSubscriptionRuntime(context)};
+}
+function runPowerShellJson(source,payload,{platformError='仅支持 Windows',opLabel='注册表',timeoutError='操作超时'}={}){
+ if(process.platform!=='win32')return Promise.reject(Error(platformError));
+ return new Promise((resolve,reject)=>{
+  const child=spawn('pwsh',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(source,'utf16le').toString('base64')],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let output='',errors='';
+  const timer=setTimeout(()=>{child.kill();reject(Error(timeoutError))},5000);
+  child.on('error',()=>{clearTimeout(timer);reject(Error('请先安装 PowerShell 7 后使用系统代理控制'))});
+  child.stdout.on('data',b=>{output+=b;if(output.length>16384)child.kill()});
+  child.stderr.on('data',b=>{errors=(errors+b).slice(-4096)});
+  child.on('close',code=>{
+   clearTimeout(timer);
+   let answer=null;try{answer=JSON.parse(output)}catch{}
+   if(answer&&answer.ok===false){
+    const key=typeof answer.key==='string'?answer.key:'';
+    const win32=Number.isInteger(answer.win32)&&answer.win32>0?answer.win32:0;
+    const failure=Error(`${key?`写入 ${key} 失败`:`${opLabel}操作失败`}${win32?`（Win32 ${win32}）`:''}${answer.message?`：${answer.message}`:''}`);
+    failure.key=key||null;failure.win32=win32;failure.action=payload.action;
+    reject(failure);return;
+   }
+   if(code!==0){const failure=Error(`${opLabel}读取或写入失败${errors.trim()?`：${errors.trim().slice(0,300)}`:''}`);failure.action=payload.action;reject(failure);return}
+   try{resolve(JSON.parse(output))}catch{reject(Error(`${opLabel}应答解析失败`))}
+  });
+  child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify(payload));
+ });
 }
 // 使用固定脚本和 JSON stdin，配置值不会拼入 PowerShell 源码。
 // #44：失败不再只说「读取或写入失败」。脚本把被拒的键名与 Win32 码写进 JSON 应答，
 // 刷新调用（InternetSetOption）的失败也单独报，和某一个键被安全软件拦住能分开。
 function powershell(action,values){
- if(process.platform!=='win32')return Promise.reject(Error('系统代理接管仅支持 Windows'));
  const source=`$ErrorActionPreference='Stop';$r=ConvertFrom-Json ([Console]::In.ReadToEnd());$p='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
 function Reply($o){$o|ConvertTo-Json -Compress}
 function Code($e){try{if($e.PSObject.Properties['NativeErrorCode']){return [int]$e.NativeErrorCode}}catch{};try{return [int]($e.HResult -band 65535)}catch{return 0}}
@@ -551,28 +715,28 @@ if($r.action -eq 'read'){
  if(-not $a){Reply @{ok=$false;key='InternetSetOption';win32=[int]$err;message='刷新系统代理设置失败'};exit 0}
  [void][FishInternet]::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0);Reply @{ok=$true}
 }`;
- return new Promise((resolve,reject)=>{
-  const child=spawn('pwsh',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(source,'utf16le').toString('base64')],{windowsHide:true,stdio:['pipe','pipe','pipe']});
-  let output='',errors='';
-  const timer=setTimeout(()=>{child.kill();reject(Error('系统代理操作超时'))},5000);
-  child.on('error',()=>{clearTimeout(timer);reject(Error('请先安装 PowerShell 7 后使用系统代理控制'))});
-  child.stdout.on('data',b=>{output+=b;if(output.length>16384)child.kill()});
-  child.stderr.on('data',b=>{errors=(errors+b).slice(-4096)});
-  child.on('close',code=>{
-   clearTimeout(timer);
-   let answer=null;try{answer=JSON.parse(output)}catch{}
-   if(answer&&answer.ok===false){
-    const key=typeof answer.key==='string'?answer.key:'';
-    const win32=Number.isInteger(answer.win32)&&answer.win32>0?answer.win32:0;
-    const failure=Error(`${key?`写入 ${key} 失败`:'系统代理操作失败'}${win32?`（Win32 ${win32}）`:''}${answer.message?`：${answer.message}`:''}`);
-    failure.key=key||null;failure.win32=win32;failure.action=action;
-    reject(failure);return;
-   }
-   if(code!==0){const failure=Error(`Windows 系统代理读取或写入失败${errors.trim()?`：${errors.trim().slice(0,300)}`:''}`);failure.action=action;reject(failure);return}
-   try{resolve(JSON.parse(output))}catch{reject(Error('系统代理应答解析失败'))}
-  });
-  child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({action,values}));
- });
+ return runPowerShellJson(source,{action,values},{platformError:'系统代理接管仅支持 Windows',opLabel:'Windows 系统代理',timeoutError:'系统代理操作超时'});
+}
+// 用户环境变量代理读写（HKCU:\Environment）并广播 WM_SETTINGCHANGE，让 AGY / CLI 工具直接感知 HTTP_PROXY。
+function powershellEnv(action,values){
+ const source=`$ErrorActionPreference='Stop';$r=ConvertFrom-Json ([Console]::In.ReadToEnd());$p='HKCU:\\Environment';
+function Reply($o){$o|ConvertTo-Json -Compress}
+function Code($e){try{if($e.PSObject.Properties['NativeErrorCode']){return [int]$e.NativeErrorCode}}catch{};try{return [int]($e.HResult -band 65535)}catch{return 0}}
+if($r.action -eq 'read'){
+ try{$v=Get-ItemProperty -LiteralPath $p -ErrorAction SilentlyContinue;Reply @{ok=$true;HTTP_PROXY=$(if($null -ne $v -and $v.PSObject.Properties['HTTP_PROXY']){[string]$v.HTTP_PROXY}else{$null});HTTPS_PROXY=$(if($null -ne $v -and $v.PSObject.Properties['HTTPS_PROXY']){[string]$v.HTTPS_PROXY}else{$null});NO_PROXY=$(if($null -ne $v -and $v.PSObject.Properties['NO_PROXY']){[string]$v.NO_PROXY}else{$null})}}
+ catch{Reply @{ok=$false;key='';win32=(Code $_.Exception);message=[string]$_.Exception.Message}}
+}else{
+ foreach($k in @('HTTP_PROXY','HTTPS_PROXY','NO_PROXY')){
+  try{$v=$r.values.$k;if($null -eq $v){Remove-ItemProperty -LiteralPath $p -Name $k -ErrorAction SilentlyContinue}else{New-ItemProperty -LiteralPath $p -Name $k -Value ([string]$v) -PropertyType String -Force|Out-Null}}
+  catch{Reply @{ok=$false;key=$k;win32=(Code $_.Exception);message=[string]$_.Exception.Message};exit 0}
+ }
+ try{
+  Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FishEnvBroadcast{[DllImport("user32.dll",SetLastError=true,CharSet=CharSet.Unicode)]public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out UIntPtr lpdwResult);}';
+  $res=[UIntPtr]::Zero;[void][FishEnvBroadcast]::SendMessageTimeoutW([IntPtr]0xffff,0x001A,[UIntPtr]::Zero,'Environment',2,1500,[ref]$res)
+ }catch{}
+ Reply @{ok=$true}
+}`;
+ return runPowerShellJson(source,{action,values},{platformError:'环境变量代理接管仅支持 Windows',opLabel:'环境变量代理',timeoutError:'环境变量代理操作超时'});
 }
 
 // 出口 IP 查询必须走用户自己的代理口：直连查询在 TUN 或系统代理下会查到本机出口，

@@ -9,24 +9,30 @@
 // 它不碰 stdio 管道（宿主死了管道会断），也不需要宿主提供的 storage：租约就用
 // <dataDirectory>/config/system-proxy.json 这个真实文件。
 import {existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync, appendFileSync, statSync} from 'node:fs';
-import {dirname} from 'node:path';
+import {dirname, join} from 'node:path';
 import {spawn,execFile} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 export const RECORD_KEYS = ['ProxyEnable', 'ProxyServer', 'ProxyOverride'];
+export const ENV_RECORD_KEYS = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY'];
 
 export function sameProxy(a, b) {
   return !!a && !!b && RECORD_KEYS.every((k) => a[k] === b[k]);
+}
+
+export function sameEnvProxy(a, b) {
+  const norm = (v) => (v === undefined ? null : v);
+  return !!a && !!b && ENV_RECORD_KEYS.every((k) => norm(a[k]) === norm(b[k]));
 }
 
 // plan 决定看门狗该做什么（纯函数，便于单测）：
 //   restore —— 注册表里还是我们写的那份，还原 previous
 //   discard —— 记录无效，或者注册表已经被别人改过：只清记录，别动别人的设置
 //   superseded —— 租约已经属于新的插件实例（owner.pid 变了）：什么都不做
-export function plan(record, current, parentPid) {
+export function plan(record, current, parentPid, keys = RECORD_KEYS, eq = sameProxy) {
   if (!record || record.schema !== 1 || !record.previous || !record.owned) return {act: 'discard'};
   if (record.owner && Number.isInteger(record.owner.pid) && record.owner.pid !== parentPid) return {act: 'superseded'};
-  if (!sameProxy(current, record.owned)) return {act: 'discard'};
+  if (!eq(current, record.owned)) return {act: 'discard'};
   return {act: 'restore', previous: record.previous};
 }
 
@@ -40,6 +46,32 @@ export function processAlive(pid) {
   }
 }
 
+function runPowershell(source, payload, opLabel) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')], {windowsHide: true});
+    let output = '';
+    const timer = setTimeout(() => { child.kill(); reject(Error(`${opLabel}操作超时`)); }, 8000);
+    child.stdin.on('error', () => {});
+    child.stdout.on('data', (b) => { output += b; if (output.length > 16384) child.kill(); });
+    child.on('error', () => { clearTimeout(timer); reject(Error('请先安装 PowerShell 7')); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      let answer = null;
+      try { answer = JSON.parse(output); } catch {}
+      if (answer && answer.ok === false) {
+        const key = typeof answer.key === 'string' ? answer.key : '';
+        const win32 = Number.isInteger(answer.win32) && answer.win32 > 0 ? answer.win32 : 0;
+        const error = Error(`${key ? `写入 ${key} 失败` : `${opLabel}操作失败`}${win32 ? `（Win32 ${win32}）` : ''}${answer.message ? `：${answer.message}` : ''}`);
+        error.key = key || null; error.win32 = win32;
+        return reject(error);
+      }
+      if (code !== 0) return reject(Error(`${opLabel}读写失败`));
+      try { resolve(JSON.parse(output)); } catch { reject(Error(`${opLabel}应答解析失败`)); }
+    });
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
 // 与 runtime.mjs 同一套脚本：固定 PowerShell 源码 + JSON stdin，配置值不拼进代码。
 // #44：应答带 ok/键名/Win32 码——看门狗没有 stdout 可看，失败必须有可查的记录。
 function powershell(action, values) {
@@ -51,34 +83,33 @@ if($r.action -eq 'read'){
  catch{Reply @{ok=$false;key='';win32=(Code $_.Exception);message=[string]$_.Exception.Message}}
 }else{
  foreach($k in @('ProxyEnable','ProxyServer','ProxyOverride')){
-  try{Set-ItemProperty -Path $p -Name $k -Value $(if($k -eq 'ProxyEnable'){[int]$r.ProxyEnable}else{[string]$r.$k})}
+  try{Set-ItemProperty -Path $p -Name $k -Value $(if($k -eq 'ProxyEnable'){[int]$r.$k}else{[string]$r.$k})}
   catch{Reply @{ok=$false;key=$k;win32=(Code $_.Exception);message=[string]$_.Exception.Message};exit 0}
  }
  Reply @{ok=$true}
 }`;
-  return new Promise((resolve, reject) => {
-    const child = spawn('pwsh', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(source, 'utf16le').toString('base64')], {windowsHide: true});
-    let output = '';
-    const timer = setTimeout(() => { child.kill(); reject(Error('系统代理操作超时')); }, 8000);
-    child.stdin.on('error', () => {});
-    child.stdout.on('data', (b) => { output += b; if (output.length > 16384) child.kill(); });
-    child.on('error', () => { clearTimeout(timer); reject(Error('请先安装 PowerShell 7')); });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      let answer = null;
-      try { answer = JSON.parse(output); } catch {}
-      if (answer && answer.ok === false) {
-        const key = typeof answer.key === 'string' ? answer.key : '';
-        const win32 = Number.isInteger(answer.win32) && answer.win32 > 0 ? answer.win32 : 0;
-        const error = Error(`${key ? `写入 ${key} 失败` : '系统代理操作失败'}${win32 ? `（Win32 ${win32}）` : ''}${answer.message ? `：${answer.message}` : ''}`);
-        error.key = key || null; error.win32 = win32;
-        return reject(error);
-      }
-      if (code !== 0) return reject(Error('系统代理读写失败'));
-      try { resolve(JSON.parse(output)); } catch { reject(Error('系统代理应答解析失败')); }
-    });
-    child.stdin.end(JSON.stringify({action, ...(values ?? {})}));
-  });
+  return runPowershell(source, {action, ...(values ?? {})}, '系统代理');
+}
+
+function powershellEnv(action, values) {
+  const source = `$ErrorActionPreference='Stop';$r=ConvertFrom-Json ([Console]::In.ReadToEnd());$p='HKCU:\\Environment';
+function Reply($o){$o|ConvertTo-Json -Compress}
+function Code($e){try{if($e.PSObject.Properties['NativeErrorCode']){return [int]$e.NativeErrorCode}}catch{};try{return [int]($e.HResult -band 65535)}catch{return 0}}
+if($r.action -eq 'read'){
+ try{$v=Get-ItemProperty -LiteralPath $p -ErrorAction SilentlyContinue;Reply @{ok=$true;HTTP_PROXY=$(if($null -ne $v -and $v.PSObject.Properties['HTTP_PROXY']){[string]$v.HTTP_PROXY}else{$null});HTTPS_PROXY=$(if($null -ne $v -and $v.PSObject.Properties['HTTPS_PROXY']){[string]$v.HTTPS_PROXY}else{$null});NO_PROXY=$(if($null -ne $v -and $v.PSObject.Properties['NO_PROXY']){[string]$v.NO_PROXY}else{$null})}}
+ catch{Reply @{ok=$false;key='';win32=(Code $_.Exception);message=[string]$_.Exception.Message}}
+}else{
+ foreach($k in @('HTTP_PROXY','HTTPS_PROXY','NO_PROXY')){
+  try{$v=$r.$k;if($null -eq $v){Remove-ItemProperty -LiteralPath $p -Name $k -ErrorAction SilentlyContinue}else{New-ItemProperty -LiteralPath $p -Name $k -Value ([string]$v) -PropertyType String -Force|Out-Null}}
+  catch{Reply @{ok=$false;key=$k;win32=(Code $_.Exception);message=[string]$_.Exception.Message};exit 0}
+ }
+ try{
+  Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FishEnvBroadcast{[DllImport("user32.dll",SetLastError=true,CharSet=CharSet.Unicode)]public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out UIntPtr lpdwResult);}';
+  $res=[UIntPtr]::Zero;[void][FishEnvBroadcast]::SendMessageTimeoutW([IntPtr]0xffff,0x001A,[UIntPtr]::Zero,'Environment',2,1500,[ref]$res)
+ }catch{}
+ Reply @{ok=$true}
+}`;
+  return runPowershell(source, {action, ...(values ?? {})}, '环境变量代理');
 }
 
 // 看门狗没有 stdout：失败写进 <租约>.log，64 KB 封顶（#44）。
@@ -110,35 +141,50 @@ function clearLease(path) {
   } catch {}
 }
 
-// recover 是看门狗真正干活的那一步，导出给单测与启动自愈共用。
-export async function recover({leasePath, parentPid, mihomoPid, read = () => powershell('read'), write = (v) => powershell('write', v)}) {
-  const record = readLease(leasePath);
-  if (!record) return {act: 'nothing'};
+async function recoverOneLease({file, parentPid, read, write, keys, eq, killKernel}) {
+  const record = readLease(file);
+  if (!record) return null;
   let current = null;
   try { current = await read(); } catch { return {act: 'unreadable'}; }
-  const decision = plan(record, current, parentPid);
+  const decision = plan(record, current, parentPid, keys, eq);
   let act = decision.act, failure = null;
   if (decision.act === 'restore') {
     try { await write(decision.previous); }
     catch (error) {
       // #44：带上被拒的键名与 Win32 码；没有 stdout 可看，只能落文件。租约留着，
       // 下次插件启动还能再试一次——删掉就再也认不出注册表里那份是谁写的。
-      logFailure(leasePath, error);
+      logFailure(file, error);
       act = 'write-failed';
       failure = {key: typeof error?.key === 'string' ? error.key : null,
         win32: Number.isInteger(error?.win32) ? error.win32 : 0};
     }
   }
-  if (act !== 'write-failed') clearLease(leasePath);
-  if (Number.isInteger(mihomoPid) && mihomoPid > 0 && processAlive(mihomoPid)) {
-    try { process.kill(mihomoPid, 'SIGTERM'); } catch {}
-    const until = Date.now() + 1500;
-    while (Date.now() < until && processAlive(mihomoPid)) {
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    if (processAlive(mihomoPid)) try { process.kill(mihomoPid, 'SIGKILL'); } catch {}
-  }
+  if (act !== 'write-failed') clearLease(file);
+  if (typeof killKernel === 'function') await killKernel();
   return failure ? {act, ...failure} : {act};
+}
+
+// recover 是看门狗真正干活的那一步，导出给单测与启动自愈共用。
+export async function recover({leasePath, parentPid, mihomoPid,
+  read = () => powershell('read'), write = (v) => powershell('write', v),
+  envRead = () => powershellEnv('read'), envWrite = (v) => powershellEnv('write', v)}) {
+  let kernelHandled = false;
+  const killKernelOnce = async () => {
+    if (kernelHandled) return;
+    kernelHandled = true;
+    if (Number.isInteger(mihomoPid) && mihomoPid > 0 && processAlive(mihomoPid)) {
+      try { process.kill(mihomoPid, 'SIGTERM'); } catch {}
+      const until = Date.now() + 1500;
+      while (Date.now() < until && processAlive(mihomoPid)) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (processAlive(mihomoPid)) try { process.kill(mihomoPid, 'SIGKILL'); } catch {}
+    }
+  };
+  const sysOut = await recoverOneLease({file: leasePath, parentPid, read, write, keys: RECORD_KEYS, eq: sameProxy, killKernel: killKernelOnce});
+  const envFile = join(dirname(leasePath), 'env-proxy.json');
+  const envOut = await recoverOneLease({file: envFile, parentPid, read: envRead, write: envWrite, keys: ENV_RECORD_KEYS, eq: sameEnvProxy, killKernel: killKernelOnce});
+  return sysOut ?? envOut ?? {act: 'nothing'};
 }
 
 // C8：看门狗由任务计划拉起，退出前要把自己的任务注销；否则父进程早没了，任务每 5 分钟
@@ -158,14 +204,20 @@ async function main() {
   const kernel = Number(mihomoPid);
   const mixed = Number(port);
   if (!Number.isInteger(pid) || !leasePath) process.exit(2);
+  const envLeasePath = join(dirname(leasePath), 'env-proxy.json');
   // 父进程还活着就每 800ms 看一眼；最多守 12 小时，之后自己退出（留一份 irradiating
   // 的看门狗毫无意义，租约文件还在就交给下次启动自愈）。
   const deadline = Date.now() + 12 * 3600 * 1000;
   while (Date.now() < deadline) {
     if (!processAlive(pid)) {
       const record = readLease(leasePath);
-      // 记录已经换成新实例的（owner.pid 不同） or 已清空：任务一起注销，然后退出。
+      const envRecord = readLease(envLeasePath);
+      // 记录已经换成新实例的（owner.pid 不同）：任务一起注销，然后退出。
       if (record?.owner && Number.isInteger(record.owner.pid) && record.owner.pid !== pid) {
+        await deleteTask(taskName);
+        process.exit(0);
+      }
+      if (!record && envRecord?.owner && Number.isInteger(envRecord.owner.pid) && envRecord.owner.pid !== pid) {
         await deleteTask(taskName);
         process.exit(0);
       }

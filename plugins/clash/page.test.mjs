@@ -798,3 +798,161 @@ test('壁纸上传禁止走 blob: URL（CSP img-src 不允许），且区分解�
  assert.match(pageJs,/压缩后仍超过 1\.5 MiB/);
  assert.match(pageJs,/页面压缩上限 1\.5 MiB \/ 存储上限 2 MiB/);
 });
+
+
+test('网络设置卡片渲染环境变量代理开关（env-proxy）并下发 clash.envProxy RPC', async () => {
+ const f = fixture();
+ await flush();
+ const btn = f.buttons().find((b) => b.dataset.action === 'env-proxy');
+ assert.ok(btn, '网络设置卡片包含 env-proxy 开关');
+ assert.ok(f.root.innerHTML.includes('HTTP_PROXY / HTTPS_PROXY'), '显示环境变量代理说明');
+ f.calls.length = 0;
+ await f.click('env-proxy');
+ await flush();
+ const call = f.calls.find((c) => c.method === 'clash.envProxy');
+ assert.ok(call, '点击开关发起 clash.envProxy RPC');
+ assert.equal(call.params.enabled, false, '默认开启时点击传入 enabled: false');
+});
+
+test('外观页渲染「跟随」玻璃与字体模式、深色单独设置、响应 FishDock.theme 且无强调色', async () => {
+ const calls = [];
+ const cssProps = {};
+ const bodyProps = {};
+ const docDataset = {};
+ const docAttrs = {};
+ const listeners = {};
+ const buttonList = [];
+ let onThemeChange = null;
+ let currentDockTheme = {
+  mode: 'dark',
+  dockMode: 'glass',
+  appearance: { glass: { enabled: true, cardOp: 32, cardBlur: 18, overlayOp: 48, overlayBlur: 22, controlOp: 36, controlBlur: 10 } },
+ };
+ let lookState = {
+  veil: 35,
+  wallpaper: '',
+  font: { text: '#111111', dim: '#444444' },
+  fontDark: { text: '#eeeeee', dim: '#999999' },
+  fontDarkOn: false,
+  fontFollow: false,
+  glass: { preset: 'follow', main: { fill: 100, blur: 0 }, overlay: { fill: 100, blur: 0 }, control: { fill: 100, blur: 0 } },
+ };
+ let html = '';
+ const root = {
+  get innerHTML() { return html; },
+  set innerHTML(v) {
+   html = v;
+     buttonList.length = 0;
+   for (const m of v.matchAll(/<button\b([^>]*)>/g)) {
+    const attrs = Object.fromEntries([...m[1].matchAll(/([\w-]+)="([^"]*)"/g)].map((x) => [x[1], x[2]]));
+    if (attrs['data-action']) {
+     buttonList.push({
+      dataset: {
+       action: attrs['data-action'],
+       preset: attrs['data-preset'],
+       follow: attrs['data-follow'],
+       darkOn: attrs['data-dark-on'],
+       fcGroup: attrs['data-fc-group'],
+       fcKey: attrs['data-fc-key'],
+      },
+      disabled: /\bdisabled\b/.test(m[1]),
+      setAttribute() {},
+      onclick: null,
+     });
+    }
+   }
+  },
+  querySelector(sel) {
+   if (sel === 'main') return { scrollTop: 0 };
+   return null;
+  },
+  querySelectorAll(sel) {
+   if (sel === '[data-action]') return buttonList;
+   if (sel === '[data-action="look-preset"]') return buttonList.filter((b) => b.dataset.action === 'look-preset');
+   return [];
+  },
+  addEventListener() {},
+ };
+ const row = {
+  kernel: 'D:/mihomo.exe', mixedPort: 7895, controllerPort: 9099, configured: true, running: false,
+  tun: { enable: false, stack: 'mixed' }, systemProxy: false, envProxy: true, envProxyActive: false,
+  groups: [], subscriptions: [], mode: 'rule',
+ };
+ const context = {
+  document: {
+   querySelector: (s) => (s === '#app' ? root : null),
+   querySelectorAll: () => [],
+   createElement: () => ({ style: {}, setAttribute() {}, appendChild() {}, remove() {}, querySelector: () => null, querySelectorAll: () => [], addEventListener() {} }),
+   activeElement: null,
+   addEventListener() {},
+   removeEventListener() {},
+   body: {
+    style: { setProperty(k, v) { bodyProps[k] = v; }, removeProperty(k) { delete bodyProps[k]; } },
+    toggleAttribute() {},
+   },
+   documentElement: {
+    clientHeight: 800,
+    dataset: docDataset,
+    style: { setProperty(k, v) { cssProps[k] = v; }, removeProperty(k) { delete cssProps[k]; } },
+    setAttribute(k, v) { docAttrs[k] = v; },
+    removeAttribute(k) { delete docAttrs[k]; },
+   },
+  },
+  window: { addEventListener() {}, removeEventListener() {}, getSelection: () => ({ isCollapsed: true }), innerHeight: 800 },
+  navigator: {}, AbortController, FormData, URL, structuredClone,
+  setTimeout: (fn) => { return 1; }, clearTimeout() {},
+  MutationObserver: function () { return { observe() {}, disconnect() {} }; },
+  FishDock: {
+   setLayout() {},
+   theme: {
+    current: () => currentDockTheme,
+    onChange(fn) { onThemeChange = fn; },
+   },
+   call: async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'clash.appearance') return structuredClone(lookState);
+    if (method === 'clash.appearanceSave') {
+     lookState = {
+      ...lookState,
+      ...(params.fontFollow !== undefined ? { fontFollow: params.fontFollow } : {}),
+      ...(params.fontDarkOn !== undefined ? { fontDarkOn: params.fontDarkOn } : {}),
+      ...(params.glass?.preset ? { glass: { ...lookState.glass, preset: params.glass.preset } } : {}),
+     };
+     return structuredClone(lookState);
+    }
+    return structuredClone(row);
+   },
+  },
+ };
+ vm.runInNewContext(pageJs, context, { filename: 'page.js' });
+ await flush();
+
+ // follow 玻璃启用并响应 Dock 快照
+ assert.equal(docDataset.followDockGlass, '1');
+ assert.equal(cssProps['--g-main-fill'], '32%');
+ assert.equal(cssProps['--g-main-blur'], '18px');
+
+ // 切换到外观页签
+ const appTab = buttonList.find((b) => b.dataset.action === 'section-appearance');
+ assert.ok(appTab?.onclick, '存在外观页签切换按钮');
+ appTab.onclick();
+ await flush();
+ assert.ok(html.includes('data-preset="follow"'), '液态玻璃预设含「跟随」按钮');
+ assert.ok(html.includes('data-action="fc-follow"'), '字体颜色含「跟随 | 自定义」切换');
+ assert.ok(html.includes('data-action="fc-dark-on"'), '字体颜色含「深色单独设置」开关');
+ assert.equal(html.includes('强调色'), false, 'Clash 不应出现强调色选择器');
+ assert.equal(/data-accent=/.test(html), false, 'Clash 不应出现强调色色块');
+
+ // 动态推送新 Dock theme 快照更新 CSS 变量
+ onThemeChange?.({ dockMode: 'glass', appearance: { glass: { enabled: true, cardOp: 44, cardBlur: 12, overlayOp: 60, overlayBlur: 20, controlOp: 30, controlBlur: 6 } } });
+ assert.equal(cssProps['--g-main-fill'], '44%');
+ assert.equal(cssProps['--g-main-blur'], '12px');
+
+ // 深色字体切换
+ docDataset.dockTheme = 'dark';
+ const darkOnBtn = buttonList.find((b) => b.dataset.action === 'fc-dark-on' && b.dataset.darkOn === 'true');
+ assert.ok(darkOnBtn?.onclick, '存在深色单独设置开启按钮');
+ darkOnBtn.onclick();
+ await flush();
+ assert.equal(bodyProps['--dock-text'], '#eeeeee');
+});

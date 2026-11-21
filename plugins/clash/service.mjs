@@ -303,6 +303,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const bundled=saved.bundled===true||legacy.test(String(saved.kernel).replaceAll('\\','/'));
       settings={kernel:saved.kernel??defaultKernel,mixedPort:saved.mixedPort??defaults.mixedPort,
         controllerPort:saved.controllerPort??defaults.controllerPort,bundled,
+        envProxy:saved.envProxy!==false,
         tun:{enable:saved.tun?.enable===true,stack:tunStacks.includes(saved.tun?.stack)?saved.tun.stack:defaultTun.stack}};
       if(bundled)settings.kernel=defaultKernel;
       const raw=await context.storage.read('config','subscriptions.json');
@@ -399,6 +400,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       subscriptions:subscriptions.map(s=>({...s,updating:jobs.has(s.id)})),
       running:alive(),operation:operation?.name??null,tunSwitching:tunBusy,error:operationError,
       errorCode:null,attached,kernelPid,attachError,systemProxy:runtime.proxy.active?.()??false,
+      envProxy:c.envProxy!==false,envProxyActive:runtime.envProxy?.active?.()??false,
       os:`${os.platform()==='win32'?'Windows':os.platform()} ${os.release()}`,
       arch:os.arch(),cpu:cpuLabel(),memoryTotal:os.totalmem(),pluginVersion,
       uptimeMs:alive()&&startedAt?Date.now()-startedAt:null,
@@ -464,6 +466,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
           const info=await runtime.tun.status();
           if(!info?.installed)throw serviceError('TUN_NOT_INSTALLED');
         }
+      }
+      if(params.envProxy!==undefined){
+        if(typeof params.envProxy!=='boolean')throw serviceError('ENV_PROXY_STATE_INVALID');
+        next.envProxy=params.envProxy;
       }
       next.bundled=!!defaultKernel&&next.kernel.replaceAll('\\','/').toLowerCase()===defaultKernel.replaceAll('\\','/').toLowerCase();
       await persistSettings(next);
@@ -645,6 +651,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     try{if(await readRunState())await clearRunState()}catch{}
     try{await runtime.proxy.restore((await config()).mixedPort)}
     catch(error){console.error('[clash] 启动失败后恢复系统代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
+    try{await runtime.envProxy?.restore((await config()).mixedPort)}
+    catch(error){console.error('[clash] 启动失败后恢复环境变量代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
   }
   async function startKernel({externalSignal=null}={}) {
     if(operation?.name==='starting')return operation.promise;
@@ -690,6 +698,10 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
           mixedPort:c.mixedPort,controllerPort:c.controllerPort,startedAt,
           subscriptions:enabled.map(s=>s.id),secretFingerprint:secretFingerprint(secret)});
       }catch{/* 落盘失败只影响重载后能否 attach */}
+      if(c.envProxy!==false&&runtime.envProxy){
+        try{await runtime.envProxy.enable(c.mixedPort,process.pid)}
+        catch(error){console.error('[clash] 写入环境变量代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
+      }
       return view();
     })().catch(error=>{operationError=task.controller.signal.aborted?'启动已取消':'启动失败，请检查内核路径、端口和订阅缓存';throw error})
       .finally(()=>{
@@ -713,7 +725,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     const prior=operation?.promise;operation?.controller?.abort();
     const task={name:'stopping',promise:null};operation=task;operationError='';
     task.promise=(async()=>{
-      // ── 第一件事：把系统代理还回去 ────────────────────────────────────
+      // ── 第一件事：把系统代理与环境变量代理还回去 ────────────────────────────
       const result={kernel:'absent',proxy:'skipped',code:null,message:'',ok:true};
       let proxyError=null;
       try{const current=await config();await runtime.proxy.restore(current.mixedPort);result.proxy='restored'}
@@ -727,6 +739,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
           result.message=`系统代理恢复失败（${error.code}${why?`：${why}`:''}）`;
         }
       }
+      try{const current=await config();await runtime.envProxy?.restore(current.mixedPort)}
+      catch(error){console.error('[clash] 恢复环境变量代理失败：'+(error?.code??'UNKNOWN')+' '+(error?.message??''))}
       await prior?.catch(()=>{});
       await priorTun?.catch(()=>{});
       for(const job of jobs.values())job.controller.abort();
@@ -836,6 +850,26 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       await runtime.proxy.enable((await config()).mixedPort,process.pid);
     }
     else await runtime.proxy.restore((await config()).mixedPort);return view();
+  }
+  async function envProxy({enabled}) {
+    if(typeof enabled!=='boolean')throw serviceError('ENV_PROXY_STATE_INVALID');
+    if(closing)throw serviceError('PLUGIN_STOPPING');
+    if(tunBusy||operation)throw serviceError('KERNEL_SWITCHING');
+    const saved=await exclusive(async()=>{
+      const old=await config();
+      if(closing)throw serviceError('PLUGIN_STOPPING');
+      if(tunBusy||operation)throw serviceError('KERNEL_SWITCHING');
+      const next={...old,envProxy:enabled};
+      await persistSettings(next);
+      return next;
+    });
+    if(alive()&&runtime.envProxy){
+      if(enabled)await runtime.envProxy.enable(saved.mixedPort,process.pid);
+      else await runtime.envProxy.restore(saved.mixedPort);
+    }else if(!enabled&&runtime.envProxy){
+      await runtime.envProxy.restore(saved.mixedPort).catch(()=>{});
+    }
+    return view({controller:alive()});
   }
   async function details({section}) {
     if(section==='providers')return (await view({controller:false})).subscriptions;
@@ -1010,6 +1044,6 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     out.tun=nextTun;
     return out;
   }
-  return {view,save,tunSwitch,subscriptionSave,subscriptionToggle,subscriptionRemove,start,stop,shutdown,select,mode,reload,proxy,details,nodeTest,
+  return {view,save,tunSwitch,subscriptionSave,subscriptionToggle,subscriptionRemove,start,stop,shutdown,select,mode,reload,proxy,envProxy,details,nodeTest,
     tunService,installTunService,uninstallTunService,ipInfo,siteTest};
 }

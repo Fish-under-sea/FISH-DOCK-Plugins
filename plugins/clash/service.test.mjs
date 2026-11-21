@@ -883,3 +883,44 @@ test('tunSwitch 失败回滚与流程锁：停机拒开、失败清理 TUN、切
 
 
 
+
+
+test('环境变量代理默认开启：启动写租约、停止还原，并支持在线/离线切换与参数校验', async () => {
+ const f = fixture();
+ let envEnabled = false;
+ const envCalls = [];
+ f.runtime.envProxy = {
+  enable: async (port) => { envCalls.push(['enable', port]); envEnabled = true; },
+  restore: async (port) => { envCalls.push(['restore', port]); envEnabled = false; },
+  active: () => envEnabled,
+ };
+ await f.service.save(kernel);
+ assert.equal((await f.service.view()).envProxy, true, '默认开启环境变量代理');
+ assert.equal((await f.service.view()).envProxyActive, false);
+
+ await f.service.start();
+ assert.deepEqual(envCalls, [['enable', 7895]]);
+ assert.equal((await f.service.view()).envProxyActive, true);
+
+ // 运行中关闭会立刻恢复环境变量并持久化配置
+ await f.service.envProxy({ enabled: false });
+ assert.deepEqual(envCalls.at(-1), ['restore', 7895]);
+ assert.equal((await f.service.view()).envProxy, false);
+ assert.equal((await f.service.view()).envProxyActive, false);
+
+ // 运行中重新开启会立刻写入当前 mixedPort
+ await f.service.envProxy({ enabled: true });
+ assert.deepEqual(envCalls.at(-1), ['enable', 7895]);
+ assert.equal((await f.service.view()).envProxy, true);
+ assert.equal((await f.service.view()).envProxyActive, true);
+
+ // 停止内核后自动清理环境变量代理
+ await f.service.stop();
+ assert.deepEqual(envCalls.at(-1), ['restore', 7895]);
+ assert.equal((await f.service.view()).envProxyActive, false);
+
+ // 离线也可持久化开关，且非法参数抛出 ENV_PROXY_STATE_INVALID
+ await f.service.envProxy({ enabled: false });
+ assert.equal((await f.service.view()).envProxy, false);
+ await assert.rejects(f.service.envProxy({ enabled: 'yes' }), (err) => err.code === 'ENV_PROXY_STATE_INVALID');
+});

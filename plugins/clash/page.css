@@ -38,8 +38,8 @@
   --lg-inner-bg:rgba(255,255,255,.06);
   --lg-inner-line:rgba(255,255,255,.14);
   --lg-control-line:rgba(255,255,255,.14);
-  --lg-focus-ring:color-mix(in srgb,var(--dock-accent) 44%,rgba(255,255,255,.35));
-  --lg-focus-halo:color-mix(in srgb,var(--dock-accent) 16%,transparent);
+  --lg-focus-ring:color-mix(in srgb,var(--dock-accent) 26%,rgba(255,255,255,.38));
+  --lg-focus-halo:color-mix(in srgb,var(--dock-accent) 8%,transparent);
   --lg-shadow:0 12px 32px rgba(0,0,0,.28);
   --lg-scroll:rgba(255,255,255,.45);
   --lg-scroll-hover:rgba(255,255,255,.72);
@@ -67,8 +67,8 @@
   --lg-inner-bg:rgba(255,255,255,.52);
   --lg-inner-line:rgba(15,23,42,.10);
   --lg-control-line:rgba(15,23,42,.12);
-  --lg-focus-ring:color-mix(in srgb,var(--dock-accent) 48%,rgba(15,23,42,.20));
-  --lg-focus-halo:color-mix(in srgb,var(--dock-accent) 16%,transparent);
+  --lg-focus-ring:color-mix(in srgb,var(--dock-accent) 28%,rgba(15,23,42,.22));
+  --lg-focus-halo:color-mix(in srgb,var(--dock-accent) 8%,transparent);
   --lg-shadow:0 12px 32px rgba(15,23,42,.12);
   --lg-scroll:rgba(15,23,42,.26);
   --lg-scroll-hover:rgba(15,23,42,.44);
@@ -320,6 +320,9 @@ button,input,select,summary,a,.combo-trigger,.lb-option{touch-action:manipulatio
  --lg-sheen-b:rgba(160,205,255,.12);
 }
 #app,#pane{background:transparent}
+html[data-follow-dock-glass="1"],html[data-follow-dock-glass="1"] body:not([data-has-wall]){background:transparent}
+.fc-split-head{font-size:12px;color:var(--dock-muted);margin:8px 0 4px;padding-top:8px;border-top:1px solid var(--line-hair)}
+.fc-hint{font-size:12px;color:var(--dock-muted);margin:4px 0}
 /* 壁纸铺在 body 自身（与 Magpie 的 lookCSS 同一手法）：不新建堆叠层，
    弹层、卡片、内滚区都不受影响。遮挡是主题底色的一层，所以文字对比不变。 */
 body[data-has-wall]{
@@ -410,11 +413,10 @@ input[type=color].fc-input::-webkit-color-swatch,input[type=color].fc-input::-mo
  }
  .lb-filter{background:var(--lg-inner-bg);border-color:var(--lg-inner-line);box-shadow:none;padding:2px 10px}
  .listbox .lb-filter:focus,.listbox .lb-filter:focus-visible{outline:none;border-color:var(--lg-focus-ring);box-shadow:0 0 0 2px var(--lg-focus-halo)}
- /* 选中/激活态也是玻璃的一部分：用半透的强调色，而不是一整块不透明色，
-    否则它会把下面的壁纸整块盖住，看着像“贴了个色块”。 */
- .lb-option[aria-selected=true]{background:color-mix(in srgb,var(--dock-accent) 22%,transparent);box-shadow:inset 2px 0 0 var(--dock-accent)}
- .lb-option[data-active=true]{background:color-mix(in srgb,var(--dock-accent) 11%,transparent)}
- .headbar button[aria-pressed=true],.segmented button[aria-pressed=true]{background:color-mix(in srgb,var(--dock-accent) 18%,transparent);border-color:color-mix(in srgb,var(--dock-accent) 34%,transparent)}
+ /* 选中/激活态也是玻璃的一部分：强调色只作极轻点缀与窄指示条，不染脏玻璃底色。 */
+ .lb-option[aria-selected=true]{background:color-mix(in srgb,var(--dock-accent) 10%,transparent);box-shadow:inset 2px 0 0 color-mix(in srgb,var(--dock-accent) 82%,transparent)}
+ .lb-option[data-active=true]{background:color-mix(in srgb,var(--dock-muted) 10%,transparent)}
+ .headbar button[aria-pressed=true],.segmented button[aria-pressed=true]{background:color-mix(in srgb,var(--dock-accent) 10%,transparent);border-color:color-mix(in srgb,var(--dock-accent) 22%,transparent)}
  .tag.on{background:color-mix(in srgb,var(--c-ok) 20%,transparent)}
  /* 玻璃面上焦点圈照旧可见，同时收敛高亮晕染，不画刺眼纯蓝大边框。 */
  .card :focus-visible,.subscription :focus-visible,.tun-box :focus-visible,.banner :focus-visible,

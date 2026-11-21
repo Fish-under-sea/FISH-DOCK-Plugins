@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {
  GLASS_REGIONS, GLASS_PRESETS, DEFAULT_APPEARANCE, WALLPAPER_MAX_BYTES_TEXT,
- regionOf, isWallpaper, presetOf, normalize, withPreset, patch, cssVars, glassOn,
+ regionOf, isWallpaper, presetOf, normalize, withPreset, patch, cssVars, glassOn, resolveDockGlass,
 } from './appearance.mjs';
 import {readAppearance, savePatch, saveWallpaper} from './appearance-store.mjs';
 
@@ -163,3 +163,59 @@ test('存取：写失败报 APPEARANCE_SAVE_FAILED，并保留原始 cause', asy
 
 
 
+
+
+test('follow 预设保持独立状态并在滑块或预设切换后退出 follow', () => {
+ const base = normalize({
+  glass: { preset: 'follow', main: { fill: 84, blur: 10 }, overlay: { fill: 92, blur: 16 }, control: { fill: 88, blur: 8 } },
+ });
+ assert.equal(base.glass.preset, 'follow');
+ assert.equal(base.glass.main.fill, 84);
+
+ const keptFollow = patch(normalize({}), { glass: { preset: 'follow' } });
+ assert.equal(keptFollow.glass.preset, 'follow');
+ assert.deepEqual(keptFollow.glass.main, DEFAULT_APPEARANCE.glass.main);
+
+ const sliderOut = patch(base, { glass: { main: { fill: 55, blur: 10 } } });
+ assert.equal(sliderOut.glass.preset, 'custom');
+ assert.equal(sliderOut.glass.main.fill, 55);
+
+ const presetOut = patch(base, { glass: { preset: 'balanced' } });
+ assert.equal(presetOut.glass.preset, 'balanced');
+});
+
+test('fontDark / fontDarkOn / fontFollow 白名单标准化与增量补丁', () => {
+ const next = patch(DEFAULT_APPEARANCE, {
+  fontDark: { text: '#ffffff', dim: 'invalid' },
+  fontDarkOn: true,
+  fontFollow: true,
+ });
+ assert.deepEqual(next.fontDark, { text: '#ffffff', dim: '' });
+ assert.equal(next.fontDarkOn, true);
+ assert.equal(next.fontFollow, true);
+
+ const off = patch(next, { fontFollow: false, fontDarkOn: false });
+ assert.equal(off.fontFollow, false);
+ assert.equal(off.fontDarkOn, false);
+ assert.equal(off.fontDark.text, '#ffffff');
+});
+
+test('resolveDockGlass 把 Dock theme 快照映射到 Clash 三区域并在关闭时回落实底', () => {
+ const on = resolveDockGlass({
+  dockMode: 'glass',
+  appearance: { glass: { enabled: true, cardOp: 30, cardBlur: 18, overlayOp: 50, overlayBlur: 20, controlOp: 40, controlBlur: 10 } },
+ });
+ assert.deepEqual(on, {
+  enabled: true,
+  main: { fill: 30, blur: 18 },
+  overlay: { fill: 50, blur: 20 },
+  control: { fill: 40, blur: 10 },
+ });
+ const off = resolveDockGlass({ dockMode: 'dark', appearance: { glass: { enabled: false, cardOp: 20, cardBlur: 12 } } });
+ assert.deepEqual(off, {
+  enabled: false,
+  main: { fill: 100, blur: 0 },
+  overlay: { fill: 100, blur: 0 },
+  control: { fill: 100, blur: 0 },
+ });
+});

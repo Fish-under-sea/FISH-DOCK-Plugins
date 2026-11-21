@@ -20,6 +20,7 @@ export const GLASS_REGIONS = ['main', 'overlay', 'control'];
 // 数值与 Magpie 的设置 › 外观同一套坐标（main≈content、overlay≈overlay、control≈control）；
 // 让「均衡」在两边看起来一样：主界面要真的透出来，否则等于没开。
 export const GLASS_PRESETS = Object.freeze({
+ follow: null,
  off: {main: [100, 0], overlay: [100, 0], control: [100, 0]},
  light: {main: [82, 12], overlay: [84, 16], control: [86, 10]},
  balanced: {main: [60, 22], overlay: [62, 26], control: [72, 14]},
@@ -32,6 +33,9 @@ export const DEFAULT_APPEARANCE = Object.freeze({
  wallpaper: '',
  veil: 40,
  font: {text: '', dim: ''},
+ fontDark: {text: '', dim: ''},
+ fontDarkOn: false,
+ fontFollow: false,
  glass: {
   preset: 'off',
   main: {fill: 100, blur: 0},
@@ -103,6 +107,9 @@ export function normalize(raw) {
   wallpaper: '',
   veil: 40,
   font: {text: '', dim: ''},
+  fontDark: {text: '', dim: ''},
+  fontDarkOn: false,
+  fontFollow: false,
   glass: {
    preset: 'off',
    main: {...DEFAULT_APPEARANCE.glass.main},
@@ -113,12 +120,17 @@ export function normalize(raw) {
  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
  if (isWallpaper(raw.wallpaper)) out.wallpaper = raw.wallpaper;
  out.font = colorPair(raw.font);
+ out.fontDark = colorPair(raw.fontDark);
+ out.fontDarkOn = raw.fontDarkOn === true;
+ out.fontFollow = raw.fontFollow === true;
  out.veil = clamp(raw.veil, 0, 95, 40);
  const glass = raw.glass && typeof raw.glass === 'object' && !Array.isArray(raw.glass) ? raw.glass : {};
  for (const region of GLASS_REGIONS) out.glass[region] = regionOf(glass[region], out.glass[region]);
- // 预设先认显式值，再按坐标反推：坐标是唯一的真相，预设只是它的名字。
+ // 预设先认显式 follow（跟随 Dock 宿主），再认命名坐标与反推：坐标是唯一的真相，预设只是它的名字。
  const named = GLASS_PRESETS[glass.preset];
- if (named && GLASS_REGIONS.every((r) => out.glass[r].fill === named[r][0] && out.glass[r].blur === named[r][1])) {
+ if (glass.preset === 'follow') {
+  out.glass.preset = 'follow';
+ } else if (named && GLASS_REGIONS.every((r) => out.glass[r].fill === named[r][0] && out.glass[r].blur === named[r][1])) {
   out.glass.preset = glass.preset;
  } else {
   out.glass.preset = presetOf(out.glass);
@@ -128,6 +140,11 @@ export function normalize(raw) {
 
 // withPreset 生成某个预设下的完整外观（保留壁纸与遮挡度）。
 export function withPreset(appearance, name) {
+ if (name === 'follow') {
+  const next = normalize(appearance);
+  next.glass.preset = 'follow';
+  return next;
+ }
  const shape = GLASS_PRESETS[name];
  if (!shape) return appearance;
  const next = normalize(appearance);
@@ -145,8 +162,16 @@ export function patch(appearance, change) {
  if (!change || typeof change !== 'object' || Array.isArray(change)) return next;
  if (change.veil !== undefined) next.veil = clamp(change.veil, 0, 95, next.veil);
  if (change.font !== undefined) next.font = colorPair({...next.font, ...(change.font && typeof change.font === 'object' ? change.font : {})});
+ if (change.fontDark !== undefined) next.fontDark = colorPair({...next.fontDark, ...(change.fontDark && typeof change.fontDark === 'object' ? change.fontDark : {})});
+ if (change.fontDarkOn !== undefined) next.fontDarkOn = change.fontDarkOn === true;
+ if (change.fontFollow !== undefined) next.fontFollow = change.fontFollow === true;
  const g = change.glass && typeof change.glass === 'object' && !Array.isArray(change.glass) ? change.glass : null;
  if (g) {
+  const hasRegion = GLASS_REGIONS.some((r) => g[r] !== undefined);
+  if (g.preset === 'follow' && !hasRegion) {
+   next.glass.preset = 'follow';
+   return next;
+  }
   const named = typeof g.preset === 'string' ? GLASS_PRESETS[g.preset] : null;
   if (named) for (const region of GLASS_REGIONS) {
    if (g[region] === undefined) next.glass[region] = {fill: named[region][0], blur: named[region][1]};
@@ -154,10 +179,25 @@ export function patch(appearance, change) {
   for (const region of GLASS_REGIONS) {
    if (g[region] !== undefined) next.glass[region] = regionOf(g[region], next.glass[region]);
   }
+  // 预设名永远由坐标反推：坐标是唯一的真相，名字只是它的一个标签。
+  next.glass.preset = presetOf(next.glass);
  }
- // 预设名永远由坐标反推：坐标是唯一的真相，名字只是它的一个标签。
- next.glass.preset = presetOf(next.glass);
  return next;
+}
+
+// resolveDockGlass 把 FISH Dock 宿主下发的 theme 快照映射成 Clash 三区域坐标。
+export function resolveDockGlass(dockTheme) {
+ const g = dockTheme?.appearance?.glass;
+ const enabled = !!(g?.enabled || dockTheme?.dockMode === 'glass');
+ if (!enabled) {
+  return {enabled: false, main: {fill: 100, blur: 0}, overlay: {fill: 100, blur: 0}, control: {fill: 100, blur: 0}};
+ }
+ return {
+  enabled: true,
+  main: {fill: clamp(g?.cardOp, 0, 100, 22), blur: clamp(g?.cardBlur, 0, 40, 12)},
+  overlay: {fill: clamp(g?.overlayOp, 0, 100, 45), blur: clamp(g?.overlayBlur, 0, 40, 16)},
+  control: {fill: clamp(g?.controlOp, 0, 100, 28), blur: clamp(g?.controlBlur, 0, 40, 8)},
+ };
 }
 
 // cssVars 把外观摊成 CSS 自定义属性，页面与测试共用同一份换算。

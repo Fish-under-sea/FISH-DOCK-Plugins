@@ -69,6 +69,10 @@
   KERNEL_NOT_SELECTED:'请先选择 mihomo 内核',
   PROXY_STATE_INVALID:'系统代理状态无效',
   PROXY_PORT_INVALID:'代理端口无效',
+  ENV_PROXY_STATE_INVALID:'环境变量代理状态无效',
+  ENV_PROXY_RESTORE_RECORD_INVALID:'环境变量代理恢复记录无效：已自动清理，请检查用户环境变量设置',
+  ENV_PROXY_READ_FAILED:'无法读取用户环境变量代理设置：请检查当前用户对环境变量注册表的读取权限后重试',
+  ENV_PROXY_WRITE_FAILED:'无法写入用户环境变量代理设置：请检查注册表写入权限与安全软件拦截后重试',
   PORT_RANGE_INVALID:'端口应为 1024–65535',
   PORT_CONFLICT:'混合代理和控制器端口应不同',
   NODE_STALE:'代理组或节点已变化，请刷新',
@@ -145,7 +149,7 @@
  function methodLabel(method){
   return {view:'读取状态',save:'保存设置',subscriptionSave:'保存订阅',subscriptionToggle:'切换启用',
    subscriptionRemove:'删除订阅',reload:'更新订阅',start:'启动内核',stop:'停止内核',select:'切换节点',
-   mode:'切换模式',proxy:'系统代理',details:'读取详情',tunService:'读取 TUN 状态',nodeTest:'节点测速',
+   mode:'切换模式',proxy:'系统代理',envProxy:'环境变量代理',details:'读取详情',tunService:'读取 TUN 状态',nodeTest:'节点测速',
    installTunService:'安装 TUN 服务',uninstallTunService:'卸载 TUN 服务',ipInfo:'查询出口 IP',siteTest:'网站测试',
    tunSwitch:'切换 TUN'}[method]??'操作';
  }
@@ -506,6 +510,7 @@
  }
  function networkCard(){
   const system=view.systemProxy===true,tun=view.tun?.enable===true,tunInstalled=view.tunService?.installed===true;
+  const envOn=view.envProxy!==false,envActive=view.envProxyActive===true;
   const opBusy=anyOp()||!!view.operation||view.tunSwitching===true;
   const status=tun
    ?(view.running?'TUN 模式已启用：应用通过虚拟网卡访问网络。':'TUN 开关已勾选，但内核未运行：启动内核后生效，或可先关闭开关。')
@@ -518,6 +523,11 @@
    :!tunInstalled&&!tun?'需先安装 TUN 服务'
    :!view.running&&!tun?'内核未运行，无法开启 TUN 模式':'';
   const tunNote=tunInstalled&&view.running?' · 切换会重启内核':'';
+  const envSub=envActive
+   ?`已写入 HTTP_PROXY / HTTPS_PROXY / NO_PROXY → 127.0.0.1:${view.mixedPort}，停止内核时还原`
+   :envOn
+    ?(view.running?'已开启：将在下次启动或重启内核时生效':'已默认开启，启动内核后自动写入用户环境变量')
+    :'为 AGY / CLI 工具显式写入 HTTP_PROXY、HTTPS_PROXY 与 NO_PROXY';
   return card('网络设置',`<div class="switch-row"><div><strong>系统代理</strong>
     <p class="small muted">${system?'已写入系统代理设置':'由 Dock 写入，停止内核时还原'}</p></div>
     ${button('proxy',system?'关闭':'开启',`role="switch" aria-checked="${system}" title="${esc(proxyReason||'接管系统代理')}"`,opBusy||(!view.running&&!system))}</div>
@@ -526,6 +536,9 @@
     <p class="small muted">${tun?'已启用':'未启用'}${tunNote}</p></div>
     ${button('tun-toggle',view.tunSwitching?'切换中…':tun?'关闭':'开启',`role="switch" aria-checked="${tun}" title="${esc(tunReason||'切换 TUN')}"`,opBusy||!view.configured||(!tunInstalled&&!tun)||(!view.running&&!tun))}</div>
    ${tunReason?`<p class="reason">${esc(tunReason)}</p>`:''}
+   <div class="switch-row"><div><strong>环境变量代理（HTTP_PROXY）</strong>
+    <p class="small muted">${esc(envSub)}</p></div>
+    ${button('env-proxy',envOn?'关闭':'开启',`role="switch" aria-checked="${envOn}" title="为 AGY / CLI 工具写入用户环境变量 HTTP_PROXY / HTTPS_PROXY / NO_PROXY"`,opBusy)}</div>
    <p class="status-line">${esc(status)}</p>`);
  }
  function modeCard(){
@@ -652,14 +665,44 @@
    </fieldset>
    <div class="save-bar">${button('save-config','保存内核配置','',formLocked||ops.has('save'))}</div></form>`;
  }
- // ── 外观：背景图片 + 分区域液态玻璃 ──
+ // ── 外观：背景图片 + 分区域液态玻璃 + 字体颜色 ──
  // look 与 view 分开：外观是界面偏好，不是内核状态，所以它不随 clash.view 的轮询回传，
  // 内核没起来时也能调；轮询只改 data-live 节点，不会重绘这里，滑块拖动期间不会被拉回。
- // 三个区域与 appearance.mjs 的 GLASS_REGIONS 同源；不透明度 100% + 模糊 0 就是原来的实底，
- // 所以「关闭」不需要额外开关，也不需要给页面加 on/off 属性。
- const GLASS_PRESETS={off:'关闭',light:'轻透',balanced:'均衡',clear:'全透',custom:'自定义'};
- const GLASS_REGIONS=[['main','卡片','概览卡、订阅卡、TUN 框与确认条'],['overlay','浮层','下拉列表与撤销条'],['control','控件','按钮、输入框与下拉']]
+ // 三个区域与 appearance.mjs 的 GLASS_REGIONS 同源；「跟随」对接 FISH Dock 宿主玻璃/字体 Hook。
+ const GLASS_PRESETS={follow:'跟随',off:'关闭',light:'轻透',balanced:'均衡',clear:'全透',custom:'自定义'};
+ const GLASS_REGIONS=[['main','卡片','概览卡、订阅卡、TUN 框与确认条'],['overlay','浮层','下拉列表与撤销条'],['control','控件','按钮、输入框与下拉']];
+ const clampNum=(v,lo,hi,fb)=>{const n=Number(v);return Number.isFinite(n)?Math.min(hi,Math.max(lo,Math.round(n))):fb};
  let look=null,lookErr='',lookSeq=0;
+ let dockTheme=typeof FishDock!=='undefined'?FishDock?.theme?.current?.()??null:null;
+ if(typeof FishDock!=='undefined'&&typeof FishDock?.theme?.onChange==='function'){
+  FishDock.theme.onChange(t=>{
+   dockTheme=t;
+   applyLook();
+   if(section==='appearance'&&(look?.glass?.preset==='follow'||look?.fontFollow||look?.fontDarkOn))draw();
+  });
+ }
+ if(typeof MutationObserver==='function'&&document.documentElement&&typeof document.documentElement.getAttribute==='function'){
+  try{
+   new MutationObserver(()=>{applyLook()}).observe(document.documentElement,{attributes:true,attributeFilter:['data-dock-theme','data-dock-glass','data-dock-mode']});
+  }catch{}
+ }
+ function resolvedDockGlass(){
+  const ds=document.documentElement?.dataset;
+  const g=dockTheme?.appearance?.glass;
+  const enabled=!!(g?.enabled||dockTheme?.dockMode==='glass'||ds?.dockGlass==='1');
+  if(!enabled)return {enabled:false,main:{fill:100,blur:0},overlay:{fill:100,blur:0},control:{fill:100,blur:0}};
+  return {
+   enabled:true,
+   main:{fill:clampNum(g?.cardOp,0,100,22),blur:clampNum(g?.cardBlur,0,40,12)},
+   overlay:{fill:clampNum(g?.overlayOp,0,100,45),blur:clampNum(g?.overlayBlur,0,40,16)},
+   control:{fill:clampNum(g?.controlOp,0,100,28),blur:clampNum(g?.controlBlur,0,40,8)}
+  };
+ }
+ function activeFontPair(a){
+  if(!a||a.fontFollow)return {text:'',dim:''};
+  const isDark=document.documentElement?.dataset?.dockTheme!=='light';
+  return (a.fontDarkOn&&isDark)?(a.fontDark||{}):(a.font||{});
+ }
  async function loadLook(){
   const seq=++lookSeq;
   try{const next=await FishDock.call('clash.appearance');if(seq!==lookSeq)return;look=next;lookErr='';applyLook();if(section==='appearance')draw()}
@@ -668,19 +711,38 @@
  // applyLook 只写 CSS 变量：不重建 DOM，所以拖动滑块时是连续的画面，不是一帧一帧重绘。
  function applyLook(){
   const a=look;if(!a)return;
-  const style=document.documentElement.style;
-  style.setProperty('--g-veil',`${a.veil}%`);
-  style.setProperty('--g-wall',a.wallpaper?`url("${a.wallpaper}")`:'none');
-  document.body.toggleAttribute('data-has-wall',!!a.wallpaper);
-  // 字体颜色两档：留空就交回宿主主题（--dock-text / --dock-muted）
-  const fb=document.body.style;
-  const pair=[['--dock-text',a.font?.text],['--dock-muted',a.font?.dim]];
-  for(const [k,v] of pair){ if(v) fb.setProperty(k,v); else fb.removeProperty(k); }
-  for(const [id] of GLASS_REGIONS){
-   const blur=a.glass[id].blur;
-   style.setProperty(`--g-${id}-fill`,`${a.glass[id].fill}%`);
-   style.setProperty(`--g-${id}-blur`,`${blur}px`);
-   style.setProperty(`--g-${id}-filter`,blur>0?`blur(${blur}px) saturate(190%) brightness(1.06) contrast(1.03)`:'none');
+  const docEl=document.documentElement,style=docEl?.style;
+  if(style){
+   style.setProperty('--g-veil',`${a.veil}%`);
+   style.setProperty('--g-wall',a.wallpaper?`url("${a.wallpaper}")`:'none');
+  }
+  document.body?.toggleAttribute?.('data-has-wall',!!a.wallpaper);
+  // 字体颜色：跟随 Dock 宿主或留空交回宿主主题（--dock-text / --dock-muted）
+  const fb=document.body?.style;
+  if(fb){
+   if(a.fontFollow){
+    fb.removeProperty('--dock-text');fb.removeProperty('--dock-muted');
+   }else{
+    const activePair=activeFontPair(a);
+    for(const [k,v] of [['--dock-text',activePair.text],['--dock-muted',activePair.dim]]){
+     if(v)fb.setProperty(k,v);else fb.removeProperty(k);
+    }
+   }
+  }
+  const following=a.glass?.preset==='follow';
+  const dockG=following?resolvedDockGlass():null;
+  if(docEl?.dataset){
+   if(following&&dockG.enabled&&!a.wallpaper)docEl.dataset.followDockGlass='1';
+   else delete docEl.dataset.followDockGlass;
+  }
+  if(style){
+   for(const [id] of GLASS_REGIONS){
+    const region=following?dockG[id]:a.glass[id];
+    const blur=region.blur;
+    style.setProperty(`--g-${id}-fill`,`${region.fill}%`);
+    style.setProperty(`--g-${id}-blur`,`${blur}px`);
+    style.setProperty(`--g-${id}-filter`,blur>0?`blur(${blur}px) saturate(190%) brightness(1.06) contrast(1.03)`:'none');
+   }
   }
  }
  function paintLookPresets(){
@@ -692,12 +754,12 @@
   }
  }
  // 字体颜色一行：左名称，右色块 + 十六进制 + 清除（留空即跟随主题）。
- function fontRow(key,label,value){
+ function fontRow(group,key,label,value){
   const v=typeof value==='string'&&/^#[0-9a-f]{6}$/.test(value)?value:'';
   return `<div class="fc-row"><span class="fc-name">${label}</span>
-   <span class="fc-right"><input type="color" class="fc-input" data-fc-key="${key}" value="${v||'#f5f5f7'}" aria-label="${label}">
-   <code class="fc-hex" data-fc-hex="${key}">${v||'跟随主题'}</code>
-   ${v?`<button type="button" class="text fc-clear" data-action="fc-clear" data-fc-key="${key}">清除</button>`:''}</span></div>`;
+   <span class="fc-right"><input type="color" class="fc-input" data-fc-group="${group}" data-fc-key="${key}" value="${v||'#f5f5f7'}" aria-label="${label}">
+   <code class="fc-hex" data-fc-hex="${group}-${key}">${v||'跟随主题'}</code>
+   ${v?`<button type="button" class="text fc-clear" data-action="fc-clear" data-fc-group="${group}" data-fc-key="${key}">清除</button>`:''}</span></div>`;
  }
  function lookRange(key,region,value,min,max,unit,label){
   const out=unit==='%'?`${value}%`:`${value}px`;
@@ -714,8 +776,9 @@
   const active=a.glass.preset;
   const presets=Object.entries(GLASS_PRESETS).map(([id,label])=>
    `<button type="button" data-action="look-preset" data-preset="${id}" aria-pressed="${active===id}"${id==='custom'&&active!=='custom'?' disabled title="拖动下面的滑块即成为自定义"':''}>${label}</button>`).join('');
+  const effectiveGlass=active==='follow'?resolvedDockGlass():a.glass;
   const regions=GLASS_REGIONS.map(([id,label,hint])=>{
-   const r=a.glass[id];
+   const r=effectiveGlass[id]||a.glass[id];
    return `<div class="look-region" data-region="${id}">
     <div class="look-region-head"><strong>${label}</strong><span class="muted small">${hint}</span></div>
     ${lookRange(`${id}-fill`,id,r.fill,0,100,'%','不透明度')}
@@ -723,6 +786,26 @@
    </div>`;
   }).join('');
   const wall=a.wallpaper?`<img class="look-thumb" src="${a.wallpaper}" alt="当前背景图片">`:'<span class="muted small">未设置</span>';
+  const fontModeRow=`<div class="fc-row"><span class="fc-name">颜色模式</span>
+   <div class="segmented" role="group" aria-label="字体颜色模式">
+    <button type="button" data-action="fc-follow" data-follow="true" aria-pressed="${!!a.fontFollow}">跟随</button>
+    <button type="button" data-action="fc-follow" data-follow="false" aria-pressed="${!a.fontFollow}">自定义</button>
+   </div></div>`;
+  let fontBody='';
+  if(a.fontFollow){
+   fontBody='<p class="fc-hint">当前跟随 FISH Dock 宿主字体颜色设置。</p>';
+  }else{
+   fontBody=`<div class="fc-row"><span class="fc-name">深色单独设置</span>
+    <div class="segmented" role="group" aria-label="深色单独设置">
+     <button type="button" data-action="fc-dark-on" data-dark-on="false" aria-pressed="${!a.fontDarkOn}">关闭</button>
+     <button type="button" data-action="fc-dark-on" data-dark-on="true" aria-pressed="${!!a.fontDarkOn}">开启</button>
+    </div></div>
+    ${fontRow('font','text','正文',a.font?.text)}
+    ${fontRow('font','dim','次要文字',a.font?.dim)}
+    ${a.fontDarkOn?`<p class="fc-split-head">深色</p>
+    ${fontRow('fontDark','text','正文',a.fontDark?.text)}
+    ${fontRow('fontDark','dim','次要文字',a.fontDark?.dim)}`:''}`;
+  }
   return `<h2>外观</h2>
   <p class="muted">只影响 Clash 面板自己的画面，不写进内核配置，内核运行中也能改。</p>
   ${lookErr?`<p class="banner bad" role="alert">${esc(lookErr)}</p>`:''}
@@ -738,14 +821,14 @@
     <p class="muted small">遮挡越高，壁纸越淡、文字越清楚；0 是完全不遮。</p>
    </section>
    <section class="look-card"><h3>液态玻璃</h3>
-    <p class="muted small">按区域单独调：不透明度 100% 且模糊 0 就是原来的实底。不支持背景模糊的环境会自动回到实底。</p>
+    <p class="muted small">支持一键「跟随」Dock 玻璃，或按区域单独调；不透明度 100% 且模糊 0 就是原来的实底。</p>
     <div class="segmented look-presets" role="group" aria-label="液态玻璃预设">${presets}</div>
+    ${active==='follow'?'<p class="fc-hint">当前跟随 FISH Dock 宿主玻璃设置；拖动下方滑块将切换为自定义。</p>':''}
     ${regions}
    </section>
    <section class="look-card"><h3>字体颜色</h3>
-    <p class="muted small">留空就跟随 Dock 主题；只影响 Clash 面板自己的文字。</p>
-    ${fontRow('text','正文',a.font?.text)}
-    ${fontRow('dim','次要文字',a.font?.dim)}
+    <p class="muted small">支持「跟随」Dock 主题，或自定义浅色/深色两套配色；只影响 Clash 面板自己的文字。</p>
+    ${fontModeRow}${fontBody}
    </section>
   </div>
 `;
@@ -838,12 +921,16 @@
  function bindLook(){
   // 字体颜色：拖动即时改（写 CSS 变量），松手才落盘；清除 = 交回主题。
   for(const input of root.querySelectorAll('[data-fc-key]')){
-   const k=input.dataset.fcKey;
+   const group=input.dataset.fcGroup||'font',k=input.dataset.fcKey;
+   const isDark=document.documentElement?.dataset?.dockTheme!=='light';
+   const activeGroup=look?.fontDarkOn&&isDark?'fontDark':'font';
    input.oninput=()=>{
-    document.body.style.setProperty(k==='text'?'--dock-text':'--dock-muted',input.value);
-    const hex=root.querySelector(`[data-fc-hex="${k}"]`);if(hex)hex.textContent=input.value;
+    if(!look?.fontFollow&&group===activeGroup){
+     document.body?.style?.setProperty?.(k==='text'?'--dock-text':'--dock-muted',input.value);
+    }
+    const hex=root.querySelector(`[data-fc-hex="${group}-${k}"]`);if(hex)hex.textContent=input.value;
    };
-   input.onchange=()=>{void commitLook({font:{[k]:input.value}})};
+   input.onchange=()=>{void commitLook({[group]:{[k]:input.value}})};
   }
   const file=root.querySelector('#look-wall-file');
   if(file)file.onchange=()=>{if(readWallpaperFile(file.files?.[0]))file.value=''};
@@ -851,22 +938,26 @@
    const key=input.dataset.look,region=input.dataset.region;
    const out=root.querySelector(`[data-look-out="${key}"]`);
    input.oninput=()=>{
-    const v=Number(input.value),style=document.documentElement.style;
-    if(key==='veil')style.setProperty('--g-veil',`${v}%`);
-    else if(key.endsWith('-fill'))style.setProperty(`--g-${region}-fill`,`${v}%`);
-    else style.setProperty(`--g-${region}-blur`,`${v}px`);
+    const v=Number(input.value),style=document.documentElement?.style;
+    if(key==='veil')style?.setProperty('--g-veil',`${v}%`);
+    else if(key.endsWith('-fill'))style?.setProperty(`--g-${region}-fill`,`${v}%`);
+    else{
+     style?.setProperty(`--g-${region}-blur`,`${v}px`);
+     style?.setProperty(`--g-${region}-filter`,v>0?`blur(${v}px) saturate(190%) brightness(1.06) contrast(1.03)`:'none');
+    }
     if(out)out.textContent=key.endsWith('-blur')?`${v}px`:`${v}%`;
    };
    input.onchange=()=>{
     const change={};
     for(const sl of root.querySelectorAll('[data-look]')){
-     const k=sl.dataset.look,r=sl.dataset.region,v=Number(sl.value);
+     const k=sl.dataset.look,v=Number(sl.value);
      if(k==='veil')change.veil=v;
      else{change.glass=change.glass||{};const id=k.replace(/-(fill|blur)$/,'');
       change.glass[id]=change.glass[id]||{...look.glass[id]};
       change.glass[id][k.endsWith('-fill')?'fill':'blur']=v;}
     }
-    void commitLook(change);
+    const wasFollow=look?.glass?.preset==='follow';
+    void commitLook(change).then(ok=>{if(ok&&wasFollow)draw()});
    };
   }
  }
@@ -892,6 +983,7 @@
   const gs=(view.groups??[]).map(g=>g.name+'='+g.selected+':'+g.nodes.map(n=>n.name).join(',')).join('|');
   const ipState=ip?(ip.available===false?'na':'have'):(ipError?'err':'none');
   return [section,view.running,view.operation,view.tunSwitching,view.configured,view.mode,!!view.systemProxy,
+   !!view.envProxy,!!view.envProxyActive,
    view.tun?.enable,view.tun?.stack,view.tunService?.installed,view.tunService?.state,subs,gs,confirmTun,
    draft.id,activeSub,ipState,!!sites,anyOp(),nodeTesting].join('§');
  }
@@ -1061,6 +1153,11 @@
   const prev=view.systemProxy;
   return optimistic('proxy',{enabled},()=>{view.systemProxy=enabled},()=>{view.systemProxy=prev},'系统代理');
  }
+ function setEnvProxy(enabled){
+  if(anyOp()||!!view?.operation||view?.tunSwitching)return false;
+  const prev=view.envProxy;
+  return optimistic('envProxy',{enabled},()=>{view.envProxy=enabled},()=>{view.envProxy=prev},'环境变量代理');
+ }
  async function toggleSub(id,next){
   const row=view?.subscriptions?.find(s=>s.id===id);
   if(!row||subEditLocked()||anyOp())return false;
@@ -1125,6 +1222,7 @@
    if(a==='ip-cancel'){cancelOp('ip');return}
    if(a==='stop-inline')return run('stop');
    if(a==='proxy')return setProxy(!view.systemProxy);
+   if(a==='env-proxy')return setEnvProxy(view.envProxy===false);
    if(a==='tun-toggle')return toggleTun();
    if(a==='mode-set')return changeMode(b.dataset.mode);
    if(a==='site-test')return testSites();
@@ -1147,9 +1245,19 @@
    if(a==='tun-uninstall-yes'){confirmTun='';return run('uninstallTunService')}
    if(a==='tun-refresh')return run('tunService');
    // 外观：预设即刻落盘并整页重画（按钮与滑块都要跟着坐标走）；滑块只在松手时落盘。
+   if(a==='fc-follow'){
+    const follow=b.dataset.follow==='true';
+    void commitLook({fontFollow:follow}).then(()=>draw());
+    return false;
+   }
+   if(a==='fc-dark-on'){
+    const darkOn=b.dataset.darkOn==='true';
+    void commitLook({fontDarkOn:darkOn}).then(()=>draw());
+    return false;
+   }
    if(a==='fc-clear'){
-    const k=b.dataset.fcKey;
-    void commitLook({font:{[k]:''}}).then(()=>draw());
+    const group=b.dataset.fcGroup||'font',k=b.dataset.fcKey;
+    void commitLook({[group]:{[k]:''}}).then(()=>draw());
     return false;
    }
    if(a==='look-preset'){
