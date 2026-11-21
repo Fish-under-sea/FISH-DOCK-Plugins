@@ -10,7 +10,7 @@ GitHub 会过滤 README 内的自定义 CSS 和字体，因此 README 通过 `<p
 node tools/render-readme.mjs
 ```
 
-脚本使用独立临时资料目录启动 Microsoft Edge，不操作日用浏览器。`EDGE_BINARY` 可指定现有 Edge 路径。输出为 `config-hero-zh-{light,dark}.png` 和四组 `config-stat-*-zh-{light,dark}.png`，同时记录 [header-metadata.json](header-metadata.json)。
+脚本使用独立临时资料目录启动 Microsoft Edge，不操作日用浏览器。`EDGE_BINARY` 可指定现有 Edge 路径。输出为中英双语的 `config-hero-{zh,en}-{light,dark}.png`、`config-stat-*-{zh,en}-{light,dark}.png` 与英文按钮图，同时记录 [header-metadata.json](header-metadata.json)。
 
 - 头图：1448 × 575。
 - 四张卡片：统一 357 × 189，README 中均为 `width="23%"`。

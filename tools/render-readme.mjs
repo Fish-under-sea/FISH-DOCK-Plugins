@@ -48,7 +48,7 @@ try {
   await call('Page.enable');await call('Runtime.enable')
   await call('Emulation.setDeviceMetricsOverride',{width:2200,height:1300,deviceScaleFactor:1,mobile:false})
   await call('Emulation.setDefaultBackgroundColorOverride',{color:{r:0,g:0,b:0,a:0}})
-  for(const lang of ['zh'])for(const theme of ['light','dark']){
+  for(const lang of ['zh','en'])for(const theme of ['light','dark']){
     await call('Page.navigate',{url:pathToFileURL(path.join(assets,'header.html')).href+`?lang=${lang}&theme=${theme}&variant=${encodeURIComponent(heroVariant)}&version=${encodeURIComponent(catalogVersion)}&lzh=${encodeURIComponent(versionInfo.zh)}&len=${encodeURIComponent(versionInfo.en)}`})
     await until(()=>evaluate(`document.readyState==='complete' && document.documentElement.lang==='${lang==='en'?'en':'zh-CN'}' && document.documentElement.dataset.theme==='${theme}'`))
     await evaluate('document.fonts.ready.then(()=>true)')
@@ -57,8 +57,10 @@ try {
     assert.ok(await evaluate("document.querySelector('h1').scrollWidth<=document.querySelector('h1').clientWidth"),'标题溢出')
     assert.ok(await evaluate("[...document.querySelectorAll('.pane')].every(p=>p.getBoundingClientRect().bottom<=document.querySelector('.window').getBoundingClientRect().bottom-15)"),'内容面板越过外框留白')
     assert.ok(await evaluate("[...document.querySelectorAll('.metric-value')].every(p=>{const r=p.getBoundingClientRect(),n=p.querySelector('.number').getBoundingClientRect(),l=p.querySelector('.metric-label').getBoundingClientRect();return n.right<r.right&&l.right<r.right&&l.bottom<r.bottom&&n.bottom<=l.top+1})"),'状态块内容溢出或重叠')
-    for(const id of ['hero','stat-version','stat-desktop','stat-mail','stat-channels','key-start']){
-      if(lang==='en'&&['key-zh','key-en'].includes(id))continue
+    const ids=lang==='en'
+      ? ['hero','stat-version','stat-desktop','stat-mail','stat-channels','key-zh','key-en','key-start','key-download','key-release','key-issues']
+      : ['hero','stat-version','stat-desktop','stat-mail','stat-channels','key-start']
+    for(const id of ids){
       const clip=await evaluate(`(()=>{const r=document.getElementById('${id}').getBoundingClientRect();return {x:Math.max(0,r.x-4),y:Math.max(0,r.y-4),width:r.width+8,height:r.height+15,scale:1}})()`)
       const image=await call('Page.captureScreenshot',{format:'png',clip,captureBeyondViewport:true})
       const file=`${outputPrefix}${id}-${lang}-${theme}.png`,bytes=Buffer.from(image.data,'base64')

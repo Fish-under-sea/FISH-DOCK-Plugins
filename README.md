@@ -2,7 +2,7 @@
 
 <p>
   <a href="README.md"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-zh-zh-dark.png"><img src="assets/readme/key-zh-zh-light.png" alt="中文" height="40"></picture></a>
-  <a href="https://github.com/Fish-under-sea/FISH-Dock/blob/main/README.en.md"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-en-zh-dark.png"><img src="assets/readme/key-en-zh-light.png" alt="English" height="40"></picture></a>
+  <a href="README.en.md"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-en-zh-dark.png"><img src="assets/readme/key-en-zh-light.png" alt="English" height="40"></picture></a>
   <a href="docs/developers/README.md"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/key-start-zh-dark.png"><img src="assets/readme/key-start-zh-light.png" alt="开发者指南" height="40"></picture></a>
 </p>
 
@@ -153,7 +153,7 @@ node --test --test-isolation=none 'plugins/feishu/*.test.mjs' 'plugins/clash/*.t
 
 整个 Magpie 插件的地基。供应商注册、页面与面板桥、签到与额度读取、网关路由，全部是上游的代码；本仓写着「Magpie 插件」的那层，实际上只是它的适配层、页面与发布工具。
 
-本仓发布的 `magpie.fish-plugin` 走的是**其源码自编译**：基线上游 tag（当前 `v0.1.4530`），加上 `patches/` 里我们自己的累计补丁（当前累计至 `fish.49`：追平上游 `v0.1.4530` 并重扫 163 条液态玻璃表面规则，延续 `fish.48` 全页面液态玻璃与自定义字体调色命中、Obsidian 记忆 Agent 与紫色晶石图标、`magpie.call` 通道与本地素材接管等增强）。补丁的每一处、为什么补、怎么复现，都写在 [plugins/magpie/tools/README.md](plugins/magpie/tools/README.md) 里。上游的版本标识与第三方声明随包保留（`licenses/Magpie.txt`）。
+本仓发布的 `magpie.fish-plugin` 走的是**其源码自编译**：基线上游 tag（当前 `v0.1.4650`），加上 `patches/` 里我们自己的累计补丁（当前累计至 `fish.50`：追平上游 `v0.1.4650` 并重扫 165 条液态玻璃表面规则，新增 Dock 液态玻璃与字体「跟随」联动、玻璃模式下顶部服务条自动透明并收敛强调色对玻璃底色的染色，延续全页面液态玻璃与自定义字体调色命中、Obsidian 记忆 Agent 与紫色晶石图标、`magpie.call` 通道与本地素材接管等增强）。补丁的每一处、为什么补、怎么复现，都写在 [plugins/magpie/tools/README.md](plugins/magpie/tools/README.md) 里。上游的版本标识与第三方声明随包保留（`licenses/Magpie.txt`）。
 
 ### [mihomo](https://github.com/MetaCubeX/mihomo) · Clash 内核
 

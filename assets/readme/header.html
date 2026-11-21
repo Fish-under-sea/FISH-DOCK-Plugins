@@ -58,11 +58,11 @@ h1{margin:0;font-size:124px;line-height:1.12;height:140px;white-space:nowrap}
 <div class="window frame">
 <div class="titlebar"><span class="lights"><i></i><i></i><i></i></span><span class="system-name pixel">FISH // PLUGINS &amp; CONFIGURATION</span><i class="vent"></i><i class="lamp"></i></div>
 <div class="panes">
-<div class="pane copy"><p class="kicker"><i></i><span id="kicker">插件配置仓 · 按需安装</span></p>
+<div class="pane copy"><p class="kicker"><i></i><span id="kicker" data-zh="插件配置仓 · 按需安装" data-en="PLUGINS &amp; CONFIG · ON-DEMAND">插件配置仓 · 按需安装</span></p>
 <h1 class="pixel">FISH PLUGINS</h1><span class="product pixel">PLUGINS + CONFIGURATION</span>
 <div class="rule"><i></i><i></i><i></i></div>
-<p id="tagline" class="tagline">官方插件、配置说明与版本下载</p>
-<p id="translation" class="translation pixel">Official plugins. Config guides. Release packages.</p>
+<p id="tagline" class="tagline" data-zh="官方插件、配置说明与版本下载" data-en="Official plugins, guides &amp; releases">官方插件、配置说明与版本下载</p>
+<p id="translation" class="translation pixel" data-zh="Official plugins. Config guides. Release packages." data-en="Install on demand. Isolated per plugin.">Official plugins. Config guides. Release packages.</p>
 <div class="chips pixel"><span>WINDOWS X64</span><span>HOST API 1</span><span>NPM PACKAGES</span></div>
 </div>
 <div class="pane portrait"><img id="portrait" src="DSH-model-broker.png" width="360" height="360" alt="插件配置仓吉祥物"></div>
@@ -82,9 +82,14 @@ h1{margin:0;font-size:124px;line-height:1.12;height:140px;white-space:nowrap}
 </div>
 <script>
 const params=new URLSearchParams(location.search);
+const isEn=params.get('lang')==='en';
 document.documentElement.dataset.theme=params.get('theme')==='dark'?'dark':'light';
-document.documentElement.lang='zh-CN';
-for(const el of document.querySelectorAll('[data-zh]'))el.textContent=el.dataset.zh;
+document.documentElement.lang=isEn?'en':'zh-CN';
+for(const el of document.querySelectorAll(isEn?'[data-en]':'[data-zh]'))el.textContent=isEn?el.dataset.en:el.dataset.zh;
+if(isEn){
+  document.getElementById('key-zh')?.classList.remove('green');
+  document.getElementById('key-en')?.classList.add('green');
+}
 // 版本号由渲染器从 catalog/stable.json 传入（?version=），不在这里写死：
 // 之前硬编码 2.1.0，发 2.1.2 时文档改了、图片还挂在旧版本上。
 {
