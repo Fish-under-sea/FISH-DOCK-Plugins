@@ -37,17 +37,12 @@
 
 当前发行（以 `catalog/stable.json` 为唯一权威）：Magpie **2.5.0**（要求 FISH Dock ≥ 2.3.4）、Clash **2.5.0**（内置 mihomo 1.19.34，要求 FISH Dock ≥ 2.0.0）、飞书 **2.2.0**；详见 [2.5.0 发行说明](docs/releases/2.5.0.md) 。
 
-**最近版本**（完整更新见 [docs/releases](docs/releases) ）
+**最近版本**（仅展示最近 3 版；完整历史见 [历史发行说明](docs/releases) 与 [GitHub Releases](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases) ）
 
-- **2.5.0** · Magpie 追平上游、接入 Dock 玻璃/字体跟随并透明顶栏；Clash 升级 mihomo 1.19.34、新增环境变量代理与深色字体设置。→ [说明](docs/releases/2.5.0.md)
-- **2.4.9** · Magpie 追平上游与玻璃覆盖重扫；Clash 修复沙箱 CSP 下壁纸上传失败。→ [说明](docs/releases/2.4.9.md)
-- **2.4.8** · Magpie 清理遮罩与统一卡片玻璃；Clash 重构分流规则、DNS 与 GitHub 代理组。→ [说明](docs/releases/2.4.8.md)
-- **2.4.7** · Magpie 补全全站玻璃与字体调色；Clash 修复 TUN 竞态与设置页排版。→ [说明](docs/releases/2.4.7.md)
-- **2.4.6** · Magpie 追平上游并收敛 Obsidian 记忆体验；Clash 补全提示条玻璃胶囊。→ [说明](docs/releases/2.4.6.md)
-- **2.4.5** · Magpie 纳入统一工作区记忆 Agent 并解耦玻璃色；Clash 修复 TUN 恢复与玻璃样式。→ [说明](docs/releases/2.4.5.md)
-- **2.4.4** · Magpie 修复壁纸遮挡与玻璃表生成；Clash 适配 2 MiB 壁纸传输上限。→ [说明](docs/releases/2.4.4.md)
-- **2.4.3 / 2.4.2 / 2.4.1 / 2.4.0** · 外观独立分页、四区域液态玻璃、壁纸压缩与 Clash 外观页。→ [2.4.3](docs/releases/2.4.3.md) · [2.4.2](docs/releases/2.4.2.md) · [2.4.1](docs/releases/2.4.1.md) · [2.4.0](docs/releases/2.4.0.md)
-- **2.3.x 及更早** · 见 [docs/releases](docs/releases) 。
+- **2.5.0** · Magpie（`v0.1.4650+fish.50`）追平上游并重扫 165 条玻璃表面规则，接入 Dock 液态玻璃与字体「跟随」联动，玻璃模式下顶部服务条自动透明并收敛强调色对玻璃底色的染色；Clash 内置 mihomo 升级至 `v1.19.34`，新增显式环境变量代理开关（`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` 及看门狗租约还原），同步接入 Dock「跟随」并补齐深色字体单独设置。→ [说明](docs/releases/2.5.0.md)
+- **2.4.9** · Magpie（`v0.1.4530+fish.49`）追平上游并重扫 163 条液态玻璃表面规则；Clash 修复严格沙箱 CSP 下壁纸上传失败问题（改用 `createImageBitmap` 与 `FileReader` 兜底），拆分格式、解码与超限报错文案。→ [说明](docs/releases/2.4.9.md)
+- **2.4.8** · Magpie（`v0.1.4344+fish.48`）清理供应商遮罩与节点黑圈、统一全站卡片与模型胶囊液态玻璃并同步实时审阅计数；Clash 重构双模式 DNS/Sniffer 与分流规则，独立 GitHub/npm 代理组、过滤订阅伪节点并拦截海外 QUIC。→ [说明](docs/releases/2.4.8.md)
+- **2.4.7 及更早** · 见 [历史发行说明](docs/releases) 与 [GitHub Releases](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases) （`docs/releases/` 历史原文全部完整保留）。
 
 > ⚠️ **2.0.0 是 breaking 版本**：插件清单新增 `behaviors` 字段，FISH Dock 1.2.3 及更早的宿主用 `deny_unknown_fields` 解析，会以「plugin.json 格式无效或含未知字段」直接拒装。**旧宿主请先把 Dock 升到 2.0.0**，再安装这些插件。
 
