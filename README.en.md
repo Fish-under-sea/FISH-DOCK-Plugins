@@ -12,18 +12,18 @@
 </picture>
 
 <p>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.5.0"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-en-dark.png"><img src="assets/readme/config-stat-version-en-light.png" alt="VERSION: 2.5.0 (Magpie, Clash)" width="23%"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.5.1"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-version-en-dark.png"><img src="assets/readme/config-stat-version-en-light.png" alt="VERSION: 2.5.1 (Clash 2.5.1 / Magpie 2.5.0)" width="23%"></picture></a>
   <a href="#plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-desktop-en-dark.png"><img src="assets/readme/config-stat-desktop-en-light.png" alt="PLUGINS: 3 independent plugins" width="23%"></picture></a>
   <a href="#packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-mail-en-dark.png"><img src="assets/readme/config-stat-mail-en-light.png" alt="PACKAGES: 3 npm single packages" width="23%"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-Dock"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-stat-channels-en-dark.png"><img src="assets/readme/config-stat-channels-en-light.png" alt="HOST API: 1, FISH Dock 2.0.0+" width="23%"></picture></a>
 </p>
 
-<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="Adapter License MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="Bundled mihomo License GPL-3.0"> <img src="https://img.shields.io/badge/Plugins-2.5.0-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="Magpie 2.5.0 &amp; Clash 2.5.0"></p>
+<p><img src="https://img.shields.io/badge/Node.js-24.14%2B-8fd6a0?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white&amp;labelColor=5a544a" alt="Node.js 24.14+"> <img src="https://img.shields.io/badge/Adapter%20License-MIT-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="Adapter License MIT"> <img src="https://img.shields.io/badge/mihomo-GPL--3.0-f08a5d?style=flat-square&amp;labelColor=5a544a" alt="Bundled mihomo License GPL-3.0"> <img src="https://img.shields.io/badge/Clash-2.5.1-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="Clash 2.5.1"> <img src="https://img.shields.io/badge/Magpie-2.5.0-8fd6a0?style=flat-square&amp;labelColor=5a544a" alt="Magpie 2.5.0"></p>
 <p><strong>FISH Plugins &amp; Configuration</strong><br>Official FISH Dock plugins, configuration guides, and release packages; install on demand, isolated per plugin.</p>
 
 <p>
   <a href="#get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-key-download-en-dark.png"><img src="assets/readme/config-key-download-en-light.png" alt="Downloads" height="40"></picture></a>
-  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.5.0"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-key-release-en-dark.png"><img src="assets/readme/config-key-release-en-light.png" alt="Changelog" height="40"></picture></a>
+  <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/tag/v2.5.1"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-key-release-en-dark.png"><img src="assets/readme/config-key-release-en-light.png" alt="Changelog" height="40"></picture></a>
   <a href="https://github.com/Fish-under-sea/FISH-DOCK-Plugins/issues"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/config-key-issues-en-dark.png"><img src="assets/readme/config-key-issues-en-light.png" alt="Issues" height="40"></picture></a>
 </p>
 
@@ -35,18 +35,18 @@ This repository hosts the three official plugins for FISH Dock along with config
 
 Each plugin stores its configuration and credentials in an isolated namespace, starts on demand, and never shares secrets across plugins. This repository publishes plugin packages only; desktop installers live in [FISH-Dock](https://github.com/Fish-under-sea/FISH-Dock).
 
-Current release (`catalog/stable.json` is the single source of truth): Magpie **2.5.0** (requires FISH Dock ≥ 2.3.4), Clash **2.5.0** (bundles mihomo 1.19.34, requires FISH Dock ≥ 2.0.0), and Feishu **2.2.0**; see [2.5.0 Release Notes](docs/releases/2.5.0.md).
+Current release (`catalog/stable.json` is the single source of truth): Clash **2.5.1** (bundles mihomo 1.19.34, requires FISH Dock ≥ 2.0.0), Magpie **2.5.0** (requires FISH Dock ≥ 2.3.4), and Feishu **2.2.0**; see [2.5.1 Release Notes](docs/releases/2.5.1.md).
 
 **Recent Releases** (showing the latest 3 releases; full history in [Release Notes](docs/releases) and [GitHub Releases](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases))
 
+- **2.5.1** · Clash patch release: fixes `mihomo v1.19+` `proxy-providers` latency test timeouts (merges `/providers/proxies` and routes checks through `healthcheck`), defaults `envProxy` to `tun.enable` with automatic restore across TUN switches/uninstall/stop/service exits, and redesigns the Overview Network Settings alignment plus Proxy Mode live routing card. → [Notes](docs/releases/2.5.1.md)
 - **2.5.0** · Magpie (`v0.1.4650+fish.50`) catches up with upstream and refreshes 165 liquid-glass surface rules, adds Dock glass/font "Follow" hook integration, makes the top service bar transparent in glass mode, and stops accent color from tinting glass panels; Clash upgrades bundled mihomo to `v1.19.34`, adds an explicit user environment-proxy toggle (`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` with watchdog lease restore), connects Dock "Follow" glass/font modes, and adds separate dark-mode font colors. → [Notes](docs/releases/2.5.0.md)
 - **2.4.9** · Magpie (`v0.1.4530+fish.49`) catches up with upstream and refreshes 163 liquid-glass surface rules; Clash fixes strict sandbox CSP wallpaper upload failures (switching to `createImageBitmap` with `FileReader` fallback) and splits format, decode, and size-limit error messages. → [Notes](docs/releases/2.4.9.md)
-- **2.4.8** · Magpie (`v0.1.4344+fish.48`) removes provider veil/black-ring artifacts, unifies card and model-chip liquid glass across pages, and syncs live review counts; Clash rebuilds dual-mode DNS/Sniffer pipelines and routing rules, adds a dedicated GitHub/npm group, filters fake subscription nodes, and blocks overseas QUIC. → [Notes](docs/releases/2.4.8.md)
-- **2.4.7 and earlier** · See [Release Notes](docs/releases) and [GitHub Releases](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases) (all historical release notes in `docs/releases/` remain intact).
+- **2.4.8 and earlier** · See [Release Notes](docs/releases) and [GitHub Releases](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases) (all historical release notes in `docs/releases/` remain intact).
 
 > ⚠️ **2.0.0 is a breaking release**: Plugin manifests added the `behaviors` field. FISH Dock 1.2.3 and earlier reject unknown fields during manifest parsing. **Upgrade FISH Dock to 2.0.0+ first** before installing these plugins.
 
-> ⚠️ `@fish-under-sea/fish-dock-plugin-clash@1.1.0` on npm was published in error (missing the 1.0.4 multi-subscription fix) and should not be used. Current npm single packages are `2.5.0` for Magpie and Clash, `2.2.0` for Feishu, and `2.0.1` for OFM (retired).
+> ⚠️ `@fish-under-sea/fish-dock-plugin-clash@1.1.0` on npm was published in error (missing the 1.0.4 multi-subscription fix) and should not be used. Current npm single packages are `2.5.1` for Clash, `2.5.0` for Magpie, `2.2.0` for Feishu, and `2.0.1` for OFM (retired).
 
 <h2 id="plugins"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-features-dark.png"><img src="assets/readme/section-features-light.png" alt="PLUGINS" width="100%"></picture></h2>
 
@@ -74,7 +74,7 @@ Local model channels and API workbench. **Maintenance paused on 2026-10-25 and r
 
 <h2 id="get-started"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-install-dark.png"><img src="assets/readme/section-install-light.png" alt="INSTALL" width="100%"></picture></h2>
 
-Check your host version first: Magpie 2.5.0 requires **FISH Dock ≥ 2.3.4**, while Clash 2.5.0 and Feishu 2.2.0 require **FISH Dock ≥ 2.0.0**. Hosts on 1.2.3 or earlier reject the `behaviors` manifest field.
+Check your host version first: Clash 2.5.1 and Feishu 2.2.0 require **FISH Dock ≥ 2.0.0**, while Magpie 2.5.0 requires **FISH Dock ≥ 2.3.4**. Hosts on 1.2.3 or earlier reject the `behaviors` manifest field.
 
 **Option 1: Dock Plugin Market (Recommended)**
 
@@ -91,7 +91,7 @@ Check your host version first: Magpie 2.5.0 requires **FISH Dock ≥ 2.3.4**, wh
 | Plugin | GitHub Archive | npm Single Package |
 | --- | --- | --- |
 | Feishu 2.2.0 | [`feishu.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.2.0/feishu.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-feishu`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-feishu/v/2.2.0) |
-| Clash 2.5.0 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.5.0/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.5.0) |
+| Clash 2.5.1 | [`clash.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.5.1/clash.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-clash`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-clash/v/2.5.1) |
 | Magpie 2.5.0 | [`magpie.fish-plugin`](https://github.com/Fish-under-sea/FISH-DOCK-Plugins/releases/download/v2.5.0/magpie.fish-plugin) | [`@fish-under-sea/fish-dock-plugin-magpie`](https://www.npmjs.com/package/@fish-under-sea/fish-dock-plugin-magpie/v/2.5.0) |
 
 <h2 id="packages"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/section-packages-dark.png"><img src="assets/readme/section-packages-light.png" alt="PACKAGES" width="100%"></picture></h2>
@@ -101,12 +101,12 @@ Each npm package contains a single verified `.fish-plugin` archive and its copy 
 | npm Package | Version | CLI bin | `npm pack` Size |
 | --- | --- | --- | --- |
 | `@fish-under-sea/fish-dock-plugin-feishu` | 2.2.0 | `fish-dock-plugin-feishu` | 38.6 kB (6 files) |
-| `@fish-under-sea/fish-dock-plugin-clash` | 2.5.0 | `fish-dock-plugin-clash` | 27.4 MB (7 files, incl. mihomo license) |
+| `@fish-under-sea/fish-dock-plugin-clash` | 2.5.1 | `fish-dock-plugin-clash` | 27.4 MB (7 files, incl. mihomo license) |
 | `@fish-under-sea/fish-dock-plugin-magpie` | 2.5.0 | `fish-dock-plugin-magpie` | 55.3 MB (7 files, incl. Magpie license) |
 | `@fish-under-sea/fish-dock-plugin-ofm` | 2.0.1 (retired, manual only) | `fish-dock-plugin-ofm` | 1.9 MB (6 files) |
 
 ```powershell
-npm install @fish-under-sea/fish-dock-plugin-clash@2.5.0
+npm install @fish-under-sea/fish-dock-plugin-clash@2.5.1
 npx @fish-under-sea/fish-dock-plugin-clash --out C:/work/plugins
 ```
 
@@ -137,7 +137,7 @@ Reference docs live alongside code (currently written in Chinese):
 | [Self-Built Magpie Guide](plugins/magpie/tools/README.md) | Patch manifest, build commands, version tags, and upstream rebase notes |
 | [Check-in & Relay Probe](https://github.com/Fish-under-sea/magpie-checkin-relay-probe) | Host read/call bridge, preinstalled plugin styling switch, and embedded logos |
 | [Provider Logo Sources](https://github.com/Fish-under-sea/magpie-checkin-relay-probe/tree/main/page/checkin/logos) | Attribution, cropping, and licensing for each vendor asset |
-| [Release Notes](docs/releases/) | Per-version changelogs and verification records; latest is [2.5.0](docs/releases/2.5.0.md) |
+| [Release Notes](docs/releases/) | Per-version changelogs and verification records; latest is [2.5.1](docs/releases/2.5.1.md) |
 | [Third-Party Notices](THIRD_PARTY_NOTICES.md) | Licenses and checksums for bundled runtimes (mihomo GPL-3.0, Magpie MIT, etc.) |
 | [README Header Maintenance](assets/readme/MAINTAINING.md) | Header rendering pipeline, typography constraints, and asset rules |
 
