@@ -2,7 +2,8 @@
 // 以 LocalSystem 身份持有 mihomo 内核，让普通权限的 Dock 也能开启 TUN。
 //
 // 权限模型（与 clash-verge 的 Service Mode 同构）：
-//   service.ini —— 安装时由管理员写入：kernel 与 home 的**固定**绝对路径，用户只读。
+//   service.ini —— 安装时由管理员写入：kernel（托管复制到 ProgramData 的只读内核）、
+//                  kernelSha256 与 home 的固定绝对路径，普通用户只读。
 //   job.ini     —— 运行期由普通用户写入：config 路径与 enabled 开关。
 // 服务只按 service.ini 的 kernel 启动，job.ini 无法指定任意可执行文件，
 // 因此提权面收敛为「用固定 mihomo 加载用户自己的配置」，与直接以管理员运行内核等价。
@@ -12,29 +13,37 @@ using System.IO;
 using System.ServiceProcess;
 using System.Text.RegularExpressions;
 using System.Threading;
+using Microsoft.Win32;
 
 public sealed class FishClashTunService : ServiceBase
 {
     private const string ServiceId = "FishClashTun";
+    private const double HostGoneGraceSeconds = 15.0;
+    private const double PowerResumeGraceSeconds = 25.0;
     private Process child;
     private Timer watchdog;
     private string baseDir;
     private string jobPath;
     private string serviceIniPath;
     private string logPath;
+    private string kernelLogPath;
     private string kernel;
     private string home;
     private FileSystemWatcher jobWatcher;
     private string lastJob = "";
     private long lastHostGoneAt = -1;
-    private int hostMisses;
+    private DateTime hostMissingSinceUtc = DateTime.MinValue;
+    private DateTime lastTickUtc = DateTime.UtcNow;
+    private DateTime graceUntilUtc = DateTime.MinValue;
     private int restarts;
     private DateTime lastStart = DateTime.MinValue;
-    // C7：宿主已经没了。只在当前 host.json 对应的进程退出时抑制旧任务；一旦新宿主上线，立刻恢复。
+    // C7：宿主已经没了。只在当前 host.json 对应的进程连续退出超过宽限期时抑制旧任务；一旦新宿主上线，立刻恢复。
     private bool hostGone;
     private bool missingKernelLogged;
     private readonly object gate = new object();
     private readonly object logLock = new object();
+    private readonly object kernelLogLock = new object();
+    private static readonly Regex SecretPattern = new Regex("(secret|token|password)\\s*[:=]\\s*[^\\s,&\"']+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private enum JobReadState
     {
@@ -48,7 +57,22 @@ public sealed class FishClashTunService : ServiceBase
         ServiceName = ServiceId;
         CanStop = true;
         CanShutdown = true;
+        CanHandlePowerEvent = true;
         AutoLog = false;
+    }
+
+    protected override bool OnPowerEvent(PowerBroadcastStatus powerStatus)
+    {
+        if (powerStatus == PowerBroadcastStatus.Suspend ||
+            powerStatus == PowerBroadcastStatus.ResumeSuspend ||
+            powerStatus == PowerBroadcastStatus.ResumeAutomatic ||
+            powerStatus == PowerBroadcastStatus.ResumeCritical)
+        {
+            graceUntilUtc = DateTime.UtcNow.AddSeconds(PowerResumeGraceSeconds);
+            hostMissingSinceUtc = DateTime.MinValue;
+            Log("power event (" + powerStatus + "): extending host grace");
+        }
+        return true;
     }
 
     protected override void OnStart(string[] args)
@@ -60,19 +84,24 @@ public sealed class FishClashTunService : ServiceBase
         Directory.CreateDirectory(baseDir);
         Log("service starting");
         if (!LoadServiceIni()) { Log("service.ini missing or invalid; service idle"); }
-        else { Log("kernel=" + kernel + " home=" + home); }
+        else
+        {
+            kernelLogPath = Path.Combine(home, "tmp", "mihomo.log");
+            Log("kernel=" + kernel + " home=" + home);
+        }
+        lastTickUtc = DateTime.UtcNow;
         Apply(false);
         try
         {
             jobWatcher = new FileSystemWatcher(baseDir, "job.ini");
             jobWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.Size;
-            jobWatcher.Changed += (_, __) => Tick();
-            jobWatcher.Created += (_, __) => Tick();
-            jobWatcher.Renamed += (_, __) => Tick();
+            jobWatcher.Changed += (_, __) => Tick(false);
+            jobWatcher.Created += (_, __) => Tick(false);
+            jobWatcher.Renamed += (_, __) => Tick(false);
             jobWatcher.EnableRaisingEvents = true;
         }
         catch (Exception error) { Log("job watcher disabled: " + error.Message); }
-        watchdog = new Timer(_ => Tick(), null, 1500, 1500);
+        watchdog = new Timer(_ => Tick(true), null, 1500, 1500);
     }
 
     protected override void OnStop()
@@ -165,14 +194,24 @@ public sealed class FishClashTunService : ServiceBase
 
     private readonly object tickLock = new object();
 
-    private void Tick()
+    private void Tick(bool checkHostHealth)
     {
         if (!Monitor.TryEnter(tickLock)) return;
         try
         {
-            // C7：宿主不在了就自己撤——TUN 服务是 SYSTEM 托管、独立于宿主的 Job，
-            // 宿主崩溃后内核还会一直把整机流量劫走。这里停内核 + 把 job.ini 置 0，
-            // 等于让虚拟网卡随内核一起消失，用户下一次开 Dock 再重新接管。
+            var now = DateTime.UtcNow;
+            // 检测休眠/唤醒导致的时钟跳变，避免合盖唤醒瞬间误判宿主消失。
+            if (checkHostHealth)
+            {
+                if ((now - lastTickUtc).TotalSeconds > 10.0)
+                {
+                    graceUntilUtc = now.AddSeconds(PowerResumeGraceSeconds);
+                    hostMissingSinceUtc = DateTime.MinValue;
+                    Log("clock jump detected; extending host grace");
+                }
+                lastTickUtc = now;
+            }
+
             long leaseAt = 0;
             bool gone = !string.IsNullOrEmpty(home) && HostIsGone(out leaseAt);
             if (hostGone)
@@ -181,7 +220,7 @@ public sealed class FishClashTunService : ServiceBase
                 if (!gone && leaseAt != lastHostGoneAt)
                 {
                     hostGone = false;
-                    hostMisses = 0;
+                    hostMissingSinceUtc = DateTime.MinValue;
                     lastHostGoneAt = -1;
                     Log("host resumed: tun service ready");
                 }
@@ -190,21 +229,33 @@ public sealed class FishClashTunService : ServiceBase
                     return;
                 }
             }
-            if (gone)
+            if (checkHostHealth)
             {
-                hostMisses++;
-                // 连续多次（约 4.5 秒）确认且二次复查仍失联才撤 TUN，避免进程表抖动或重启切换期误杀。
-                if (hostMisses < 3 || !HostIsGone(out leaseAt)) return;
-                hostGone = true;
-                hostMisses = 0;
-                lastHostGoneAt = leaseAt;
-                Log("host is gone: taking the tun down");
-                KillChild();
-                try { File.WriteAllText(jobPath, "enabled=0" + Environment.NewLine); lastJob = "0|"; }
-                catch (Exception error) { Log("job.ini reset failed: " + error.Message); }
-                return;
+                if (gone && now >= graceUntilUtc)
+                {
+                    if (hostMissingSinceUtc == DateTime.MinValue)
+                    {
+                        hostMissingSinceUtc = now;
+                        return;
+                    }
+                    // 按真实流逝时间（≥15s）连续失联且二次复查仍失联才撤 TUN，
+                    // 避免 FileSystemWatcher 突发事件或插件 Worker 重载瞬断误杀内核。
+                    if ((now - hostMissingSinceUtc).TotalSeconds < HostGoneGraceSeconds || !HostIsGone(out leaseAt)) return;
+                    hostGone = true;
+                    hostMissingSinceUtc = DateTime.MinValue;
+                    lastHostGoneAt = leaseAt;
+                    Log("host is gone: taking the tun down");
+                    KillChild();
+                    try { File.WriteAllText(jobPath, "enabled=0" + Environment.NewLine); lastJob = "0|"; }
+                    catch (Exception error) { Log("job.ini reset failed: " + error.Message); }
+                    return;
+                }
+                else
+                {
+                    hostMissingSinceUtc = DateTime.MinValue;
+                }
             }
-            hostMisses = 0;
+
             string config; bool enabled;
             var readState = ReadJob(out config, out enabled);
             if (readState == JobReadState.Transient) return;
@@ -216,6 +267,7 @@ public sealed class FishClashTunService : ServiceBase
                 Apply(true, readState, config, enabled);
                 return;
             }
+            if (!checkHostHealth) return;
             bool dead;
             lock (gate) { dead = child == null || child.HasExited; if (!dead) return; }
             if (readState != JobReadState.Enabled) return;
@@ -293,6 +345,8 @@ public sealed class FishClashTunService : ServiceBase
         var psi = new ProcessStartInfo(kernel, "-d \"" + home + "\" -f \"" + config + "\"");
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
         psi.WorkingDirectory = baseDir;
         psi.EnvironmentVariables["TMP"] = baseDir;
         psi.EnvironmentVariables["TEMP"] = baseDir;
@@ -301,10 +355,17 @@ public sealed class FishClashTunService : ServiceBase
         {
             lock (gate)
             {
-                child = Process.Start(psi);
+                var proc = new Process();
+                proc.StartInfo = psi;
+                proc.OutputDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) LogKernel(e.Data); };
+                proc.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) LogKernel(e.Data); };
+                if (!proc.Start()) { Log("kernel start returned false"); return; }
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+                child = proc;
                 lastStart = DateTime.UtcNow;
                 restarts = 0;
-                Log("kernel started pid=" + (child == null ? "?" : child.Id.ToString()) + " config=" + config);
+                Log("kernel started pid=" + proc.Id + " config=" + config);
             }
         }
         catch (Exception error) { Log("kernel start failed: " + error.Message); }
@@ -319,12 +380,44 @@ public sealed class FishClashTunService : ServiceBase
         {
             if (!victim.HasExited)
             {
-                var killer = Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + victim.Id + " /T /F") { UseShellExecute = false, CreateNoWindow = true });
-                if (killer != null) killer.WaitForExit(5000);
+                // 先尝试温和结束让 mihomo 主动释放 Wintun 虚拟网卡与路由表，超时再强杀。
+                try
+                {
+                    var gentle = Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + victim.Id + " /T") { UseShellExecute = false, CreateNoWindow = true });
+                    if (gentle != null) gentle.WaitForExit(1200);
+                    victim.WaitForExit(1200);
+                }
+                catch { }
+                if (!victim.HasExited)
+                {
+                    var killer = Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + victim.Id + " /T /F") { UseShellExecute = false, CreateNoWindow = true });
+                    if (killer != null) killer.WaitForExit(5000);
+                }
                 Log("kernel stopped pid=" + victim.Id);
             }
         }
         catch (Exception error) { Log("kernel kill failed: " + error.Message); }
+        finally
+        {
+            try { victim.Dispose(); } catch { }
+        }
+    }
+
+    private void LogKernel(string line)
+    {
+        lock (kernelLogLock)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(kernelLogPath)) return;
+                var dir = Path.GetDirectoryName(kernelLogPath);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                var safe = SecretPattern.Replace(line, "$1=<redacted>");
+                if (File.Exists(kernelLogPath) && new FileInfo(kernelLogPath).Length > 512 * 1024) File.WriteAllText(kernelLogPath, "");
+                File.AppendAllText(kernelLogPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + safe + Environment.NewLine);
+            }
+            catch { }
+        }
     }
 
     private void Log(string message)

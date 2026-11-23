@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { iniText, iniRead, validateJob, serviceRoot, jobIniPath, serviceIniPath, hostLeasePath, createTun, SERVICE_ID } from './tun.mjs';
+import { readFileSync } from 'node:fs';
+import { iniText, iniRead, validateJob, serviceRoot, jobIniPath, serviceIniPath, hostLeasePath, managedKernelPath, createTun, SERVICE_ID } from './tun.mjs';
 
 const HOME = 'D:/synthetic/.fish-dock/.fishplugin-clash';
 
@@ -160,4 +161,41 @@ test('refreshLease 更新宿主租约而不改动 job.ini；服务已停时 disa
   assert.equal(await tun.disable(), true);
   assert.ok(Date.now() - t0 < 1000, '服务已停止时 disable 应立即返回');
   assert.match(f.writes[0], /enabled=0/);
+});
+
+test('sc.exe 瞬态失败报 unknown 而非 absent，status 支持 TTL 缓存与 kernelSha256 透传', async () => {
+  let scCalls = 0;
+  let scResult = { code: 1, stdout: 'RPC server busy' };
+  const f = fixture({ ini: { kernel: managedKernelPath('C:/ProgramData'), kernelSha256: 'a'.repeat(64), home: HOME }, job: { enabled: '1', config: `${HOME}/tmp/mihomo-runtime.json` } });
+  const tun = createTun({
+    programData: 'C:/ProgramData', platform: 'win32', statusCacheMs: 2500,
+    exec: async () => { scCalls++; return scResult; },
+    io: f.io
+  });
+  const transient = await tun.status();
+  assert.equal(transient.state, 'unknown', '非 1060 错误必须报 unknown，不得伪装 absent');
+  assert.equal(transient.installed, true, 'service.ini 存在时瞬态失败不误判未安装');
+  assert.equal(transient.kernelSha256, 'a'.repeat(64));
+  // TTL 内命中缓存不再重复拉 sc.exe
+  scResult = { code: 0, stdout: 'STATE : 4  RUNNING' };
+  const cached = await tun.status();
+  assert.equal(cached.state, 'unknown');
+  assert.equal(scCalls, 1);
+  // fresh=true 强制穿透缓存
+  const fresh = await tun.status({ fresh: true });
+  assert.equal(fresh.state, 'running');
+  assert.equal(scCalls, 2);
+});
+
+test('tun-service.cs 契约：按真实耗时宽限宿主失联、休眠唤醒宽限、捕获 mihomo.log 并脱敏', () => {
+  const cs = readFileSync(new URL('./service/tun-service.cs', import.meta.url), 'utf8');
+  assert.match(cs, /HostGoneGraceSeconds\s*=\s*15\.0/, '宿主失联按真实墙钟 15s 宽限');
+  assert.match(cs, /PowerResumeGraceSeconds\s*=\s*25\.0/, '休眠唤醒给 25s 宽限');
+  assert.match(cs, /CanHandlePowerEvent\s*=\s*true/, '订阅系统电源事件');
+  assert.match(cs, /override\s+bool\s+OnPowerEvent/, '处理休眠恢复');
+  assert.match(cs, /Tick\(false\)/, 'FileSystemWatcher 触发不得推进宿主失联计时');
+  assert.match(cs, /mihomo\.log/, '捕获 mihomo 输出到 tmp/mihomo.log');
+  assert.match(cs, /RedirectStandardOutput\s*=\s*true/);
+  assert.match(cs, /RedirectStandardError\s*=\s*true/);
+  assert.match(cs, /taskkill\.exe/);
 });

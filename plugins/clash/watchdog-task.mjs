@@ -78,6 +78,39 @@ function runPowerShell(source,payload){
   });
 }
 
+let cachedTaskName='';
+
+function decodeWinText(chunks){
+  const buf=Buffer.concat(chunks);
+  if(!buf.length)return '';
+  const utf8=buf.toString('utf8');
+  if(!utf8.includes('\uFFFD'))return utf8;
+  try{return new TextDecoder('gb18030').decode(buf)}catch{return utf8}
+}
+
+function runExecFile(file,args,timeoutMs=4000){
+  return new Promise(resolve=>{
+    let child;
+    try{child=spawn(file,args,{windowsHide:true,stdio:['ignore','pipe','pipe']})}
+    catch(error){resolve({code:1,stdout:'',stderr:error?.message??''});return}
+    const outChunks=[],errChunks=[];
+    let outLen=0,errLen=0;
+    const timer=setTimeout(()=>{try{child.kill()}catch{};resolve({code:1,stdout:decodeWinText(outChunks),stderr:'命令超时'})},timeoutMs);
+    child.on('error',error=>{clearTimeout(timer);resolve({code:1,stdout:decodeWinText(outChunks),stderr:error?.message??''})});
+    child.stdout.on('data',b=>{if(outLen<8192){outChunks.push(b);outLen+=b.length}else try{child.kill()}catch{}});
+    child.stderr.on('data',b=>{if(errLen<8192){errChunks.push(b);errLen+=b.length}});
+    child.on('close',code=>{clearTimeout(timer);resolve({code:code??1,stdout:decodeWinText(outChunks),stderr:decodeWinText(errChunks)})});
+  });
+}
+
+async function resolveTaskName(run=runExecFile){
+  if(run===runExecFile&&cachedTaskName)return cachedTaskName;
+  const r=await run('whoami',['/user','/fo','csv','/nh']);
+  const m=/S-1-[0-9-]+/.exec(String(r?.stdout??''));
+  if(m){const name=`FISH Dock clash watchdog-${m[0]}`;if(run===runExecFile)cachedTaskName=name;return name}
+  return '';
+}
+
 // start：没有租约（没接管系统代理）就什么都不建，连 pwsh 都不起。
 // 系统禁用了 Windows Script Host 时明确失败——退回直接启动 node.exe 会重新出现
 // 那个黑窗口（#50），宁可不建看门狗，也不让用户桌面挂一个窗口。
@@ -90,10 +123,25 @@ export async function start({leasePath,mihomoPid=0,port=0,ownerPid=0,exec=runPow
     args:['//B','//Nologo','//E:JScript',quote(WATCHDOG_LAUNCHER),quote(process.execPath),quote(WATCHDOG_SCRIPT),quote(dirname(WATCHDOG_SCRIPT)),
       quote(ownerPid),quote(leasePath),quote(mihomoPid),quote(port),quote('{taskName}')].join(' '),
     cwd:dirname(WATCHDOG_SCRIPT)};
-  return parseAnswer(await exec(SOURCE,payload));
+  const answer=parseAnswer(await exec(SOURCE,payload));
+  if(exec===runPowerShell&&answer.ok&&typeof answer.name==='string'&&answer.name)cachedTaskName=answer.name;
+  return answer;
 }
 
-// stop：注销任务；任务本来就不存在也算成功（PowerShell 侧 SilentlyContinue）。
-export async function stop({exec=runPowerShell}={}){
-  return parseAnswer(await exec(SOURCE,{action:'stop'}));
+// stop：优先走原生轻量 schtasks.exe /Delete（<30ms，不拉重型 pwsh，避免 Dock 停机窗口触发 0xC0000142）。
+// 仅在调用方显式注入 exec（旧单测路径）或无法解析 SID 时回退 PowerShell。
+export async function stop({exec,run=runExecFile,taskName=''}={}){
+  if(exec)return parseAnswer(await exec(SOURCE,{action:'stop'}));
+  const name=taskName||await resolveTaskName(run);
+  if(name){
+    const r=await run('schtasks',['/Delete','/TN',name,'/F']);
+    const msg=`${r?.stdout??''}\n${r?.stderr??''}`.trim();
+    if(r?.code===0||/找不到|cannot find|does not exist|not exist/i.test(msg)){
+      return {ok:true,act:'removed',name};
+    }
+    // 宿主 Job 关闭瞬间常见 0xC0000142 (3221225794) 属系统停机中断，不作为误报噪音。
+    if(r?.code===3221225794||r?.code===-1073741502)return {ok:true,act:'shutdown-interrupted',name};
+    return {ok:false,error:msg||`任务计划命令失败（exit ${r?.code??'?'}）`};
+  }
+  return parseAnswer(await runPowerShell(SOURCE,{action:'stop'}));
 }

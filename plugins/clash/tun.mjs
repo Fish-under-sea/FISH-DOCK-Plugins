@@ -2,6 +2,7 @@
 // 权限面收敛：服务只按安装时写入的 service.ini 里的固定 kernel/home 启动，
 // 运行期用户只能改 job.ini（config 路径 + enabled），且路径被限制在 home 内。
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,8 +16,12 @@ const SERVICE_EXE = fileURLToPath(new URL('./service/tun-service.exe', import.me
 export function serviceRoot(programData) { return join(programData, ...SERVICE_DIR.split('/')); }
 export function serviceIniPath(programData) { return join(serviceRoot(programData), 'service.ini'); }
 export function jobIniPath(programData) { return join(serviceRoot(programData), 'job.ini'); }
+export function managedKernelPath(programData) { return join(serviceRoot(programData), 'mihomo.exe'); }
 // C7：宿主租约放在服务侧 home（= service.ini 的 home）根上，TUN 服务 Tick 直接读它。
 export function hostLeasePath(home) { return join(home, 'host.json'); }
+export async function fileSha256(filePath) {
+  return createHash('sha256').update(await readFile(filePath)).digest('hex');
+}
 
 export function iniText(rows) {
   return Object.entries(rows).map(([k, v]) => `${k}=${v}`).join('\r\n') + '\r\n';
@@ -44,12 +49,16 @@ export function validateJob({ config, home }) {
   return normalized;
 }
 
-export function createTun({ context, programData, exec = runExec, platform = process.platform, io = null }) {
+export function createTun({ context, programData, exec = runExec, platform = process.platform, io = null, statusCacheMs = io ? 0 : 2500 }) {
   const root = serviceRoot(programData);
   const ini = serviceIniPath(programData);
   const job = jobIniPath(programData);
   const exe = join(root, 'tun-service.exe');
+  const managedKernel = managedKernelPath(programData);
   const log = join(root, 'service.log');
+  let statusCache = null;
+  let statusInFlight = null;
+  const clearStatusCache = () => { statusCache = null; };
 
   // io 可注入，便于在不触碰真实系统的情况下验证判据与写盘内容。
   const readIni = io?.readIni ? io.readIni : async () => { try { return iniRead(await readFile(ini, 'utf8')); } catch { return null; } };
@@ -73,15 +82,17 @@ export function createTun({ context, programData, exec = runExec, platform = pro
   const writeHost = io?.writeHost ? io.writeHost : async (path, value) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, value, 'utf8'); };
   const removeHost = io?.removeHost ? io.removeHost : async path => { await rm(path, { force: true }); };
   const isFile = io?.isFile ? io.isFile : async p => { try { return (await stat(p)).isFile(); } catch { return false; } };
+  const hashFile = io?.sha256 ? io.sha256 : fileSha256;
 
   async function queryServiceState() {
     if (platform !== 'win32') return 'absent';
-    const q = await exec('sc.exe', ['query', SERVICE_ID]).catch(() => ({ code: 1, stdout: '' }));
+    const q = await exec('sc.exe', ['query', SERVICE_ID]).catch(() => ({ code: -1, stdout: '' }));
     const text = `${q?.stdout || ''}`.toLowerCase();
-    if (/1060|does not exist|指定的服务|不存在/.test(text)) return 'absent';
-    if (/running/.test(text)) return 'running';
-    if (/stopped/.test(text)) return 'stopped';
-    return q?.code === 0 ? 'unknown' : 'absent';
+    // 只有明确 1060 / 未安装才判定 absent；sc.exe 瞬态超时或被拦截返回 unknown，绝不误判为服务卸载。
+    if (/1060|does not exist|指定的服务|未安装|不存在/.test(text)) return 'absent';
+    if (/running|正在运行/.test(text)) return 'running';
+    if (/stopped|已停止/.test(text)) return 'stopped';
+    return 'unknown';
   }
 
   async function writeLease(source, hostPid) {
@@ -90,38 +101,58 @@ export function createTun({ context, programData, exec = runExec, platform = pro
     return true;
   }
 
-  async function status() {
-    const cfg = await readIni();
-    const task = await readJob();
-    const serviceState = await queryServiceState();
-    const tail = String(await readLog() || '').split(/\r?\n/).filter(Boolean).slice(-6).join('\n');
+  async function readStatusNow() {
+    const [cfg, task, serviceState, executable, rawLog] = await Promise.all([
+      readIni(), readJob(), queryServiceState(), isFile(exe), readLog()
+    ]);
+    const tail = String(rawLog || '').split(/\r?\n/).filter(Boolean).slice(-6).join('\n');
+    const installed = serviceState === 'absent'
+      ? false
+      : serviceState === 'unknown'
+        ? !!(executable || cfg?.kernel)
+        : true;
     return {
-      platform, installed: serviceState !== 'absent', state: serviceState, executable: await isFile(exe),
-      kernel: cfg?.kernel || '', home: cfg?.home || '', enabled: task?.enabled === '1',
-      config: task?.config || '', log: tail, canElevate: platform === 'win32'
+      platform, installed, state: serviceState, executable,
+      kernel: cfg?.kernel || '', kernelSha256: cfg?.kernelSha256 || '', home: cfg?.home || '',
+      enabled: task?.enabled === '1', config: task?.config || '', log: tail, canElevate: platform === 'win32'
     };
   }
 
-  // 安装：复制服务体 → 写 service.ini（固定 kernel/home）→ 建服务 → 放开 job.ini 写权限 → 启动。
-  // 需要一次 UAC；脚本写到临时文件后提权执行，结果经 result 文件回传（不依赖编码）。
+  async function status({ fresh = false } = {}) {
+    if (!fresh && statusCacheMs > 0 && statusCache && Date.now() < statusCache.until) return statusCache.value;
+    if (!fresh && statusInFlight) return statusInFlight;
+    const work = readStatusNow().then(value => {
+      if (statusCacheMs > 0) statusCache = { value, until: Date.now() + statusCacheMs };
+      return value;
+    }).finally(() => { if (statusInFlight === work) statusInFlight = null; });
+    if (!fresh) statusInFlight = work;
+    return work;
+  }
+
+  // 安装：复制服务体与托管内核（ProgramData 固定只读副本）→ 写 service.ini（含 kernelSha256）→ 建服务 → 放开 job.ini 写权限 → 启动。
+  // 插件小版本升级时只要 mihomo.exe 摘要不变，直接复用现有服务，无需弹 UAC 重装。
   async function install({ kernel, home } = {}) {
     if (platform !== 'win32') throw Error('TUN 服务模式仅支持 Windows');
     if (!kernel || !home) throw Error('缺少内核或数据目录');
     if (!(await isFile(SERVICE_EXE))) throw Error('插件内缺少 TUN 服务程序');
+    const kernelSha256 = await hashFile(kernel);
     const script = [
       `$ErrorActionPreference='Stop'`,
-      `$root='${ps(root)}'; $ini='${ps(ini)}'; $job='${ps(job)}'`,
+      `$root='${ps(root)}'; $ini='${ps(ini)}'; $job='${ps(job)}'; $mk='${ps(managedKernel)}'`,
       `New-Item -ItemType Directory -Force -Path $root | Out-Null`,
-      `Copy-Item -LiteralPath '${ps(SERVICE_EXE)}' -Destination '${ps(exe)}' -Force`,
-      `$utf8=New-Object System.Text.UTF8Encoding($false)`,
-      `[System.IO.File]::WriteAllLines($ini,[string[]]@('${ps(`kernel=${kernel}`)}','${ps(`home=${home}`)}'),$utf8)`,
-      `if(-not (Test-Path -LiteralPath $job)){[System.IO.File]::WriteAllLines($job,[string[]]@('enabled=0'),$utf8)}`,
-      // 普通用户只能写 job.ini：目录给读+遍历，service.ini 只读，job.ini 单独可改。
-      `icacls $root /grant '*S-1-5-32-545:(OI)(CI)(RX)' | Out-Null`,
-      `icacls $ini /inheritance:r /grant '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' '*S-1-5-32-545:(R)' | Out-Null`,
-      `icacls $job /grant '*S-1-5-32-545:(M)' | Out-Null`,
       `$sc=Join-Path $env:SystemRoot 'System32\\sc.exe'`,
       `& $sc stop ${SERVICE_ID} 2>$null | Out-Null`,
+      `$w0=0; while($w0 -lt 20){ $q0=(& $sc query ${SERVICE_ID} 2>$null | Out-String); if($LASTEXITCODE -eq 1060 -or $q0 -match 'STOPPED'){ break }; Start-Sleep -Milliseconds 150; $w0++ }`,
+      `Copy-Item -LiteralPath '${ps(SERVICE_EXE)}' -Destination '${ps(exe)}' -Force`,
+      `Copy-Item -LiteralPath '${ps(kernel)}' -Destination $mk -Force`,
+      `$utf8=New-Object System.Text.UTF8Encoding($false)`,
+      `[System.IO.File]::WriteAllLines($ini,[string[]]@(('kernel=' + $mk),'${ps(`home=${home}`)}','${ps(`kernelSha256=${kernelSha256}`)}'),$utf8)`,
+      `if(-not (Test-Path -LiteralPath $job)){[System.IO.File]::WriteAllLines($job,[string[]]@('enabled=0'),$utf8)}`,
+      // 普通用户只能写 job.ini：目录给读+遍历，service.ini 与托管内核只读，job.ini 单独可改。
+      `icacls $root /grant '*S-1-5-32-545:(OI)(CI)(RX)' | Out-Null`,
+      `icacls $ini /inheritance:r /grant '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' '*S-1-5-32-545:(R)' | Out-Null`,
+      `icacls $mk /inheritance:r /grant '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' '*S-1-5-32-545:(RX)' | Out-Null`,
+      `icacls $job /grant '*S-1-5-32-545:(M)' | Out-Null`,
       `& $sc delete ${SERVICE_ID} 2>$null | Out-Null`,
       `$w=0; while($w -lt 20){ & $sc query ${SERVICE_ID} 2>$null | Out-Null; if($LASTEXITCODE -eq 1060){ break }; Start-Sleep -Milliseconds 150; $w++ }`,
       `& $sc create ${SERVICE_ID} binPath= ('"' + '${ps(exe)}' + '"') start= auto DisplayName= 'FISH Dock Clash TUN' | Out-Null`,
@@ -130,8 +161,9 @@ export function createTun({ context, programData, exec = runExec, platform = pro
       `$s=0; while($s -lt 16){ $q=(& $sc query ${SERVICE_ID} 2>$null | Out-String); if($q -match 'RUNNING'){ break }; Start-Sleep -Milliseconds 150; $s++ }`
     ].join('; ');
     const result = await elevate(script);
+    clearStatusCache();
     if (result.code !== 0) throw Error(result.message || '安装 TUN 服务失败');
-    return status();
+    return status({ fresh: true });
   }
 
   async function uninstall() {
@@ -142,15 +174,18 @@ export function createTun({ context, programData, exec = runExec, platform = pro
       `& $sc stop ${SERVICE_ID} | Out-Null`,
       `& $sc delete ${SERVICE_ID} | Out-Null`,
       `Remove-Item -LiteralPath '${ps(job)}' -Force`,
-      `Remove-Item -LiteralPath '${ps(ini)}' -Force`
+      `Remove-Item -LiteralPath '${ps(ini)}' -Force`,
+      `Remove-Item -LiteralPath '${ps(managedKernel)}' -Force`
     ].join('; ');
     const result = await elevate(script);
+    clearStatusCache();
     if (result.code !== 0) throw Error(result.message || '卸载 TUN 服务失败');
-    return status();
+    return status({ fresh: true });
   }
 
   // 运行期：普通权限，只写 job.ini，服务自己 watch 并重启内核。
   async function enable({ config, home, hostPid } = {}) {
+    clearStatusCache();
     const source = home || (await readIni())?.home;
     const target = validateJob({ config, home: source });
     if (await queryServiceState() === 'stopped') {
@@ -161,7 +196,9 @@ export function createTun({ context, programData, exec = runExec, platform = pro
     // 写一个无效 pid 会让服务把正常内核当成「宿主崩了」撤掉，比不写更糟。
     await writeLease(source, hostPid);
     await writeJob(iniText({ enabled: 1, config: target }));
-    return waitFor('start', beforeLog);
+    const ok = await waitFor('start', beforeLog);
+    clearStatusCache();
+    return ok;
   }
 
   // 插件 Worker 重启后重新接管正在运行的服务态内核：只续签宿主 pid，不改 job.ini，不断流。
@@ -171,12 +208,14 @@ export function createTun({ context, programData, exec = runExec, platform = pro
   }
 
   async function disable() {
+    clearStatusCache();
     const beforeLog = String(await readLog() || '');
     // 先撤租约再停内核：服务看到租约没了只会停，不会把它当成「宿主崩了」又拉起来。
     const home = (await readIni())?.home;
     if (home) await removeHost(hostLeasePath(home)).catch(() => {});
     await writeJob(iniText({ enabled: 0 }));
     const serviceState = await queryServiceState();
+    clearStatusCache();
     if (platform === 'win32' && (serviceState === 'stopped' || serviceState === 'absent')) return true;
     return waitFor('stop', beforeLog);
   }

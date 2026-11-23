@@ -159,3 +159,19 @@ test('C8 看门狗退出时用 schtasks 删除自己的任务（execFile，不�
  assert.deepEqual(skipped,{ok:true,skipped:true});
  assert.equal(calls.length,1,'没有任务名时什么都不做');
 });
+
+test('stop 默认走轻量 schtasks /Delete：容忍任务不存在与关机 0xC0000142 中断',async()=>{
+ const calls=[];
+ const run=async(file,args)=>{
+  calls.push([file,...args]);
+  if(file==='whoami')return {code:0,stdout:'"HOST\\Fish","S-1-5-21-999-1001"\r\n',stderr:''};
+  return {code:1,stdout:'',stderr:'错误: 系统找不到指定的文件。'};
+ };
+ const missing=await stop({run});
+ assert.deepEqual(missing,{ok:true,act:'removed',name:'FISH Dock clash watchdog-S-1-5-21-999-1001'});
+ assert.ok(calls.some(c=>c[0]==='schtasks'&&c[1]==='/Delete'&&c[3]==='FISH Dock clash watchdog-S-1-5-21-999-1001'&&c[4]==='/F'));
+
+ const shutdownRun=async()=>({code:3221225794,stdout:'',stderr:''});
+ const interrupted=await stop({run:shutdownRun,taskName:'FISH Dock clash watchdog-S-1-5-21-999-1001'});
+ assert.deepEqual(interrupted,{ok:true,act:'shutdown-interrupted',name:'FISH Dock clash watchdog-S-1-5-21-999-1001'});
+});
