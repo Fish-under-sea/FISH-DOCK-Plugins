@@ -997,3 +997,24 @@ test('外观页渲染「跟随」玻璃与字体模式、深色单独设置、�
  await flush();
  assert.equal(bodyProps['--dock-text'], '#eeeeee');
 });
+
+test('内核设置支持 profileMode 策略与 tun.strictRoute 开关，且默认 TUN 栈为 gvisor', async () => {
+ const f = fixture();
+ await flush();
+ delete f.row.tun;
+ delete f.row.profileMode;
+ f.click('view');
+ await flush();
+ f.click('section-settings');
+ assert.ok(f.root.innerHTML.includes('id="profileMode"'), '渲染分流策略下拉');
+ assert.ok(f.root.innerHTML.includes('id="tunStrictRoute"'), '渲染 strict-route 开关');
+ assert.ok(f.root.innerHTML.includes('gvisor'), '默认 TUN 栈显示 gvisor');
+ f.element('tunStrictRoute').checked = true;
+ f.click('save-config');
+ await flush();
+ const saved = f.calls.find((c) => c.method === 'clash.save');
+ assert.ok(saved, '点击保存发出 clash.save');
+ assert.equal(saved.params.profileMode, 'subscription');
+ assert.equal(saved.params.tun.stack, 'gvisor');
+ assert.equal(saved.params.tun.strictRoute, true);
+});

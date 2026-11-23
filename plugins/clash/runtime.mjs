@@ -1,12 +1,12 @@
-import {spawn} from 'node:child_process';
+import {spawn,execFile} from 'node:child_process';
 import {join,dirname} from 'node:path';
 import {createServer,connect as netConnect} from 'node:net';
 import {connect as tlsConnect} from 'node:tls';
 import http from 'node:http';
-import {mkdir} from 'node:fs/promises';
+import {mkdir,appendFile,writeFile,rename,readFile,unlink,readdir,stat,rm} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
-import {writeFile,rename,readFile,unlink,readdir,stat,rm} from 'node:fs/promises';
 import {createSubscriptionRuntime,DUMMY_NODE_FILTER,fileProvider,subscriptionPath,checkExecutable} from './subscriptions.mjs';
+import {fileSha256} from './tun.mjs';
 // C8：看门狗不再用 detached 子进程（Windows 上 detached 不带 CREATE_BREAKAWAY_FROM_JOB，
 // 宿主一死 Job 关闭，看门狗跟着消失），改成任务计划拉起的独立进程。
 import {start as startWatchdogTask,stop as stopWatchdogTask} from './watchdog-task.mjs';
@@ -270,31 +270,32 @@ export function createEnvProxyLease({storage,adapter}){
 export function tunHandoverNeeded(info){
  return !!(info&&info.enabled&&info.state==='running');
 }
-function buildDnsConfig({tunEnabled,withGeo}){
+// 对标 Clash Verge Rev 高速低延迟 DNS 配置：
+// - respect-rules: false + fallback: []，避免海外域名在本地经代理发 DoH 二次竞速与 GeoIP 阻塞；
+// - TUN 模式启用 fake-ip（搭配 profile.store-fake-ip: true 持久缓存），毫秒级返回 Fake-IP，
+//   远程域名交由远端代理节点直接解析，零本地往返延迟；
+// - 国内与代理节点服务器解析使用高速国内 DoH + UDP，防离线卡死。
+function buildDnsConfig({tunEnabled}){
  const dns={
   enable:true,
   ipv6:false,
-  'respect-rules':true,
+  'respect-rules':false,
   'default-nameserver':['223.5.5.5','119.29.29.29'],
-  'proxy-server-nameserver':['https://223.5.5.5/dns-query','https://doh.pub/dns-query','223.5.5.5'],
+  'proxy-server-nameserver':['https://doh.pub/dns-query','https://dns.alidns.com/dns-query','223.5.5.5'],
   'direct-nameserver':['223.5.5.5','119.29.29.29'],
   'direct-nameserver-follow-policy':false,
-  nameserver:['https://223.5.5.5/dns-query','https://doh.pub/dns-query','223.5.5.5','119.29.29.29']
+  nameserver:['https://doh.pub/dns-query','https://dns.alidns.com/dns-query','223.5.5.5','119.29.29.29'],
+  fallback:[]
  };
- // 仅在 GeoIP.dat 已就绪时启用 geoip fallback-filter，否则 mihomo 会尝试在线拉取 MMDB 导致离线卡死。
- if(withGeo){
-  dns.fallback=['https://1.1.1.1/dns-query','https://dns.google/dns-query'];
-  dns['fallback-filter']={geoip:true,'geoip-code':'CN',ipcidr:['240.0.0.0/4','0.0.0.0/32']};
- }
  if(tunEnabled){
   dns['enhanced-mode']='fake-ip';
   dns['fake-ip-range']='198.18.0.1/16';
   dns['fake-ip-filter-mode']='blacklist';
   dns['fake-ip-filter']=[
-   '*.lan','*.local','*.home.arpa','localhost.ptlogin2.qq.com','localhost.sec.qq.com',
+   '*.lan','*.local','*.arpa','*.home.arpa','localhost.ptlogin2.qq.com','localhost.sec.qq.com',
    '+.srv.nintendo.net','+.stun.playstation.net','+.stun.*.*','+.stun.*.*.*','+.turn.*.*',
-   'xbox.*.microsoft.com','+.xboxlive.com','+.msftconnecttest.com','+.msftncsi.com',
-   '*.msftncsi.com','dns.msftncsi.com','ipv6.msftconnecttest.com',
+   'xbox.*.microsoft.com','+.xboxlive.com','+.msftconnecttest.com','www.msftconnecttest.com',
+   '+.msftncsi.com','*.msftncsi.com','dns.msftncsi.com','ipv6.msftconnecttest.com',
    'time.*.com','time.windows.com','time.apple.com','ntp.*.com','*.ntp.org','*.ntp.org.cn',
    '+.pool.ntp.org','+.market.xiaomi.com'
   ];
@@ -314,23 +315,154 @@ function buildSnifferConfig(){
   'skip-domain':['Mijia Cloud','+.push.apple.com']
  };
 }
+// 方案 B1：安全白名单合并单条订阅的原生 proxies / proxy-groups / rule-providers / rules。
+// 强制剥离所有宿主敏感字段（端口、external-controller、secret、tun、dns、proxy-providers 等），
+// 仅保留安全的 http rule-providers 并将缓存路径强制收敛到 ./ruleset/<safe>.yaml。
+// 遇到纯节点订阅、未定义锚点、危险本地 file 规则集或缺 geo 数据引用时返回 null，平滑回落内置配置。
+export function mergeSubscriptionYaml(rawYaml,hostConfig,{geo=false}={}){
+ if(typeof rawYaml!=='string'||!rawYaml.trim())return null;
+ const text=rawYaml.replace(/^\uFEFF/,'').replace(/\r\n/g,'\n');
+ const hostBase={...hostConfig};
+ delete hostBase['proxy-providers'];
+ delete hostBase['proxy-groups'];
+ delete hostBase.rules;
+ const trimmed=text.trimStart();
+ if(trimmed.startsWith('{')){
+  let doc;try{doc=JSON.parse(trimmed)}catch{return null}
+  if(!doc||typeof doc!=='object'||Array.isArray(doc))return null;
+  if(!Array.isArray(doc.proxies)||!doc.proxies.length||!Array.isArray(doc['proxy-groups'])||!doc['proxy-groups'].length||!Array.isArray(doc.rules)||!doc.rules.length)return null;
+  if(doc['proxy-groups'].some(g=>g&&typeof g==='object'&&Array.isArray(g.use)&&g.use.length))return null;
+  if(!geo&&doc.rules.some(r=>/^(?:GEOSITE|GEOIP),/i.test(String(r))))return null;
+  if(doc.rules.some(r=>/^SUB-RULE,/i.test(String(r))))return null;
+  let safeRuleProviders;
+  if(doc['rule-providers']&&typeof doc['rule-providers']==='object'&&!Array.isArray(doc['rule-providers'])){
+   safeRuleProviders={};
+   let idx=0;
+   for(const [k,p] of Object.entries(doc['rule-providers'])){
+    if(!p||typeof p!=='object'||String(p.type||'').toLowerCase()!=='http')return null;
+    if(typeof p.url!=='string'||!/^https?:\/\//i.test(p.url.trim()))return null;
+    const safeKey=(k.replace(/[^A-Za-z0-9_.-]/g,'_').replace(/^_+|_+$/g,'')||'rule').slice(0,48);
+    safeRuleProviders[k]={...p,type:'http',path:`./ruleset/${safeKey}-${++idx}.yaml`};
+   }
+  }
+  if(doc.rules.some(r=>/^RULE-SET,/i.test(String(r)))&&(!safeRuleProviders||!Object.keys(safeRuleProviders).length))return null;
+  return JSON.stringify({...hostBase,proxies:doc.proxies,'proxy-groups':doc['proxy-groups'],...(safeRuleProviders?{'rule-providers':safeRuleProviders}:{}),rules:doc.rules});
+ }
+ const sections=new Map();
+ let curKey=null,curLines=[];
+ for(const line of text.split('\n')){
+  const m=/^([A-Za-z0-9_-]+)\s*:(.*)$/.exec(line);
+  if(m){
+   if(curKey)sections.set(curKey,curLines);
+   curKey=m[1];curLines=[line];
+  }else if(curKey){
+   curLines.push(line);
+  }
+ }
+ if(curKey)sections.set(curKey,curLines);
+ const proxiesSec=sections.get('proxies');
+ const groupsSec=sections.get('proxy-groups');
+ const rulesSec=sections.get('rules');
+ if(!proxiesSec||!groupsSec||!rulesSec)return null;
+ const hasListItem=lines=>lines.slice(1).some(l=>/^\s*-\s+\S/.test(l));
+ if(!hasListItem(proxiesSec)||!hasListItem(groupsSec)||!hasListItem(rulesSec))return null;
+ // proxy-providers 已被宿主剥离：若原生 proxy-groups 依赖 use 引用外部 provider，回落内置配置。
+ if(groupsSec.slice(1).some(l=>/^\s+use\s*:/.test(l)))return null;
+ if(!geo&&rulesSec.some(l=>/^\s*-\s*['"]?(?:GEOSITE|GEOIP),/i.test(l)))return null;
+ if(rulesSec.some(l=>/^\s*-\s*['"]?SUB-RULE,/i.test(l)))return null;
+
+ let sanitizedRuleProviders=null;
+ const rpSec=sections.get('rule-providers');
+ if(rpSec&&rpSec.length>1){
+  const body=rpSec.slice(1);
+  let baseIndent=null;
+  const entries=[];
+  let entry=null;
+  for(const line of body){
+   if(!line.trim()||/^\s*#/.test(line)){if(entry)entry.lines.push(line);continue}
+   const im=/^([ \t]+)(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s:#]+))\s*:(.*)$/.exec(line);
+   if(im&&(baseIndent===null||im[1].length===baseIndent.length)){
+    if(baseIndent===null)baseIndent=im[1];
+    if(entry)entries.push(entry);
+    const keyName=im[2]??im[3]??im[4];
+    const keyToken=im[2]!==undefined?`"${im[2]}"`:im[3]!==undefined?`'${im[3]}'`:im[4];
+    entry={key:keyName,keyToken,indent:im[1],rest:im[5].trim(),lines:[line]};
+   }else if(entry){
+    entry.lines.push(line);
+   }
+  }
+  if(entry)entries.push(entry);
+  if(entries.length){
+   const rebuilt=['rule-providers:'];
+   let idx=0;
+   for(const item of entries){
+    const rawBlock=item.lines.join('\n');
+    if(/\btype\s*:\s*['"]?file['"]?\b/i.test(rawBlock))return null;
+    if(!/\btype\s*:\s*['"]?http['"]?\b/i.test(rawBlock))return null;
+    if(!/\burl\s*:\s*['"]?https?:\/\//i.test(rawBlock))return null;
+    const safeKey=(item.key.replace(/[^A-Za-z0-9_.-]/g,'_').replace(/^_+|_+$/g,'')||'rule').slice(0,48);
+    const safePath=`./ruleset/${safeKey}-${++idx}.yaml`;
+    if(item.rest.startsWith('{')){
+     // flow map: 仅安全替换或注入 path 字段，拒绝对本地文件的越界访问
+     if(/\bpath\s*:/i.test(item.rest)){
+      const cleaned=item.rest.replace(/\bpath\s*:\s*[^,}\r\n]+/i,`path: "${safePath}"`);
+      rebuilt.push(`${item.indent}${item.keyToken}: ${cleaned}`);
+     }else{
+      const cleaned=item.rest.replace(/\}\s*$/,`, path: "${safePath}"}`);
+      rebuilt.push(`${item.indent}${item.keyToken}: ${cleaned}`);
+     }
+    }else{
+     let propIndent=item.indent+'  ';
+     const kept=[item.lines[0]];
+     for(const sub of item.lines.slice(1)){
+      const pm=/^([ \t]+)([A-Za-z0-9_-]+)\s*:/.exec(sub);
+      if(pm){
+       propIndent=pm[1];
+       if(pm[2].toLowerCase()==='path')continue;
+      }
+      kept.push(sub);
+     }
+     kept.push(`${propIndent}path: ${safePath}`);
+     rebuilt.push(...kept);
+    }
+   }
+   sanitizedRuleProviders=rebuilt;
+  }
+ }
+ if(rulesSec.some(l=>/^\s*-\s*['"]?RULE-SET,/i.test(l))&&!sanitizedRuleProviders)return null;
+
+ const keptBlocks=[proxiesSec,groupsSec,...(sanitizedRuleProviders?[sanitizedRuleProviders]:[]),rulesSec];
+ const keptText=keptBlocks.map(b=>b.join('\n')).join('\n');
+ // 锚点完整性守卫：若保留区引用了被剥离区块里定义的 YAML 锚点，安全回落内置配置以免内核解析报错。
+ const definedAnchors=new Set([...keptText.matchAll(/&([A-Za-z0-9_-]+)/g)].map(m=>m[1]));
+ for(const m of keptText.matchAll(/(?:^|[\s,\[:])\*([A-Za-z0-9_-]+)/gm)){
+  if(!definedAnchors.has(m[1]))return null;
+ }
+
+ const headerLines=[];
+ for(const [k,v] of Object.entries(hostBase)){
+  if(v===undefined)continue;
+  headerLines.push(`${k}: ${JSON.stringify(v)}`);
+ }
+ return `${headerLines.join('\n')}\n${keptText}\n`;
+}
 export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],dataDirectory,tun,geo=false}){
  const tunEnabled=tun?.enable===true;
- const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,'find-process-mode':'off','keep-alive-idle':15,'keep-alive-interval':15,ipv6:false,profile:{'store-selected':true}};
+ const value={'mixed-port':mixedPort,'external-controller':`127.0.0.1:${controllerPort}`,secret,'allow-lan':false,mode:'rule','log-level':'warning','unified-delay':true,'tcp-concurrent':true,'find-process-mode':'off',ipv6:false,profile:{'store-selected':true,'store-fake-ip':true}};
  const enabled=subscriptions.filter(s=>s.enabled!==false);
- const withGeo=Boolean(geo&&enabled.length);
  if(enabled.length){
   value['proxy-providers']=Object.fromEntries(enabled.map(s=>[s.id,fileProvider(s.id,subscriptionPath(dataDirectory,s.id),{excludeFilter:DUMMY_NODE_FILTER})]));
   // Verge 风格组树（内化为 FISH Dock 自己的命名与分流）：
-  // 1) 主组含自动选择与故障转移兜底，并用 exclude-filter 排除机场信息假节点；
+  // 1) 主组含自动选择与故障转移兜底，用 exclude-filter 排除机场信息假节点；
+  //    url-test 与 fallback 统一启用 lazy: true 与 300s 间隔（对标 Verge），避免高频并发握手触发机场限流；
   // 2) 独立出 🐙 GitHub 组（涵盖 github + npm 官方源）排在 microsoft 之前，避免被 GeoSite(microsoft) 误导直连；
   // 3) cn.bing.com 与 microsoft@cn / apple@cn 优先直连，国内流量放行后再拒海外 UDP 443（QUIC）让浏览器瞬切 TCP HTTP/2。
   const MAIN='🚀 节点选择',AUTO='♻️ 自动选择',FALLBACK='🩺 故障转移',GITHUB='🐙 GitHub',DIRECT_GROUP='🎯 全球直连',FINAL='🐟 漏网之鱼';
   const category=(name,first)=>({name,type:'select',proxies:[first]});
   value['proxy-groups']=[
    {name:MAIN,type:'select',proxies:[AUTO,FALLBACK,'DIRECT'],use:enabled.map(s=>s.id)},
-   {name:AUTO,type:'url-test',url:'https://www.gstatic.com/generate_204',interval:90,timeout:3000,tolerance:50,'max-failed-times':2,'expected-status':'204',use:enabled.map(s=>s.id)},
-   {name:FALLBACK,type:'fallback',url:'https://www.gstatic.com/generate_204',interval:60,timeout:3000,'max-failed-times':2,'expected-status':'204',use:enabled.map(s=>s.id)},
+   {name:AUTO,type:'url-test',url:'https://www.gstatic.com/generate_204',interval:300,timeout:3000,tolerance:50,lazy:true,'max-failed-times':2,'expected-status':'204',use:enabled.map(s=>s.id)},
+   {name:FALLBACK,type:'fallback',url:'https://www.gstatic.com/generate_204',interval:300,timeout:3000,lazy:true,'max-failed-times':2,'expected-status':'204',use:enabled.map(s=>s.id)},
    {name:'🛑 广告拦截',type:'select',proxies:['REJECT','DIRECT',MAIN]},
    {name:GITHUB,type:'select',proxies:[MAIN,'DIRECT']},
    category('📲 Telegram',MAIN),
@@ -396,11 +528,11 @@ export function kernelConfig({mixedPort,controllerPort,secret,subscriptions=[],d
    ];
   }
  }else value.rules=['MATCH,DIRECT'];
- value.dns=buildDnsConfig({tunEnabled,withGeo});
+ value.dns=buildDnsConfig({tunEnabled});
  value.sniffer=buildSnifferConfig();
  if(tunEnabled){
-  value.tun={enable:true,stack:['mixed','gvisor','system'].includes(tun.stack)?tun.stack:'mixed',
-   mtu:1500,'strict-route':true,'dns-hijack':['any:53','tcp://any:53'],'auto-route':true,'auto-detect-interface':true,
+  value.tun={enable:true,stack:['gvisor','mixed','system'].includes(tun.stack)?tun.stack:'gvisor',
+   mtu:1500,'strict-route':tun.strictRoute===true,'dns-hijack':['any:53','tcp://any:53'],'auto-route':true,'auto-detect-interface':true,
    'route-exclude-address':['127.0.0.0/8','10.0.0.0/8','100.64.0.0/10','169.254.0.0/16','172.16.0.0/12','192.168.0.0/16','224.0.0.0/4','255.255.255.255/32']};
  }
  return value;
@@ -472,7 +604,7 @@ export async function pruneTmp(dataDirectory){
 }
 export function createRuntime(context){
  const adapter=context.proxyAdapter||{async read(){return powershell('read')},async write(values){await powershell('write',values)}};
- const envAdapter=context.envProxyAdapter||{async read(){return powershellEnv('read')},async write(values){await powershellEnv('write',values)}};
+ const envAdapter=context.envProxyAdapter||{async read(){return readUserEnvFast()},async write(values){await powershellEnv('write',values)}};
  const lease=createProxyLease({storage:context.storage,adapter});
  const envLease=createEnvProxyLease({storage:context.storage,adapter:envAdapter});
  const tun=context.tun||null;
@@ -551,10 +683,20 @@ export function createRuntime(context){
   return false;
  }
  // 内核配置生成 + 落盘：start 与「运行中热切换」共用这一处（否则两处各拼一遍必然漂移）。
+ // 单条订阅且配置模式不为 builtin 时，优先安全合并订阅原生策略（方案 B1，对标 Clash Verge）；
+ // 其余场景（纯节点订阅、多订阅、缺 geo、危险字段或手动选择 builtin）回落内置配置。
  // 返回配置文件绝对路径（内核 -f 读的就是它，热切换要让控制器读同一个目录）。
  async function writeConfig({settings,subscriptions=[],secret,dataDirectory=context.dataDirectory,geo=false,name=RUNTIME_CONFIG}={}){
   const value=kernelConfig({...settings,secret,subscriptions,dataDirectory,geo});
-  await context.storage.write('tmp',name,JSON.stringify(value));
+  const enabled=subscriptions.filter(s=>s.enabled!==false);
+  let serialized=null;
+  if(settings?.profileMode!=='builtin'&&enabled.length===1){
+   try{
+    const raw=await readFile(subscriptionPath(dataDirectory,enabled[0].id),'utf8');
+    serialized=mergeSubscriptionYaml(raw,value,{geo});
+   }catch{/* 缓存不存在或读取失败则回落内置配置 */}
+  }
+  await context.storage.write('tmp',name,serialized??JSON.stringify(value));
   return join(dataDirectory,'tmp',name);
  }
  // geo 数据是否就位：热切换不重复下载，按内核实际的工作目录（TUN 用数据根，普通模式用 config）判断。
@@ -585,8 +727,9 @@ export function createRuntime(context){
   for(const category of ['tmp','config','credentials'])await mkdir(join(context.dataDirectory,category),{recursive:true});
  // #46：先回收上一轮强杀留下的 tmp 残片，再写这一轮的配置。
  await pruneTmp(context.dataDirectory)
-  // 内核 -d 目录：TUN 服务用数据根，普通模式用 config 子目录。
+  // 内核 -d 目录：TUN 服务用数据根，普通模式用 config 子目录；同步建好 ruleset 缓存目录。
   const kernelHome=c.tun?.enable?context.dataDirectory:join(context.dataDirectory,'config');
+  await mkdir(join(kernelHome,'ruleset'),{recursive:true});
   // geo 数据优先取包内随附文件（插件 service 目录，后端注入 geoDir），离线可用；
   // 未注入时退回内核同目录；都拿不到则降级为无 geo 规则。
   const hasSubscriptions=!!c.subscriptions?.some(s=>s.enabled!==false);
@@ -600,7 +743,16 @@ export function createRuntime(context){
    if(!tun)throw serviceError('TUN_UNSUPPORTED')
    const info=await tun.status();
    if(!info.installed)throw serviceError('TUN_NOT_INSTALLED')
-   if(info.kernel&&info.kernel.toLowerCase()!==c.kernel.toLowerCase()){
+   // 内核版本一致性优先按 SHA-256 比对（2.5.2 起 TUN 服务托管稳定副本于 ProgramData，插件升级不再触发假失配）；
+   // 老版 service.ini 未记录 kernelSha256 时回退路径比对。
+   let kernelMismatch=false;
+   if(typeof info.kernelSha256==='string'&&/^[a-f0-9]{64}$/i.test(info.kernelSha256)){
+    const currentHash=await fileSha256(c.kernel).catch(()=>'');
+    if(currentHash&&currentHash.toLowerCase()!==info.kernelSha256.toLowerCase())kernelMismatch=true;
+   }else if(info.kernel&&info.kernel.toLowerCase()!==c.kernel.toLowerCase()){
+    kernelMismatch=true;
+   }
+   if(kernelMismatch){
     const error=Error('已安装的 TUN 服务绑定了另一个内核，请重新安装服务');error.code='TUN_KERNEL_MISMATCH';throw error}
    viaService=true;
    try{
@@ -626,7 +778,14 @@ export function createRuntime(context){
   // 只能活一个」。停不掉也继续，后面的 free() 与 waitController() 会给出确定错误。
   if(tun)try{const info=await tun.status();if(tunHandoverNeeded(info))await tun.disable()}catch{}
 
-  const data=join(context.dataDirectory,'config');const child=spawn(c.kernel,['-d',data,'-f',runtimePath],{cwd:context.dataDirectory,windowsHide:true,stdio:['ignore','ignore','ignore'],env:{...process.env,SAFE_PATHS:join(context.dataDirectory,'credentials'),TMP:join(context.dataDirectory,'tmp'),TEMP:join(context.dataDirectory,'tmp')}});
+  const data=join(context.dataDirectory,'config');
+  const kernelLog=createKernelLogWriter(join(context.dataDirectory,'tmp','mihomo.log'),c.secret);
+  kernelLog.write(`[fish-clash] start mihomo (process mode)\n`);
+  const child=spawn(c.kernel,['-d',data,'-f',runtimePath],{cwd:context.dataDirectory,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,SAFE_PATHS:join(context.dataDirectory,'credentials'),TMP:join(context.dataDirectory,'tmp'),TEMP:join(context.dataDirectory,'tmp')}});
+  child.stdout?.on('data',chunk=>kernelLog.write(chunk));
+  child.stderr?.on('data',chunk=>kernelLog.write(chunk));
+  child.stdout?.on('error',()=>{});
+  child.stderr?.on('error',()=>{});
   let failure=null;child.on('error',()=>{failure=Error('mihomo 内核启动失败')});
   const exited=new Promise(resolve=>{child.once('exit',resolve);child.once('error',resolve)});
   const alive=()=>!failure&&child.exitCode===null&&child.signalCode===null;
@@ -670,12 +829,64 @@ export function createRuntime(context){
   stop:async()=>{forceDisarmWatchdog()},shutdown:async()=>{forceDisarmWatchdog()},
   ...createSubscriptionRuntime(context)};
 }
+// 捕获普通模式下 mihomo 的 stdout/stderr 到 tmp/mihomo.log：脱敏 secret/Bearer，512 KiB 自动轮转。
+function createKernelLogWriter(filePath,secret='',maxBytes=512*1024){
+ let chain=Promise.resolve(),pending=0,approxSize=-1;
+ const redact=raw=>{
+  let text=typeof raw==='string'?raw:Buffer.from(raw).toString('utf8');
+  if(secret&&secret.length>=8)text=text.split(secret).join('***');
+  text=text.replace(/(Bearer\s+)[A-Za-z0-9._-]+/gi,'$1***')
+   .replace(/((?:secret|password|token)\s*[:=]\s*['"]?)[^\s'",}]+/gi,'$1***');
+  return text;
+ };
+ return {
+  write(chunk){
+   if(pending>128)return;
+   const text=redact(chunk);
+   if(!text)return;
+   pending++;
+   chain=chain.then(async()=>{
+    try{
+     if(approxSize<0){
+      try{approxSize=(await stat(filePath)).size}catch{approxSize=0}
+     }
+     if(approxSize+Buffer.byteLength(text,'utf8')>maxBytes){
+      await rename(filePath,`${filePath}.1`).catch(()=>unlink(filePath).catch(()=>{}));
+      approxSize=0;
+     }
+     await appendFile(filePath,text,'utf8');
+     approxSize+=Buffer.byteLength(text,'utf8');
+    }catch{/* 日志落盘失败不影响内核运行 */}
+    finally{pending--}
+   });
+  }
+ };
+}
+// 轻量读取 Windows 用户环境变量（HKCU\Environment）：优先用 reg.exe (~15ms)，失败再回退 pwsh。
+async function readUserEnvFast(){
+ if(process.platform!=='win32')throw Error('环境变量代理接管仅支持 Windows');
+ try{
+  const stdout=await new Promise((resolve,reject)=>{
+   execFile('reg.exe',['query','HKCU\\Environment'],{windowsHide:true,timeout:3000},(err,out)=>{
+    if(err)reject(err);else resolve(String(out||''));
+   });
+  });
+  const result={ok:true,HTTP_PROXY:null,HTTPS_PROXY:null,NO_PROXY:null};
+  for(const line of stdout.split(/\r?\n/)){
+   const m=/^\s+(HTTP_PROXY|HTTPS_PROXY|NO_PROXY)\s+REG_(?:EXPAND_)?SZ(?:[ \t]+(.*))?$/i.exec(line);
+   if(m)result[m[1].toUpperCase()]=m[2]!==undefined?m[2].trimEnd():'';
+  }
+  return result;
+ }catch{
+  return powershellEnv('read');
+ }
+}
 function runPowerShellJson(source,payload,{platformError='仅支持 Windows',opLabel='注册表',timeoutError='操作超时'}={}){
  if(process.platform!=='win32')return Promise.reject(Error(platformError));
  return new Promise((resolve,reject)=>{
   const child=spawn('pwsh',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(source,'utf16le').toString('base64')],{windowsHide:true,stdio:['pipe','pipe','pipe']});
   let output='',errors='';
-  const timer=setTimeout(()=>{child.kill();reject(Error(timeoutError))},5000);
+  const timer=setTimeout(()=>{child.kill();reject(Error(timeoutError))},10000);
   child.on('error',()=>{clearTimeout(timer);reject(Error('请先安装 PowerShell 7 后使用系统代理控制'))});
   child.stdout.on('data',b=>{output+=b;if(output.length>16384)child.kill()});
   child.stderr.on('data',b=>{errors=(errors+b).slice(-4096)});

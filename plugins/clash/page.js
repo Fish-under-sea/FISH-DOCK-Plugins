@@ -6,7 +6,8 @@
  const SECTIONS=[['overview','概览'],['providers','订阅'],['settings','内核设置'],['appearance','外观']];
  const MODES=[['rule','规则','按规则分流：国内直连，其余走代理'],['global','全局','所有流量都走代理'],
   ['direct','直连','全部不走代理，等价于关闭分流']];
- const TUN_STACKS=['mixed','gvisor','system'];
+ const TUN_STACKS=['gvisor','mixed','system'];
+ const PROFILE_MODES=[['subscription','订阅原生分流（优先，对标 Clash Verge）'],['builtin','内置分流规则（仅用订阅节点）']];
 
  // ── 状态 ──
  let view=null,error='',notice='',noticeKind='info';
@@ -532,7 +533,7 @@
   if(!view.running)return '未运行';
   if(mode==='direct')return 'DIRECT（直连）';
   const list=groups();
-  let g=list.find(x=>/节点选择/.test(x.name))??list[0];
+  let g=autoGroup();
   let label='';
   for(let depth=0;depth<6&&g;depth++){
    const picked=g.nodes?.find(n=>n.name===g.selected);
@@ -678,15 +679,23 @@
  }
  function settingsSection(){
   const cfg=configDraft||view;
-  const stack=cfg.tun?.stack||view.tun?.stack||'mixed';
+  const stack=cfg.tun?.stack||view.tun?.stack||'gvisor';
+  const strictRoute=(cfg.tun?.strictRoute??view.tun?.strictRoute)===true;
+  const profileMode=cfg.profileMode||view.profileMode||'subscription';
+  const profileLabel=PROFILE_MODES.find(([k])=>k===profileMode)?.[1]??PROFILE_MODES[0][1];
   const formLocked=locked()||view.tunSwitching===true;
   const tunCheckLocked=formLocked||(!view.tunService?.installed&&!cfg.tun?.enable);
   return `<h2>内核设置</h2><form id="config">
    <label>mihomo 可执行文件<input id="kernel" name="kernel" value="${esc(cfg.kernel)}" required ${formLocked?'disabled':''}></label>
    <div class="columns"><label>混合代理端口<input id="mixedPort" name="mixedPort" type="number" min="1024" max="65535" value="${esc(cfg.mixedPort)}" required ${formLocked?'disabled':''}></label>
    <label>控制器端口<input id="controllerPort" name="controllerPort" type="number" min="1024" max="65535" value="${esc(cfg.controllerPort)}" required ${formLocked?'disabled':''}></label></div>
+   <fieldset class="tun-box"><legend>订阅配置策略</legend>
+   ${comboTrigger('profileMode','分流策略',profileLabel,null,formLocked,'内核运行中不可改')}
+   <p class="muted small">单条订阅含完整代理组与规则时，优先安全合并订阅原生策略（自动剥离端口/DNS/TUN/本地 file 规则集等敏感字段）；纯节点订阅自动回落内置分流。</p>
+   </fieldset>
    <fieldset class="tun-box"><legend>TUN 模式</legend>
    <label class="check"><input id="tunEnable" name="tunEnable" type="checkbox" ${cfg.tun?.enable?'checked':''} ${tunCheckLocked?'disabled':''}> 启用 TUN（由 SYSTEM 服务托管，普通权限即可用）</label>
+   <label class="check"><input id="tunStrictRoute" name="tunStrictRoute" type="checkbox" ${strictRoute?'checked':''} ${formLocked?'disabled':''}> 严格路由 strict-route（默认关闭；开启后强制所有出站流量过 TUN）</label>
    ${comboTrigger('tunStack','栈',stack,null,formLocked,'内核运行中不可改')}
    ${cfg.tun?.enable&&!view.tunService?.installed?'<p class="bad" role="alert">TUN 已勾选但服务未安装，启动内核会被拒绝。请先安装 TUN 服务。</p>':''}
    ${tunServiceBlock()}
@@ -1012,7 +1021,7 @@
   const ipState=ip?(ip.available===false?'na':'have'):(ipError?'err':'none');
   return [section,view.running,view.operation,view.tunSwitching,view.configured,view.mode,!!view.systemProxy,
    !!view.envProxy,!!view.envProxyActive,
-   view.tun?.enable,view.tun?.stack,view.tunService?.installed,view.tunService?.state,subs,gs,confirmTun,
+   view.tun?.enable,view.tun?.stack,!!view.tun?.strictRoute,view.profileMode,view.tunService?.installed,view.tunService?.state,subs,gs,confirmTun,
    draft.id,activeSub,ipState,!!sites,anyOp(),nodeTesting].join('§');
  }
  function draw(){
@@ -1045,7 +1054,10 @@
   const form=root.querySelector('#config');
   if(form){
    form.oninput=()=>{const d=new FormData(form);configDraft={kernel:d.get('kernel'),mixedPort:d.get('mixedPort'),controllerPort:d.get('controllerPort'),
-    tun:{enable:root.querySelector('#tunEnable')?.checked===true,stack:configDraft?.tun?.stack??view.tun?.stack??'mixed'}}};
+    profileMode:configDraft?.profileMode??view.profileMode??'subscription',
+    tun:{enable:root.querySelector('#tunEnable')?.checked===true,
+     stack:configDraft?.tun?.stack??view.tun?.stack??'gvisor',
+     strictRoute:root.querySelector('#tunStrictRoute')?.checked===true}}};
    bindSave(form,saveConfig);
   }
   const sf=root.querySelector('#subscription-form');
@@ -1070,9 +1082,17 @@
     items:nodes.map(n=>({value:n.name,label:n.label??n.name,selected:n.name===cur.selected,delay:delayInfo(n),disabled:false})),
     onSelect:value=>{const g=currentGroup();if(g)run('select',{group:g.name,name:value})}});
   }
-  mountCombo('tunStack',{popupId:'tunstack-listbox',ariaLabel:'TUN 栈',selectedIndex:Math.max(0,TUN_STACKS.indexOf((configDraft||view)?.tun?.stack||'mixed')),
-   items:TUN_STACKS.map(s=>({value:s,label:s,selected:s===((configDraft||view)?.tun?.stack||'mixed')})),
-   onSelect:value=>{configDraft={...(configDraft||{kernel:view.kernel,mixedPort:view.mixedPort,controllerPort:view.controllerPort,tun:{enable:view.tun?.enable===true,stack:view.tun?.stack||'mixed'}}),tun:{...((configDraft||view).tun||{}),stack:value}};draw()}});
+  const draftBase=()=>configDraft||{kernel:view.kernel,mixedPort:view.mixedPort,controllerPort:view.controllerPort,
+   profileMode:view.profileMode||'subscription',
+   tun:{enable:view.tun?.enable===true,stack:view.tun?.stack||'gvisor',strictRoute:view.tun?.strictRoute===true}};
+  const curStack=(configDraft||view)?.tun?.stack||'gvisor';
+  mountCombo('tunStack',{popupId:'tunstack-listbox',ariaLabel:'TUN 栈',selectedIndex:Math.max(0,TUN_STACKS.indexOf(curStack)),
+   items:TUN_STACKS.map(s=>({value:s,label:s,selected:s===curStack})),
+   onSelect:value=>{const base=draftBase();configDraft={...base,tun:{...base.tun,stack:value}};draw()}});
+  const curProfileMode=(configDraft||view)?.profileMode||'subscription';
+  mountCombo('profileMode',{popupId:'profilemode-listbox',ariaLabel:'分流策略',selectedIndex:Math.max(0,PROFILE_MODES.findIndex(([k])=>k===curProfileMode)),
+   items:PROFILE_MODES.map(([k,label])=>({value:k,label,selected:k===curProfileMode})),
+   onSelect:value=>{configDraft={...draftBase(),profileMode:value};draw()}});
  }
  // H1 局部更新：只改带 data-live 的读数节点，绝不重建 DOM。
  function updateLive(){
@@ -1131,9 +1151,13 @@
   if(!form||form.reportValidity?.()===false)return false;
   const data=new FormData(form);
   const tunEnable=root.querySelector('#tunEnable');
-  const stack=(configDraft?.tun?.stack)||view.tun?.stack||'mixed';
+  const tunStrictRoute=root.querySelector('#tunStrictRoute');
+  const stack=(configDraft?.tun?.stack)||view.tun?.stack||'gvisor';
+  const strictRoute=tunStrictRoute?tunStrictRoute.checked===true:(configDraft?.tun?.strictRoute??view.tun?.strictRoute)===true;
+  const profileMode=configDraft?.profileMode||view.profileMode||'subscription';
   return run('save',{kernel:data.get('kernel'),mixedPort:Number(data.get('mixedPort')),
-   controllerPort:Number(data.get('controllerPort')),tun:{enable:tunEnable?.checked===true,stack}});
+   controllerPort:Number(data.get('controllerPort')),profileMode,
+   tun:{enable:tunEnable?.checked===true,stack,strictRoute}});
  }
  function bindSave(form,save){
   form.onsubmit=e=>{e.preventDefault();return save()};

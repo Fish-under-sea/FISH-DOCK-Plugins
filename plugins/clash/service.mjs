@@ -76,8 +76,10 @@ function runStateValue(value) {
 }
 
 const defaults={kernel:'',mixedPort:7895,controllerPort:9099};
-const tunStacks=['mixed','gvisor','system'];
-const defaultTun={enable:false,stack:'mixed'};
+const tunStacks=['gvisor','mixed','system'];
+const defaultTun={enable:false,stack:'gvisor',strictRoute:false};
+const profileModes=['subscription','builtin'];
+const defaultProfileMode='subscription';
 // 网站测试与 IP 查询的目标：全部经当前选中节点发起，避免「直连测自己」。
 const siteTargets=Object.freeze([
  {key:'apple',label:'Apple',url:'https://www.apple.com/library/test/success.html'},
@@ -127,7 +129,7 @@ function cpuLabel() {
 export function createClash({context,runtime,request:injectedRequest,fetch:fetcher=globalThis.fetch,defaultKernel='',pluginVersion='',
   pidAlive=defaultPidAlive,pidStartedAt=defaultProcessStartedAt,attachCooldownMs=3000}) {
   let running=null,settings,loading,subscriptions=[],secret='',operation=null,closing=false,operationError='';
-  let startedAt=0,ipCache=null;
+  let startedAt=0,ipCache=null,lastLeaseRefresh=0;
   // 「内核在不在跑」不再只由内存里的 running 决定：插件进程重启后 running 会归零，
   // 但 mihomo 子进程还在，于是界面显示「内核已停止」而代理仍然有效（#14 现象 C/E）。
   // 这里补一份落盘运行态，并按 pid + secret 指纹 + 控制器 /version 三重确认后 attach。
@@ -272,7 +274,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       running=adoptKernel(outcome.record);
       attached=true;kernelPid=outcome.record.pid;startedAt=outcome.record.startedAt;
       secret=outcome.key;ipCache=null;attachError=null;attachRetryAt=0;
-      if(outcome.record.mode==='service')void runtime.tunRefreshLease?.(process.pid).catch(()=>{});
+      if(outcome.record.mode==='service'){lastLeaseRefresh=Date.now();void runtime.tunRefreshLease?.(process.pid).catch(()=>{})}
       return outcome;
     })().catch(error=>{
       attachTask=null;
@@ -309,7 +311,9 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       settings={kernel:saved.kernel??defaultKernel,mixedPort:saved.mixedPort??defaults.mixedPort,
         controllerPort:saved.controllerPort??defaults.controllerPort,bundled,
         envProxy:saved.envProxy!==undefined?saved.envProxy===true:tunEnabled,
-        tun:{enable:tunEnabled,stack:tunStacks.includes(saved.tun?.stack)?saved.tun.stack:defaultTun.stack}};
+        profileMode:profileModes.includes(saved.profileMode)?saved.profileMode:defaultProfileMode,
+        tun:{enable:tunEnabled,stack:tunStacks.includes(saved.tun?.stack)?saved.tun.stack:defaultTun.stack,
+          strictRoute:saved.tun?.strictRoute===true}};
       if(bundled)settings.kernel=defaultKernel;
       const raw=await context.storage.read('config','subscriptions.json');
       if(raw) {
@@ -451,10 +455,21 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     if(runtime.tun)try{state.tunService=await runtime.tun.status()}catch{state.tunService=null}
     if(running?.mode==='service'&&!operation&&!tunBusy&&state.tunService){
       const hasEnabled=typeof state.tunService.enabled==='boolean';
-      const serviceDead=state.tunService.installed===false||state.tunService.enabled===false||
-        (hasEnabled&&(state.tunService.state==='stopped'||state.tunService.state==='absent'));
+      const svcState=state.tunService.state;
+      // sc.exe 瞬态失败会报 unknown（不再冒充 absent）；真正停止/卸载时才怀疑服务已死。
+      const explicitlyDown=state.tunService.installed===false||state.tunService.enabled===false;
+      const stateDown=hasEnabled&&svcState!=='unknown'&&(svcState==='stopped'||svcState==='absent');
+      let serviceDead=explicitlyDown;
+      if(!serviceDead&&stateDown){
+        if(controller){
+          try{await request('/version',{timeoutMs:1200});serviceDead=false}
+          catch{serviceDead=true}
+        }else{
+          serviceDead=true;
+        }
+      }
       if(serviceDead){
-        running=null;startedAt=0;kernelPid=null;attached=false;ipCache=null;
+        running=null;startedAt=0;kernelPid=null;attached=false;ipCache=null;lastLeaseRefresh=0;
         state.running=false;state.uptimeMs=null;state.kernelPid=null;state.attached=false;
         await Promise.allSettled([
           clearRunState(),
@@ -463,6 +478,9 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
         ]);
         state.systemProxy=runtime.proxy.active?.()??false;
         state.envProxyActive=runtime.envProxy?.active?.()??false;
+      }else if(Date.now()-lastLeaseRefresh>=30000){
+        lastLeaseRefresh=Date.now();
+        void runtime.tunRefreshLease?.(process.pid).catch(()=>{});
       }
     }
     if(!state.error&&attachError)state.error=attachError.message;
@@ -509,12 +527,18 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       if(params.tun!==undefined){
         const tun=params.tun||{};
         if(typeof tun.enable!=='boolean'&&tun.enable!==undefined)throw serviceError('TUN_SWITCH_INVALID');
-        next.tun={enable:tun.enable===true, stack:tunStacks.includes(tun.stack)?tun.stack:(old.tun?.stack??defaultTun.stack)};
+        next.tun={enable:tun.enable===true,
+          stack:tunStacks.includes(tun.stack)?tun.stack:(old.tun?.stack??defaultTun.stack),
+          strictRoute:typeof tun.strictRoute==='boolean'?tun.strictRoute:(old.tun?.strictRoute===true)};
         if(next.tun.enable){
           if(!runtime.tun)throw serviceError('TUN_UNSUPPORTED');
           const info=await runtime.tun.status();
           if(!info?.installed)throw serviceError('TUN_NOT_INSTALLED');
         }
+      }
+      if(params.profileMode!==undefined){
+        if(!profileModes.includes(params.profileMode))throw serviceError('KERNEL_STATE_INVALID');
+        next.profileMode=params.profileMode;
       }
       if(params.envProxy!==undefined){
         if(typeof params.envProxy!=='boolean')throw serviceError('ENV_PROXY_STATE_INVALID');
@@ -610,6 +634,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     running=candidate;
     await request('/version',{timeoutMs:4000}).catch(()=>{throw coded('CONTROLLER_UNREACHABLE','重启后的内核控制器尚未就绪')});
     startedAt=Date.now();ipCache=null;attached=false;attachError=null;attachTask=null;attachRetryAt=0;
+    if((candidate.mode??(c.tun?.enable?'service':'process'))==='service')lastLeaseRefresh=Date.now();
     kernelPid=Number.isInteger(candidate.pid)?candidate.pid:null;
     try{
       await writeRunState({schema:1,pid:kernelPid,mode:candidate.mode??(c.tun?.enable?'service':'process'),
@@ -639,7 +664,18 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     try{
       const url=await context.secrets.read('credentials',`${id}.json`);
       await runtime.updateSubscription({...settings,id,url,signal,
-        apply:alive()&&rowFor(id).enabled?()=>request(`/providers/proxies/${id}`,{method:'PUT'}):null,
+        apply:alive()&&rowFor(id).enabled?async()=>{
+          try{await request(`/providers/proxies/${id}`,{method:'PUT'})}
+          catch(error){
+            if(error?.code==='NODE_STALE'&&typeof runtime.swapConfig==='function'){
+              const key=secret||await context.secrets.read('keys','controller.key')||'';
+              await runtime.swapConfig({settings,subscriptions,secret:key,
+                apply:path=>request('/configs?force=true',{method:'PUT',body:{path},timeoutMs:SWITCH_RELOAD_TIMEOUT_MS})});
+              return;
+            }
+            throw error;
+          }
+        }:null,
         commit:result=>exclusive(async()=>persist(subscriptions.map(s=>s.id===id?{...s,status:'ready',error:'',errorCode:null,
           hasCache:true,nodeCount:result.nodeCount,
           // 服务器没回报额度就保留旧值；结构异常视为无额度。
@@ -744,6 +780,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       running=candidate;
       try{await request('/version')}catch{await abandonStart({candidate});throw coded('CONTROLLER_UNREACHABLE','内核控制器尚未就绪')}
       startedAt=Date.now();ipCache=null;attached=false;attachError=null;attachTask=null;attachRetryAt=0;
+      if((candidate.mode??(c.tun?.enable?'service':'process'))==='service')lastLeaseRefresh=Date.now();
       kernelPid=Number.isInteger(candidate.pid)?candidate.pid:null;
       // 运行态落盘是「下次能 attach」的唯一依据；写失败不该让已经起来的内核回滚。
       try{
@@ -891,6 +928,8 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     if(!target||!target.nodes.some(n=>n.name===name))throw serviceError('NODE_STALE');
     if(target.type&&target.type!=='Selector')throw coded('GROUP_NOT_SELECTABLE',`代理组「${group}」为自动策略，不支持手动切换节点`);
     await request(`/proxies/${encodeURIComponent(group)}`,{method:'PUT',body:{name}});
+    // 对标 Clash Verge auto_close_connection：切节点后立刻断开旧连接，防止长连接滞留慢节点。
+    await request('/connections',{method:'DELETE',timeoutMs:1500}).catch(()=>{});
     // 出口 IP 跟着节点走：缓存还留着旧节点的结果就是「换了节点 IP 还是上一个」（#14 现象 D）。
     ipCache=null;
     return view();
@@ -899,7 +938,9 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     // 两种失败是两种用户动作，别合成一条：没启动内核该去点「启动内核」，模式值非法才该查调用方。
     if(!alive())throw serviceError('KERNEL_NOT_RUNNING');
     if(!['rule','global','direct'].includes(mode))throw serviceError('KERNEL_STATE_INVALID');
-    await request('/configs',{method:'PATCH',body:{mode}});return view();
+    await request('/configs',{method:'PATCH',body:{mode}});
+    await request('/connections',{method:'DELETE',timeoutMs:1500}).catch(()=>{});
+    return view();
   }
   async function proxy({enabled}) {
     if(typeof enabled!=='boolean')throw serviceError('PROXY_STATE_INVALID');
@@ -981,12 +1022,27 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
     return {available:false,reason:'查询服务无响应，请检查代理连通性后重试'};
   }
   // 主组的 now 可能仍是另一个组，逐层取到真正的叶子节点再测速。
+  // 兼容订阅原生代理组（如 Kuromis / Proxy / 节点选择 等非默认组名）。
   function resolveLeaf(proxies) {
-    let name=proxies?.['🚀 节点选择']?.now;
+    if(!proxies||typeof proxies!=='object')return null;
+    let name=proxies['🚀 节点选择']?.now;
+    if(!name){
+      const entries=Object.entries(proxies).filter(([k,p])=>isProxyGroup(k,p)&&typeof p?.now==='string'&&p.now);
+      const primary=entries.find(([k])=>/节点选择|proxy|select/i.test(k))
+        ??entries.find(([,p])=>p.type==='Selector')
+        ??entries[0];
+      name=primary?.[1]?.now;
+    }
+    const seen=new Set();
     for(let depth=0;depth<8&&name;depth++){
+      if(seen.has(name))return null;
+      seen.add(name);
       const node=proxies[name];
       if(!node)return null;
-      if(!Array.isArray(node.all))return name;
+      if(!Array.isArray(node.all)){
+        if(['Direct','Reject','RejectDrop','Pass','Compatible'].includes(node.type)||/^(?:DIRECT|REJECT|PASS|COMPATIBLE)$/i.test(name))return null;
+        return name;
+      }
       name=node.now;
     }
     return null;
@@ -1059,7 +1115,7 @@ export function createClash({context,runtime,request:injectedRequest,fetch:fetch
       const info=await runtime.tun.status();
       if(!info?.installed)throw serviceError('TUN_NOT_INSTALLED');
     }
-    const nextTun={enable,stack:tunStacks.includes(old.tun?.stack)?old.tun.stack:defaultTun.stack};
+    const nextTun={enable,stack:tunStacks.includes(old.tun?.stack)?old.tun.stack:defaultTun.stack,strictRoute:old.tun?.strictRoute===true};
     if(!alive()){
       if(enable)throw serviceError('KERNEL_NOT_RUNNING');
       await exclusive(async()=>{

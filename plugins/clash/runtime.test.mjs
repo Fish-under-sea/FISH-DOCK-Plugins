@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createProxyLease, createEnvProxyLease, mergeNoProxy, createRuntime, kernelConfig, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet, killProcess, pruneTmp} from './runtime.mjs';
+import {createProxyLease, createEnvProxyLease, mergeNoProxy, createRuntime, kernelConfig, mergeSubscriptionYaml, ensureGeoData, tunHandoverNeeded, GEO_FILES, proxiedGet, killProcess, pruneTmp} from './runtime.mjs';
+import {fileSha256} from './tun.mjs';
 import {createServer} from 'node:http';
 import {mkdtemp,writeFile,readFile,readdir,rm,mkdir,utimes} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
@@ -40,10 +41,12 @@ test('代理组生成 Verge 风格组树：主组引用 providers，过滤信息
  assert.deepEqual(by['🚀 节点选择'].use,[a,b]);
  assert.equal(by['♻️ 自动选择'].type,'url-test');
  assert.ok(by['♻️ 自动选择'].url.startsWith('https://'));
- assert.equal(by['♻️ 自动选择'].interval,90);
+ assert.equal(by['♻️ 自动选择'].interval,300);
+ assert.equal(by['♻️ 自动选择'].lazy,true);
  assert.equal(by['♻️ 自动选择']['max-failed-times'],2);
  assert.equal(by['🩺 故障转移'].type,'fallback');
- assert.equal(by['🩺 故障转移'].interval,60);
+ assert.equal(by['🩺 故障转移'].interval,300);
+ assert.equal(by['🩺 故障转移'].lazy,true);
  assert.equal(by['🩺 故障转移']['max-failed-times'],2);
  const excludeRe=new RegExp(c['proxy-providers'][a]['exclude-filter'].replace(/^\(\?i\)/,''),'i');
  for(const junk of ['剩余流量：228.87 GB','套餐到期：长期有效','9️⃣。官网：九云.com','Traffic Reset：18 Days Left','Expire Date：2027/01/06','91.08 GB | 200 GB']){
@@ -106,7 +109,7 @@ test('无订阅时不生成组树，规则保持纯直连',()=>{
  assert.equal(c['proxy-groups'],undefined);assert.equal(c['proxy-providers'],undefined);
  assert.deepEqual(c.rules,['MATCH,DIRECT']);
 });
-test('通用高性能配置：普通代理开启无 fake-ip 的 DNS 与 Sniffer，TUN 模式叠加虚拟网卡与 fake-ip',()=>{
+test('通用高性能配置：对标 Clash Verge 轻快 DNS/Sniffer、关闭 strict-route 与 gvisor 默认栈',()=>{
  const a='sub-00000000-0000-0000-0000-000000000001';
  const base2={mixedPort:7895,controllerPort:9099,secret:'synthetic',dataDirectory:'D:/synthetic',subscriptions:[{id:a,enabled:true}],geo:true};
  const off=kernelConfig({...base2,tun:{enable:false,stack:'mixed'}});
@@ -115,37 +118,32 @@ test('通用高性能配置：普通代理开启无 fake-ip 的 DNS 与 Sniffer�
  assert.equal(off['find-process-mode'],'off');
  assert.equal(off['tcp-concurrent'],true);
  assert.equal(off['unified-delay'],true);
+ assert.equal(off['keep-alive-idle'],undefined,'不再硬编码 15s keep-alive-idle，交给 mihomo 默认 TCP 保活');
+ assert.deepEqual(off.profile,{'store-selected':true,'store-fake-ip':true});
  assert.equal(off.dns.enable,true);
  assert.equal(off.dns['enhanced-mode'],undefined,'普通代理模式禁止开启 fake-ip，以免污染系统真实解析');
- assert.equal(off.dns['respect-rules'],true);
- assert.ok(off.dns['direct-nameserver']?.length>0);
- assert.ok(off.dns.fallback?.length>0);
- assert.equal(off.dns['fallback-filter']?.geoip,true);
+ assert.equal(off.dns['respect-rules'],false,'关闭 respect-rules，避免 DNS 查询绕回代理引起首包高延迟');
+ assert.deepEqual(off.dns.fallback,[],'默认关闭高延迟 fallback 链路');
+ assert.ok(off.dns['default-nameserver']?.length>0);
+ assert.ok(off.dns['proxy-server-nameserver']?.some(s=>s.startsWith('https://')));
  assert.equal(off.sniffer.enable,true);
  assert.equal(off.sniffer['override-destination'],true);
  const on=kernelConfig({...base2,tun:{enable:true,stack:'gvisor'}});
  assert.equal(on.ipv6,false);
  assert.equal(on.tun.enable,true);assert.equal(on.tun.stack,'gvisor');
  assert.equal(on.tun.mtu,1500);
- assert.equal(on.tun['strict-route'],true);
+ assert.equal(on.tun['strict-route'],false,'TUN 默认关闭 strict-route，与 Clash Verge 一致');
  assert.deepEqual(on.tun['dns-hijack'],['any:53','tcp://any:53']);assert.equal(on.tun['auto-route'],true);
  assert.ok(on.tun['route-exclude-address'].includes('192.168.0.0/16'));
  assert.equal(on.dns.enable,true);assert.equal(on.dns['enhanced-mode'],'fake-ip');
- assert.equal(on.dns['respect-rules'],true);
- assert.ok(on.dns['default-nameserver']?.length>0);
- assert.ok(on.dns['proxy-server-nameserver']?.some(s=>s.startsWith('https://')));
- assert.ok(on.dns['direct-nameserver']?.length>0);
- assert.ok(on.dns.fallback?.length>0);
- assert.equal(on.dns['fallback-filter']?.geoip,true);
+ assert.equal(on.dns['respect-rules'],false);
+ assert.deepEqual(on.dns.fallback,[]);
  assert.ok(on.dns['fake-ip-filter']?.includes('+.msftncsi.com'));
  assert.ok(on.dns['fake-ip-filter']?.includes('dns.msftncsi.com'));
- assert.equal(on.sniffer.enable,true);
- assert.equal(on.sniffer['override-destination'],true);
- const noGeo=kernelConfig({...base2,geo:false,tun:{enable:true,stack:'mixed'}});
- assert.equal(noGeo.dns.fallback,undefined,'无 geo 数据时不得启用依赖 GeoIP 的 fallback-filter，防触发在线下载 MMDB 卡死');
- assert.equal(noGeo.dns['fallback-filter'],undefined);
+ const strictOn=kernelConfig({...base2,tun:{enable:true,stack:'mixed',strictRoute:true}});
+ assert.equal(strictOn.tun['strict-route'],true,'显式开启 strictRoute 时应透传给内核');
  const weird=kernelConfig({...base2,tun:{enable:true,stack:'nonsense'}});
- assert.equal(weird.tun.stack,'mixed');
+ assert.equal(weird.tun.stack,'gvisor','未知栈回落默认 gvisor');
 });
 test('ensureGeoData：包内文件优先、网络双源回退、已有文件幂等、全失败不抛出',async t=>{
  // 包内随附场景：直接从 bundleDir 复制，完全不发网络请求。
@@ -647,4 +645,127 @@ test('看门狗 recover 同时恢复 system-proxy.json 与 env-proxy.json', asyn
  assert.equal(env.HTTPS_PROXY, null);
  assert.equal(existsSync(sysPath), false);
  assert.equal(existsSync(envPath), false);
+});
+
+test('mergeSubscriptionYaml 白名单合并单条订阅原生策略，剥离危险字段并收敛 rule-providers 路径', () => {
+ const host = kernelConfig({ mixedPort: 7895, controllerPort: 9099, secret: 'host-key', dataDirectory: 'D:/synthetic', subscriptions: [{ id: 'sub-00000000-0000-0000-0000-000000000001', enabled: true }], geo: true, tun: { enable: true, stack: 'gvisor' } });
+ const subYaml = [
+  'port: 9999',
+  'allow-lan: true',
+  'external-controller: 0.0.0.0:19090',
+  'secret: evil-secret',
+  'dns:',
+  '  enable: false',
+  'tun:',
+  '  enable: false',
+  'proxies:',
+  '  - {name: "🇯🇵 Japan 04", type: ss, server: 127.0.0.1, port: 443, cipher: aes-128-gcm, password: synthetic}',
+  'proxy-groups:',
+  '  - name: Kuromis',
+  '    type: select',
+  '    proxies:',
+  '      - "🇯🇵 Japan 04"',
+  '      - DIRECT',
+  'rule-providers:',
+  '  apple: {type: http, behavior: classical, url: "https://example.test/apple.yaml", path: "C:/Windows/evil.yaml", interval: 86400}',
+  '  "微软服务":',
+  '    type: http',
+  '    behavior: classical',
+  '    url: https://example.test/ms.yaml',
+  '    path: ../../escape.yaml',
+  'rules:',
+  '  - RULE-SET,apple,DIRECT',
+  '  - RULE-SET,微软服务,DIRECT',
+  '  - GEOIP,CN,DIRECT',
+  '  - MATCH,Kuromis'
+ ].join('\n');
+ const merged = mergeSubscriptionYaml(subYaml, host, { geo: true });
+ assert.ok(typeof merged === 'string');
+ assert.ok(merged.includes('"mixed-port": 7895') || merged.includes('mixed-port: 7895'), '保留宿主端口');
+ assert.ok(merged.includes('127.0.0.1:9099'), '保留宿主控制器地址');
+ assert.equal(merged.includes('0.0.0.0:19090'), false, '剥离订阅中的 external-controller');
+ assert.equal(merged.includes('evil-secret'), false, '剥离订阅中的 secret');
+ assert.equal(merged.includes('C:/Windows/evil.yaml'), false, '重写 flow-map 中的越界 rule-provider 路径');
+ assert.equal(merged.includes('../../escape.yaml'), false, '重写 block-map 中的越界 rule-provider 路径');
+ assert.ok(merged.includes('./ruleset/apple-1.yaml'), 'flow-map 路径收敛到 ./ruleset/');
+ assert.ok(merged.includes('./ruleset/rule-2.yaml'), 'Unicode 键生成无碰撞安全文件名');
+ assert.ok(merged.includes('name: Kuromis'), '保留订阅原生代理组');
+ assert.ok(merged.includes('RULE-SET,apple,DIRECT'), '保留订阅原生规则');
+ // 缺 geo 时拒绝包含 GEOIP/GEOSITE 的原生订阅并回落内置配置
+ assert.equal(mergeSubscriptionYaml(subYaml, host, { geo: false }), null);
+ // 纯节点订阅（无 proxy-groups / rules）回落内置配置
+ assert.equal(mergeSubscriptionYaml('proxies:\n  - name: A\n    type: ss\n', host, { geo: true }), null);
+ // 含本地 file 类型 rule-provider 直接拒绝
+ const evilFile = subYaml.replace('type: http, behavior: classical', 'type: file, behavior: classical');
+ assert.equal(mergeSubscriptionYaml(evilFile, host, { geo: true }), null);
+ // 引用被剥离区块的 YAML 锚点直接拒绝
+ const danglingAnchor = 'base: &common\n  interval: 300\nproxies:\n  - name: A\nproxy-groups:\n  - name: G\n    <<: *common\n    type: select\n    proxies: [A]\nrules:\n  - MATCH,G\n';
+ assert.equal(mergeSubscriptionYaml(danglingAnchor, host, { geo: true }), null);
+ // proxy-groups 依赖外部 provider (use:) 时回落内置配置
+ const withUse = 'proxies:\n  - name: A\nproxy-groups:\n  - name: G\n    type: select\n    use: [ext]\nrules:\n  - MATCH,G\n';
+ assert.equal(mergeSubscriptionYaml(withUse, host, { geo: true }), null);
+});
+
+test('writeConfig 依据 profileMode 决定原生订阅合并或内置分流；TUN 内核校验优先比对 SHA-256', async (t) => {
+ const dir = await mkdtemp(join(tmpdir(), 'clash-profile-mode-'));
+ t.after(() => rm(dir, { recursive: true, force: true }));
+ await mkdir(join(dir, 'credentials'), { recursive: true });
+ const subId = 'sub-00000000-0000-0000-0000-000000000001';
+ await writeFile(join(dir, 'credentials', `${subId}.yaml`), [
+  'proxies:',
+  '  - {name: "HK-1", type: ss, server: 127.0.0.1, port: 9, cipher: aes-128-gcm, password: synthetic}',
+  'proxy-groups:',
+  '  - {name: NativeMain, type: select, proxies: ["HK-1", DIRECT]}',
+  'rules:',
+  '  - MATCH,NativeMain'
+ ].join('\n'), 'utf8');
+ const storage = {
+  read: async (c, n) => readFile(join(dir, c, n), 'utf8').catch(() => null),
+  write: async (c, n, v) => { await mkdir(join(dir, c), { recursive: true }); await writeFile(join(dir, c, n), v, 'utf8'); }
+ };
+ const rt = createRuntime({ dataDirectory: dir, storage });
+ const subPath = await rt.writeConfig({ settings: { mixedPort: 7895, controllerPort: 9099, profileMode: 'subscription' }, secret: 'k', subscriptions: [{ id: subId, enabled: true }] });
+ const subText = await readFile(subPath, 'utf8');
+ assert.ok(subText.includes('NativeMain'), 'subscription 模式应保留原生代理组');
+ const builtinPath = await rt.writeConfig({ settings: { mixedPort: 7895, controllerPort: 9099, profileMode: 'builtin' }, secret: 'k', subscriptions: [{ id: subId, enabled: true }] });
+ const builtinJson = JSON.parse(await readFile(builtinPath, 'utf8'));
+ assert.equal(builtinJson['proxy-groups'][0].name, '🚀 节点选择', 'builtin 模式强制使用内置组树');
+
+ // TUN SHA-256 一致性校验：路径不同但 SHA-256 相同不得报 TUN_KERNEL_MISMATCH
+ const dummyKernel = join(dir, 'mihomo.exe');
+ await writeFile(dummyKernel, 'mihomo-binary-bytes', 'utf8');
+ const digest = await fileSha256(dummyKernel);
+ let enableCalled = 0;
+ const rtSame = createRuntime({
+  dataDirectory: dir, storage,
+  watchdogTask: { start: async () => ({ ok: true }), stop: async () => ({ ok: true }) },
+  proxyAdapter: { read: async () => ({ ProxyEnable: 0, ProxyServer: null, ProxyOverride: null }), write: async () => {} },
+  envProxyAdapter: { read: async () => ({ HTTP_PROXY: null, HTTPS_PROXY: null, NO_PROXY: null }), write: async () => {} },
+  tun: {
+   status: async () => ({ installed: true, enabled: false, state: 'running', kernel: 'C:\\ProgramData\\FishDock\\clash-tun\\mihomo.exe', kernelSha256: digest }),
+   enable: async () => { enableCalled++; return false; },
+   disable: async () => true
+  }
+ });
+ await assert.rejects(
+  rtSame.start({ kernel: dummyKernel, mixedPort: 49991, controllerPort: 49992, secret: 'k', tun: { enable: true, stack: 'gvisor' }, subscriptions: [] }),
+  (err) => err.code === 'TUN_START_UNCONFIRMED'
+ );
+ assert.equal(enableCalled, 1, 'SHA-256 一致时应放行进入 tun.enable，不触发 TUN_KERNEL_MISMATCH');
+
+ const rtDiff = createRuntime({
+  dataDirectory: dir, storage,
+  watchdogTask: { start: async () => ({ ok: true }), stop: async () => ({ ok: true }) },
+  proxyAdapter: { read: async () => ({ ProxyEnable: 0, ProxyServer: null, ProxyOverride: null }), write: async () => {} },
+  envProxyAdapter: { read: async () => ({ HTTP_PROXY: null, HTTPS_PROXY: null, NO_PROXY: null }), write: async () => {} },
+  tun: {
+   status: async () => ({ installed: true, enabled: false, state: 'running', kernel: 'C:\\ProgramData\\FishDock\\clash-tun\\mihomo.exe', kernelSha256: '0'.repeat(64) }),
+   enable: async () => true,
+   disable: async () => true
+  }
+ });
+ await assert.rejects(
+  rtDiff.start({ kernel: dummyKernel, mixedPort: 49993, controllerPort: 49994, secret: 'k', tun: { enable: true, stack: 'gvisor' }, subscriptions: [] }),
+  (err) => err.code === 'TUN_KERNEL_MISMATCH'
+ );
 });

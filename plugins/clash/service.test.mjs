@@ -1029,3 +1029,75 @@ test('provider-only 节点（mihomo v1.19.34）：view/siteTest/nodeTest 合并 
   { name: `[${subId}] HK-01`, delay: 65 },
  ]);
 });
+
+test('select/mode 自动清理旧连接；TUN 服务 unknown 或控制器存活时不误断链；兼容原生订阅组名与配置项持久化', async () => {
+ const f = fixture();
+ // 默认栈应为 gvisor，strictRoute 默认 false，profileMode 默认 subscription
+ const initial = await f.service.view({ controller: false });
+ assert.equal(initial.tun.stack, 'gvisor');
+ assert.equal(initial.tun.strictRoute, false);
+ assert.equal(initial.profileMode, 'subscription');
+
+ await f.service.save({ ...kernel, profileMode: 'builtin', tun: { enable: false, stack: 'gvisor', strictRoute: true } });
+ const saved = await f.service.view({ controller: false });
+ assert.equal(saved.profileMode, 'builtin');
+ assert.equal(saved.tun.strictRoute, true);
+ await assert.rejects(f.service.save({ ...kernel, profileMode: 'invalid' }), (e) => e.code === 'KERNEL_STATE_INVALID');
+
+ const a = await add(f);
+ await f.service.reload();
+ await settled(f.service);
+ await f.service.start();
+ f.requests.length = 0;
+ await f.service.select({ group: '🚀 节点选择', name: `[${a.id}] same` });
+ assert.ok(f.requests.some((r) => r.method === 'DELETE' && r.path === '/connections'), '切换节点后必须 DELETE /connections 清旧连接');
+ f.requests.length = 0;
+ await f.service.mode({ mode: 'global' });
+ assert.ok(f.requests.some((r) => r.method === 'DELETE' && r.path === '/connections'), '切换模式后必须 DELETE /connections 清旧连接');
+ await f.service.stop();
+
+ // 原生订阅代理组（无「🚀 节点选择」，如 Kuromis）下 siteTest 应能穿透到真实叶子节点
+ const nativeReq = async (path) => {
+  if (path === '/version') return { version: '1.19.34' };
+  if (path === '/configs') return { mode: 'rule' };
+  if (path === '/rules') return { rules: [] };
+  if (path === '/proxies') {
+   return {
+    proxies: {
+     GLOBAL: { type: 'Selector', now: 'Kuromis', all: ['Kuromis', 'DIRECT'] },
+     Kuromis: { type: 'Selector', now: '🇯🇵 Japan 04', all: ['🇯🇵 Japan 04', 'DIRECT'] },
+     '🇯🇵 Japan 04': { type: 'AnyTLS', history: [{ delay: 38 }] },
+     DIRECT: { type: 'Direct', now: '', all: null },
+    },
+   };
+  }
+  if (path === '/providers/proxies') return { providers: {} };
+  if (path.includes('/delay?')) return { delay: 45 };
+  return {};
+ };
+ const fn = fixture(new Map(), { request: nativeReq });
+ await fn.service.save(kernel);
+ await fn.service.start();
+ const nativeSites = await fn.service.siteTest();
+ assert.equal(nativeSites.node, '🇯🇵 Japan 04');
+ assert.ok(nativeSites.sites.every((s) => s.ok && s.delay === 45));
+ await fn.service.stop();
+
+ // TUN 服务模式防误判：state==='unknown' 或 enabled===true 但控制器 /version 仍通时，不清空 running
+ const { createHash } = await import('node:crypto');
+ const fp = createHash('sha256').update('k-secret').digest('hex').slice(0, 16);
+ const disk = new Map([
+  ['config/clash.json', JSON.stringify({ ...kernel, mixedPort: 7895, controllerPort: 9099, tun: { enable: true, stack: 'gvisor', strictRoute: false } })],
+  ['secret/keys/controller.key', 'k-secret'],
+  ['config/run-state.json', JSON.stringify({ schema: 1, pid: null, mode: 'service', mixedPort: 7895, controllerPort: 9099, startedAt: Date.now(), subscriptions: [], secretFingerprint: fp })],
+ ]);
+ const fs = fixture(disk, { tunInstalled: true, external: { pid: null, subscriptions: [] } });
+ fs.runtime.tun.status = async () => ({ installed: true, enabled: true, state: 'running' });
+ assert.equal((await fs.service.view()).running, true);
+ // sc.exe 瞬态失败 -> unknown：不误判掉线
+ fs.runtime.tun.status = async () => ({ installed: true, enabled: true, state: 'unknown' });
+ assert.equal((await fs.service.view()).running, true, 'state=unknown 不得误判服务已死');
+ // enabled=true 且 state=stopped，但控制器 /version 仍可达：不误判掉线
+ fs.runtime.tun.status = async () => ({ installed: true, enabled: true, state: 'stopped' });
+ assert.equal((await fs.service.view()).running, true, '控制器可达时不得误判服务已死');
+});
