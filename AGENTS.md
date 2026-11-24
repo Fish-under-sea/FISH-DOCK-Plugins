@@ -57,6 +57,7 @@
 4. 发行：上传 `<id>.fish-plugin` 与 `SHA256SUMS` 至 GitHub Release，同步更新 `catalog/stable.json`、`README.md`、`README.en.md` 与 `docs/releases/<ver>.md`。
 5. 下载源与版本一致：插件下载源限定为 `catalog/stable.json`、GitHub Release 与 npm 双源；GitHub Release 与 npm 同版本发布，发布后确认 npm 官方源与 npmmirror 的 `latest` 到位。
 6. 发布传播期：大包发布返回成功后处于异步入库期，间隔约 2 分钟再校验远端元数据；因令牌通常无 2FA 撤回权限，发布前以本地 `verify-release` 为最终闸门。
+7. 同步主仓 GitHub Packages：npm 源到位后，在主仓触发 `Sync Plugin Packages` 工作流（`gh workflow run sync-plugin-packages.yml --repo Fish-under-sea/FISH-Dock`，单包可加 `-f only=<feishu|clash|magpie>`），按 `catalog/stable.json` 校验 SHA-256 并将新版挂到主仓右侧 `Packages` 栏。
 
 ## 五、环境坑与处置
 
