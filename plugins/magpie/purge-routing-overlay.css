@@ -1,0 +1,681 @@
+/* Purge 原生路由增量叠加层样式：仅作用域在 #rt.purge-rt-host、连线、浮层胶囊、外壳与右键菜单，不改原生布局与玻璃规则 */
+#rt.purge-rt-host {
+  position: relative;
+}
+
+#rt.purge-rt-host[data-purge-skin="fish"] {
+  --purge-skin-wire: #fee33e;
+  --purge-skin-flow: rgba(254, 227, 62, 0.95);
+  --purge-skin-glow: rgba(254, 227, 62, 0.56);
+  --purge-skin-border: rgba(254, 227, 62, 0.92);
+  --purge-skin-ring-1: rgba(254, 227, 62, 0.16);
+  --purge-skin-ring-2: rgba(110, 207, 107, 0.08);
+  --purge-skin-wrap-1: rgba(126, 106, 22, 0.42);
+  --purge-skin-wrap-2: rgba(34, 72, 104, 0.50);
+  --purge-skin-wrap-light-1: rgba(254, 244, 182, 0.88);
+  --purge-skin-cap-bg: linear-gradient(135deg, #fff05a 0%, #fee33e 56%, #eab308 100%);
+  --purge-skin-cap-fg: #141416;
+  --purge-skin-cap-border: rgba(20, 20, 22, 0.42);
+  --purge-skin-cap-shadow: rgba(161, 118, 6, 0.42);
+  --purge-skin-crest-bg: linear-gradient(135deg, #fee33e, #eab308);
+  --purge-skin-crest-fg: #141416;
+  --purge-skin-crest-border: rgba(20, 20, 22, 0.35);
+  --purge-skin-x-bg: rgba(0, 0, 0, 0.14);
+  --purge-skin-x-hover: rgba(0, 0, 0, 0.26);
+  --purge-skin-cnt: #fee33e;
+  --purge-skin-badge-text-light: #854d0e;
+  --purge-skin-cue-bg: rgba(254, 227, 62, 0.96);
+  --purge-skin-cue-fg: #141416;
+  --purge-skin-callout-bg: linear-gradient(135deg, rgba(254, 227, 62, 0.98), rgba(234, 179, 8, 0.98));
+  --purge-skin-callout-fg: #141416;
+}
+
+#rt.purge-rt-host[data-purge-skin="crimson"] {
+  --purge-skin-wire: #ff3b5c;
+  --purge-skin-flow: rgba(255, 90, 118, 0.95);
+  --purge-skin-glow: rgba(255, 59, 92, 0.58);
+  --purge-skin-border: rgba(255, 72, 104, 0.92);
+  --purge-skin-ring-1: rgba(255, 59, 92, 0.14);
+  --purge-skin-ring-2: rgba(190, 18, 60, 0.06);
+  --purge-skin-wrap-1: rgba(84, 24, 46, 0.52);
+  --purge-skin-wrap-2: rgba(34, 72, 104, 0.50);
+  --purge-skin-wrap-light-1: rgba(255, 234, 239, 0.90);
+  --purge-skin-cap-bg: linear-gradient(135deg, #ff5d7b 0%, #f4284e 52%, #b90d33 100%);
+  --purge-skin-cap-fg: #fff6f8;
+  --purge-skin-cap-border: rgba(255, 175, 190, 0.68);
+  --purge-skin-cap-shadow: rgba(110, 4, 28, 0.45);
+  --purge-skin-crest-bg: linear-gradient(135deg, #ff4d6d, #c8103a);
+  --purge-skin-crest-fg: #fff5f7;
+  --purge-skin-crest-border: rgba(255, 185, 198, 0.75);
+  --purge-skin-x-bg: rgba(255, 255, 255, 0.18);
+  --purge-skin-x-hover: rgba(255, 255, 255, 0.36);
+  --purge-skin-cnt: #ff6b86;
+  --purge-skin-badge-text-light: #be123c;
+  --purge-skin-cue-bg: rgba(190, 18, 60, 0.94);
+  --purge-skin-cue-fg: #ffffff;
+  --purge-skin-callout-bg: linear-gradient(135deg, rgba(255, 59, 92, 0.96), rgba(180, 14, 52, 0.96));
+  --purge-skin-callout-fg: #ffffff;
+}
+
+#rt.purge-rt-host[data-purge-skin="classic"] {
+  --purge-skin-wire: #ffda29;
+  --purge-skin-flow: rgba(255, 218, 41, 0.95);
+  --purge-skin-glow: rgba(245, 158, 11, 0.56);
+  --purge-skin-border: rgba(255, 218, 41, 0.92);
+  --purge-skin-ring-1: rgba(255, 218, 41, 0.15);
+  --purge-skin-ring-2: rgba(245, 158, 11, 0.06);
+  --purge-skin-wrap-1: rgba(110, 74, 16, 0.44);
+  --purge-skin-wrap-2: rgba(34, 72, 104, 0.50);
+  --purge-skin-wrap-light-1: rgba(254, 243, 199, 0.90);
+  --purge-skin-cap-bg: linear-gradient(135deg, #ffe95c 0%, #ffda29 52%, #d97706 100%);
+  --purge-skin-cap-fg: #1c1917;
+  --purge-skin-cap-border: rgba(146, 64, 14, 0.45);
+  --purge-skin-cap-shadow: rgba(146, 64, 14, 0.45);
+  --purge-skin-crest-bg: linear-gradient(135deg, #ffda29, #d97706);
+  --purge-skin-crest-fg: #1c1917;
+  --purge-skin-crest-border: rgba(146, 64, 14, 0.42);
+  --purge-skin-x-bg: rgba(0, 0, 0, 0.14);
+  --purge-skin-x-hover: rgba(0, 0, 0, 0.26);
+  --purge-skin-cnt: #fbbf24;
+  --purge-skin-badge-text-light: #92400e;
+  --purge-skin-cue-bg: rgba(245, 158, 11, 0.96);
+  --purge-skin-cue-fg: #1c1917;
+  --purge-skin-callout-bg: linear-gradient(135deg, rgba(255, 218, 41, 0.96), rgba(217, 119, 6, 0.96));
+  --purge-skin-callout-fg: #1c1917;
+}
+
+#rt.purge-rt-host[data-purge-skin="cyber"] {
+  --purge-skin-wire: #22d3ee;
+  --purge-skin-flow: rgba(34, 211, 238, 0.95);
+  --purge-skin-glow: rgba(34, 211, 238, 0.56);
+  --purge-skin-border: rgba(56, 189, 248, 0.92);
+  --purge-skin-ring-1: rgba(34, 211, 238, 0.15);
+  --purge-skin-ring-2: rgba(99, 102, 241, 0.08);
+  --purge-skin-wrap-1: rgba(22, 58, 98, 0.54);
+  --purge-skin-wrap-2: rgba(49, 46, 129, 0.42);
+  --purge-skin-wrap-light-1: rgba(224, 247, 255, 0.90);
+  --purge-skin-cap-bg: linear-gradient(135deg, #22d3ee 0%, #3b82f6 54%, #6366f1 100%);
+  --purge-skin-cap-fg: #ecfeff;
+  --purge-skin-cap-border: rgba(165, 243, 252, 0.70);
+  --purge-skin-cap-shadow: rgba(30, 58, 138, 0.48);
+  --purge-skin-crest-bg: linear-gradient(135deg, #06b6d4, #4f46e5);
+  --purge-skin-crest-fg: #ecfeff;
+  --purge-skin-crest-border: rgba(165, 243, 252, 0.72);
+  --purge-skin-x-bg: rgba(255, 255, 255, 0.18);
+  --purge-skin-x-hover: rgba(255, 255, 255, 0.36);
+  --purge-skin-cnt: #38bdf8;
+  --purge-skin-badge-text-light: #0369a1;
+  --purge-skin-cue-bg: rgba(14, 116, 144, 0.96);
+  --purge-skin-cue-fg: #ecfeff;
+  --purge-skin-callout-bg: linear-gradient(135deg, rgba(6, 182, 212, 0.96), rgba(79, 70, 229, 0.96));
+  --purge-skin-callout-fg: #ecfeff;
+}
+
+#purge-wires-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.purge-wire-path {
+  fill: none;
+  stroke: var(--purge-skin-wire);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  opacity: 0.96;
+  filter: drop-shadow(0 0 6px var(--purge-skin-glow));
+}
+
+.purge-wire-standby {
+  fill: none;
+  stroke: rgba(145, 200, 240, 0.45);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 5;
+  stroke-linecap: round;
+}
+
+.purge-flow-path {
+  fill: none;
+  stroke: var(--purge-skin-flow);
+  stroke-width: 2.3;
+  stroke-linecap: round;
+  stroke-dasharray: 4 7;
+  animation: purgeRtFlow 0.65s linear infinite;
+}
+
+@keyframes purgeRtFlow {
+  to { stroke-dashoffset: -11; }
+}
+
+#purge-fx-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 24;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.purge-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
+}
+
+/* 待命预注入历史 Agent 卡片 */
+.rt-src.purge-standby-agent {
+  border-style: dashed !important;
+  opacity: 0.92;
+}
+.purge-standby-agent b::before {
+  content: "";
+  display: inline-block;
+  width: 6.5px;
+  height: 6.5px;
+  margin: 0 6px 1px 0;
+  border-radius: 50%;
+  background: var(--agent, #60a5fa);
+  box-shadow: 0 0 6px var(--agent, #60a5fa);
+  vertical-align: middle;
+}
+.purge-standby-pill {
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px dashed rgba(145, 200, 240, 0.45);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+}
+.purge-is-emerging {
+  animation: purgeAgentEmerge 0.36s cubic-bezier(.22, 1.28, .36, 1);
+}
+@keyframes purgeAgentEmerge {
+  0% { opacity: 0; transform: translateX(-14px) scale(0.86); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+/* 统计条中不破坏原布局的 Purge 包裹计数 */
+.rt-stats .purge-rt-stat b {
+  color: var(--purge-skin-cnt);
+  text-shadow: 0 0 10px var(--purge-skin-glow);
+}
+html[data-theme="light"] .rt-stats .purge-rt-stat:not(.is-zero) b {
+  color: var(--purge-skin-badge-text-light);
+  text-shadow: none;
+}
+.rt-stats .purge-rt-stat.is-zero b {
+  color: inherit;
+  opacity: 0.65;
+  text-shadow: none;
+}
+
+/* 节点包裹高亮 & 吞噬悬停预兆 */
+.rt-node.purge-is-wrapped,
+.rt-accts > li.purge-is-wrapped {
+  opacity: 1 !important;
+  border-color: var(--purge-skin-border) !important;
+  background: linear-gradient(140deg, var(--purge-skin-wrap-1), var(--purge-skin-wrap-2)) !important;
+}
+html[data-theme="light"] .rt-node.purge-is-wrapped,
+html[data-theme="light"] .rt-accts > li.purge-is-wrapped {
+  background: linear-gradient(140deg, var(--purge-skin-wrap-light-1), rgba(255, 255, 255, 0.90)) !important;
+}
+
+.rt-node.purge-hungry-target {
+  box-shadow: 0 0 0 4px var(--purge-skin-ring-1), 0 0 24px var(--purge-skin-glow) !important;
+  border-color: var(--purge-skin-border) !important;
+  transform: scale(1.03);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+.rt-accts > li.purge-hungry-target,
+.purge-hungry-target {
+  box-shadow: 0 0 0 3px var(--purge-skin-ring-1), 0 0 22px var(--purge-skin-glow) !important;
+  border-color: var(--purge-skin-border) !important;
+  transform: scale(1.012);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.purge-chomp-squish {
+  animation: purgeChompSquish 0.19s ease-out;
+}
+@keyframes purgeChompSquish {
+  0% { transform: scale(1, 1); }
+  45% { transform: scale(0.96, 1.045); }
+  100% { transform: scale(1, 1); }
+}
+
+.purge-capsule {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 98px;
+  height: 34px;
+  margin-left: -49px;
+  margin-top: -17px;
+  border-radius: 999px;
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  color: var(--purge-skin-cap-fg);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0) 48%), var(--purge-skin-cap-bg);
+  border: 1px solid var(--purge-skin-cap-border);
+  box-shadow: 0 8px 22px var(--purge-skin-glow), 0 0 16px var(--purge-skin-ring-1), inset 0 1.5px 1px rgba(255, 255, 255, 0.45), inset 0 -2px 4px var(--purge-skin-cap-shadow);
+  will-change: transform, left, top;
+  touch-action: none;
+  transition: box-shadow 0.2s ease, opacity 0.14s ease, filter 0.2s ease;
+  animation: purgeCapBreathe 2.6s ease-in-out infinite;
+}
+.purge-capsule:hover {
+  box-shadow: 0 10px 26px var(--purge-skin-glow), 0 0 24px var(--purge-skin-glow), inset 0 1.5px 1px rgba(255, 255, 255, 0.55);
+  filter: brightness(1.06);
+}
+.purge-capsule.is-dragging {
+  cursor: grabbing;
+  animation: none;
+  z-index: 32;
+  box-shadow: 0 16px 34px var(--purge-skin-glow), 0 0 26px var(--purge-skin-glow), inset 0 1.5px 1px rgba(255, 255, 255, 0.52);
+}
+.purge-capsule.is-merge-magnet {
+  box-shadow: 0 0 0 4px var(--purge-skin-ring-1), 0 0 28px var(--purge-skin-glow), inset 0 1.5px 1px rgba(255, 255, 255, 0.55);
+}
+.purge-capsule.is-hidden-for-pacman { opacity: 0; pointer-events: none; }
+.purge-capsule.is-squish-merge { animation: purgeSquishMerge 0.42s cubic-bezier(.22, 1.4, .36, 1); }
+
+@keyframes purgeCapBreathe {
+  0%, 100% { box-shadow: 0 8px 22px var(--purge-skin-glow), 0 0 14px var(--purge-skin-ring-1), inset 0 1.5px 1px rgba(255, 255, 255, 0.45); }
+  50% { box-shadow: 0 8px 26px var(--purge-skin-glow), 0 0 24px var(--purge-skin-glow), inset 0 1.5px 1px rgba(255, 255, 255, 0.52); }
+}
+@keyframes purgeSquishMerge {
+  0% { transform: scale(1.36, 0.72); }
+  42% { transform: scale(0.86, 1.18); }
+  72% { transform: scale(1.07, 0.94); }
+  100% { transform: scale(1, 1); }
+}
+
+.purge-cap-ic {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+}
+
+.purge-cap-hint {
+  position: absolute;
+  top: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--purge-skin-cue-bg);
+  border: 1px solid var(--purge-skin-crest-border);
+  color: var(--purge-skin-cue-fg);
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.purge-shell {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 17px;
+  transition: transform 0.2s cubic-bezier(.22, 1.2, .36, 1), box-shadow 0.25s;
+  z-index: 22;
+}
+.purge-shell-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 17px;
+  border: 2px solid var(--purge-skin-border);
+  background: linear-gradient(155deg, var(--purge-skin-ring-1), var(--purge-skin-ring-2));
+  box-shadow: 0 0 0 3px var(--purge-skin-ring-1), 0 0 24px var(--purge-skin-glow), inset 0 0 14px var(--purge-skin-ring-1);
+  pointer-events: none;
+}
+.purge-shell-ring::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 17px;
+  padding: 2px;
+  background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.78) 50%, transparent 80%);
+  background-size: 240% 100%;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: purgeShellSheen 2.8s linear infinite;
+  pointer-events: none;
+}
+@keyframes purgeShellSheen {
+  0% { background-position: 180% 0; }
+  100% { background-position: -80% 0; }
+}
+.purge-shell.is-bite-flash {
+  transform: scale(1.045);
+}
+.purge-shell.is-bite-flash .purge-shell-ring {
+  box-shadow: 0 0 0 6px var(--purge-skin-ring-1), 0 0 36px var(--purge-skin-glow), inset 0 0 20px var(--purge-skin-ring-1);
+}
+
+.purge-shell-hit {
+  position: absolute;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+}
+.purge-shell-hit.top { left: 0; right: 0; top: -6px; height: 15px; }
+.purge-shell-hit.bottom { left: 0; right: 0; bottom: -6px; height: 15px; }
+.purge-shell-hit.left { top: 4px; bottom: 4px; left: -6px; width: 15px; }
+.purge-shell-hit.right { top: 4px; bottom: 4px; right: -6px; width: 15px; }
+
+.purge-shell-crest {
+  position: absolute;
+  top: -13px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px 2px 8px;
+  border-radius: 999px;
+  background: var(--purge-skin-crest-bg);
+  border: 1px solid var(--purge-skin-crest-border);
+  color: var(--purge-skin-crest-fg);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px var(--purge-skin-glow);
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  max-width: 260px;
+}
+.purge-shell-crest > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.purge-shell-x {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 0;
+  background: var(--purge-skin-x-bg);
+  color: var(--purge-skin-crest-fg);
+  font-size: 11px;
+  line-height: 1;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+.purge-shell-x:hover { background: var(--purge-skin-x-hover); }
+.purge-shell.is-gulp-settle { animation: purgeGulpSettle 0.34s cubic-bezier(.22, 1.38, .36, 1); }
+@keyframes purgeGulpSettle {
+  0% { transform: scale(1.16, 0.90); }
+  55% { transform: scale(0.96, 1.05); }
+  100% { transform: scale(1, 1); }
+}
+.purge-shell.is-provider-shell,
+.purge-shell.is-provider-shell .purge-shell-ring,
+.purge-shell.is-provider-shell .purge-shell-ring::after {
+  border-radius: 13px;
+}
+.purge-shell.is-provider-shell .purge-shell-crest {
+  top: -11px;
+  right: 12px;
+  left: auto;
+  transform: none;
+}
+
+.purge-target-cue {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--purge-skin-cue-bg);
+  border: 1px solid var(--purge-skin-crest-border);
+  color: var(--purge-skin-cue-fg);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38);
+  z-index: 35;
+}
+
+.purge-callout {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--purge-skin-callout-bg);
+  border: 1px solid var(--purge-skin-crest-border);
+  color: var(--purge-skin-callout-fg);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+  box-shadow: 0 8px 22px var(--purge-skin-glow);
+  pointer-events: none;
+  z-index: 36;
+  animation: purgeCalloutFloat 1.55s cubic-bezier(.22, 1, .36, 1) forwards;
+}
+@keyframes purgeCalloutFloat {
+  0% { opacity: 0; transform: translate(-50%, -65%) scale(0.86); }
+  18% { opacity: 1; transform: translate(-50%, -108%) scale(1.04); }
+  78% { opacity: 1; transform: translate(-50%, -120%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -142%) scale(0.96); }
+}
+
+.purge-ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  width: 404px;
+  max-width: calc(100vw - 20px);
+  overflow: hidden;
+  border-radius: 14px;
+  padding: 8px;
+  display: none;
+  background: rgba(16, 32, 50, 0.94);
+  color: #eef6ff;
+  border: 1px solid rgba(166, 214, 248, 0.38);
+  backdrop-filter: blur(22px) saturate(1.4);
+  -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  box-shadow: 0 22px 54px rgba(2, 10, 22, 0.56), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  font-size: 12px;
+}
+html[data-theme="light"] .purge-ctx-menu {
+  background: rgba(250, 253, 255, 0.96);
+  color: #132235;
+  border-color: rgba(58, 106, 154, 0.34);
+  box-shadow: 0 18px 42px rgba(24, 52, 82, 0.18);
+}
+.purge-ctx-menu.is-open {
+  display: block;
+  animation: purgeCtxPop 0.16s cubic-bezier(.22, 1.25, .36, 1);
+}
+@keyframes purgeCtxPop {
+  0% { opacity: 0; transform: scale(0.94); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.purge-ctx-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(145, 200, 240, 0.24);
+  margin-bottom: 6px;
+}
+.purge-ctx-title small {
+  font-size: 10.5px;
+  opacity: 0.72;
+  font-weight: 450;
+}
+.purge-ctx-records {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.purge-ctx-rec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 7px 8px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.04);
+  transition: background 0.14s, border-color 0.14s;
+}
+.purge-ctx-rec:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(145, 200, 240, 0.24);
+}
+html[data-theme="light"] .purge-ctx-rec {
+  background: rgba(19, 34, 53, 0.03);
+}
+html[data-theme="light"] .purge-ctx-rec:hover {
+  background: rgba(19, 34, 53, 0.07);
+}
+.purge-ctx-rec-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.purge-ctx-rec-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.purge-ctx-rec-meta {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.purge-ctx-rec-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.purge-ctx-rec-sub {
+  font-size: 10.5px;
+  opacity: 0.72;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.purge-ctx-rec-btns {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.purge-ctx-btn {
+  border: 1px solid rgba(145, 200, 240, 0.28);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 560;
+  padding: 4px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
+}
+.purge-ctx-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+html[data-theme="light"] .purge-ctx-btn {
+  background: rgba(19, 34, 53, 0.06);
+  border-color: rgba(58, 106, 154, 0.26);
+}
+.purge-ctx-btn.primary {
+  background: linear-gradient(135deg, rgba(254, 227, 62, 0.95), rgba(234, 179, 8, 0.95));
+  border-color: rgba(20, 20, 22, 0.35);
+  color: #141416;
+  font-weight: 650;
+}
+.purge-ctx-menu[data-purge-skin="crimson"] .purge-ctx-btn.primary {
+  background: linear-gradient(135deg, rgba(255, 59, 92, 0.92), rgba(190, 18, 60, 0.94));
+  border-color: rgba(255, 160, 178, 0.65);
+  color: #ffffff;
+}
+.purge-ctx-menu[data-purge-skin="cyber"] .purge-ctx-btn.primary {
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.95), rgba(79, 70, 229, 0.95));
+  border-color: rgba(165, 243, 252, 0.65);
+  color: #ecfeff;
+}
+.purge-ctx-divider {
+  height: 1px;
+  background: rgba(145, 200, 240, 0.22);
+  margin: 7px 4px;
+}
+.purge-ctx-actions {
+  display: grid;
+  gap: 3px;
+}
+.purge-ctx-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.purge-ctx-action:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+html[data-theme="light"] .purge-ctx-action:hover {
+  background: rgba(19, 34, 53, 0.06);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .purge-capsule,
+  .purge-shell,
+  .purge-callout,
+  .purge-ctx-menu,
+  .purge-flow-path,
+  .purge-shell-ring::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

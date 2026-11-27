@@ -56,6 +56,11 @@ function builtinOf(spec,item){
  if(packageNameOf(spec)===item.pkg)return true;
  return path.isAbsolute(spec)&&path.basename(spec.replace(/[\\/]+$/,''))===item.name;
 }
+function isLegacyBundledPath(spec,name){
+ if(typeof spec!=='string'||!spec||!path.isAbsolute(spec))return false;
+ const clean=spec.replace(/[\\/]+$/,'');
+ return path.basename(clean)===name&&path.basename(path.dirname(clean)).toLowerCase()==='plugins';
+}
 
 // plugins.json 只由结构相同的 {spec,off,options} 条目组成。改写后逐字比较：没变化就
 // 不动磁盘，也不刷新时间戳。
@@ -86,7 +91,7 @@ export function rewriteBuiltinSpecs({raw,plugins=builtinPlugins,legacy=legacySee
    if(!builtinOf(entry.spec,item)){next.push(entry);continue}
    if(seen)continue;
    seen=true;
-   if(path.isAbsolute(entry.spec))entry.spec=item.spec;
+   if(isLegacyBundledPath(entry.spec,item.name))entry.spec=item.spec;
    next.push(entry);
   }
   if(!seen)next.push({spec:item.spec});
