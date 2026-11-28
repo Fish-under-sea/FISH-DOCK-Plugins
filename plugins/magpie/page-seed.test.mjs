@@ -158,3 +158,12 @@ test('标题归一化：@用户/签到 → 签到，包名不动，幂等',async
  assert.equal(parsed.magpie.page.titles.en,'Check-in');
  assert.equal(normalizePageManifest(first.text).changed,false,'幂等：第二遍不应再改');
 });
+
+test('外部本地开发目录（非 <data>/plugins/ 副本）在启动同步时原样保留，不追加重复条目',()=>{
+ const devDir=path.resolve(path.parse(process.cwd()).root,'dev-work',PURGE);
+ const raw=JSON.stringify({plugins:[{spec:devDir,options:{mode:'replace'}}]},null,2)+'\n';
+ const next=rewriteBuiltinSpecs({raw});
+ const specs=JSON.parse(next.text).plugins;
+ assert.equal(specs.some(row=>row.spec===devDir&&row.options?.mode==='replace'),true,'外部开发目录应原样保留');
+ assert.equal(specs.some(row=>row.spec===PURGE_SPEC),false,'不应重复登记同包 @latest');
+});

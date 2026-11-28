@@ -394,3 +394,50 @@ test('embedProxy 未配置 dockTheme 时可用性为 false，stream 返回 404',
  const stream = await fetch(`http://127.0.0.1:${port}/api/fish/dock-theme/stream`);
  assert.equal(stream.status, 404);
 });
+
+test('embedProxy 提供 Purge 叠加层资源并增量注入原生 HTML 与 routing/client.js', async (t) => {
+ const up = await fakeUpstream((req, res) => {
+  if (req.url === '/' || req.url === '/index.html') {
+   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+   res.end('<!doctype html><html><body><h1>magpie</h1></body></html>');
+   return;
+  }
+  if (req.url === '/plugins/routing/client.js') {
+   res.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8' });
+   res.end('function routingPage(){ hub.append(logo, el("b", "", "magpie"), hubSub, chip); function render() { if (!cur) return; hubText(); } }');
+   return;
+  }
+  res.writeHead(200, { 'content-type': 'text/plain' });
+  res.end('ok');
+ });
+ const port = await freePort();
+ const proxy = await embedProxy({ port, upstreamPort: up.port });
+ t.after(async () => { await proxy.stop(); await closeServer(up.server); });
+
+ const jsRes = await fetch(`http://127.0.0.1:${port}/_fish/purge-routing-overlay.js`);
+ assert.equal(jsRes.status, 200);
+ assert.match(jsRes.headers.get('content-type') || '', /javascript/);
+ assert.match(await jsRes.text(), /__FISH_PURGE_ROUTING_OVERLAY__/);
+
+ const cssRes = await fetch(`http://127.0.0.1:${port}/_fish/purge-routing-overlay.css`);
+ assert.equal(cssRes.status, 200);
+ assert.match(cssRes.headers.get('content-type') || '', /text\/css/);
+ assert.match(await cssRes.text(), /purge-capsule/);
+
+ const postAsset = await fetch(`http://127.0.0.1:${port}/_fish/purge-routing-overlay.js`, { method: 'POST' });
+ assert.equal(postAsset.status, 405);
+
+ const indexRes = await fetch(`http://127.0.0.1:${port}/`);
+ const indexHtml = await indexRes.text();
+ assert.match(indexHtml, /<h1>magpie<\/h1>/);
+ assert.match(indexHtml, /\/_fish\/purge-routing-overlay\.css/);
+ assert.match(indexHtml, /\/_fish\/purge-routing-overlay\.js/);
+
+ const clientRes = await fetch(`http://127.0.0.1:${port}/plugins/routing/client.js`);
+ const clientJs = await clientRes.text();
+ assert.match(clientJs, /dataset\.purgeTargetId = "hub-magpie"/);
+ assert.match(clientJs, /fish:routing-render/);
+
+ const plainRes = await fetch(`http://127.0.0.1:${port}/other.txt`);
+ assert.equal(await plainRes.text(), 'ok');
+});

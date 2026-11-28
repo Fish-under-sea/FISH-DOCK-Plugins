@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import {REVEAL_ROUTES,targetOf,localTarget,sameOrigin,openInExplorer,pickedDir} from './reveal.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {managedUpdates,managedUpdateScript} from './managed-update.mjs';
+import {PURGE_OVERLAY_CSS_PATH,PURGE_OVERLAY_JS_PATH,hookIndexHtml,hookRoutingClientScript,purgeOverlayAssets} from './purge-routing-hook.mjs';
 import {isOwnVaultOpenURL} from './obsidian.mjs';
 import {serviceError} from '../../shared/errors.mjs';
 // 原生 code 一律转成适配层错误码：文案与 shared/child.mjs 的 available() 同源，
@@ -233,19 +234,45 @@ export async function embedProxy({port,upstreamPort,key='',retries=2,delays=[120
    }
    body=Buffer.from(JSON.stringify(input??{}));headers['content-length']=String(body.length);delete headers['transfer-encoding'];
   }
+  if(pathname===PURGE_OVERLAY_JS_PATH||pathname===PURGE_OVERLAY_CSS_PATH){
+   if(req.method!=='GET'){req.resume();res.writeHead(405,{allow:'GET'});res.end();return}
+   req.resume();
+   const isJs=pathname===PURGE_OVERLAY_JS_PATH;
+   try{
+    const assets=purgeOverlayAssets();
+    const payload=Buffer.from(isJs?assets.js:assets.css);
+    res.writeHead(200,{'content-type':isJs?'application/javascript; charset=utf-8':'text/css; charset=utf-8','content-length':String(payload.length),'cache-control':'no-store'});
+    res.end(payload);
+   }catch{res.writeHead(500);res.end()}
+   return;
+  }
   const script=pathname==='/app.js';
-  if(script){headers['accept-encoding']='identity';delete headers['if-none-match'];delete headers['if-modified-since']}
+  const routingScript=pathname==='/plugins/routing/client.js';
+  const indexPage=pathname==='/'||pathname==='/index.html';
+  if(script||routingScript||indexPage){headers['accept-encoding']='identity';delete headers['if-none-match'];delete headers['if-modified-since']}
   const upstream=http.request({hostname:'127.0.0.1',port:upstreamPort,path:req.url,method:req.method,headers},reply=>{
    const headers={...reply.headers};if(headers['set-cookie'])headers['set-cookie']=headers['set-cookie'].map(cookie);
    if(headers['content-security-policy'])headers['content-security-policy']=pluginPagePolicy(req.url,headers['content-security-policy']);
-   if(script&&reply.statusCode===200){
-    const chunks=[];let size=0;
-    reply.on('data',chunk=>{size+=chunk.length;if(size>8*1024*1024)reply.destroy(Error('管理脚本过大'));else chunks.push(chunk)});
-    reply.on('end',()=>{try{
-     const output=Buffer.from(managedUpdateScript(Buffer.concat(chunks).toString('utf8')));
+   const isHtml=indexPage&&String(headers['content-type']||'').toLowerCase().includes('text/html');
+   if((script||routingScript||isHtml)&&reply.statusCode===200){
+    const chunks=[];let size=0;const limit=isHtml?4*1024*1024:8*1024*1024;
+    reply.on('data',chunk=>{size+=chunk.length;if(size>limit)reply.destroy(Error('管理脚本过大'));else chunks.push(chunk)});
+    reply.on('end',()=>{
+     const raw=Buffer.concat(chunks).toString('utf8');
+     if(script){
+      try{
+       const output=Buffer.from(managedUpdateScript(raw));
+       delete headers['transfer-encoding'];delete headers.etag;delete headers['content-encoding'];headers['content-length']=String(output.length);headers['cache-control']='no-store';
+       res.writeHead(200,headers);res.end(output);
+      }catch{res.writeHead(502);res.end('Magpie 管理页版本与 Dock 适配层不匹配')}
+      return;
+     }
+     let text=raw;
+     try{text=routingScript?hookRoutingClientScript(raw):hookIndexHtml(raw)}catch{text=raw}
+     const output=Buffer.from(text);
      delete headers['transfer-encoding'];delete headers.etag;delete headers['content-encoding'];headers['content-length']=String(output.length);headers['cache-control']='no-store';
      res.writeHead(200,headers);res.end(output);
-    }catch{res.writeHead(502);res.end('Magpie 管理页版本与 Dock 适配层不匹配')}});
+    });
    }else{res.writeHead(reply.statusCode,headers);reply.pipe(res)}
    reply.on('error',()=>res.destroy());
   });
