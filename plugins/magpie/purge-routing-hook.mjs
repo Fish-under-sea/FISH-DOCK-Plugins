@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 
-export const PURGE_ASSET_VERSION = '2';
+export const PURGE_ASSET_VERSION = '8';
 export const PURGE_OVERLAY_JS_PATH = '/_fish/purge-routing-overlay.js';
 export const PURGE_OVERLAY_CSS_PATH = '/_fish/purge-routing-overlay.css';
 
@@ -66,7 +66,7 @@ export function hookRoutingClientScript(source) {
   if (mountBoxRe.test(out)) {
     out = out.replace(
       mountBoxRe,
-      '$& try { queueMicrotask(() => window.dispatchEvent(new CustomEvent("fish:routing-render", { detail: { box, stage, hub, srcs, list } }))); } catch {}',
+      '$& try { if (window.__fishRoutingLayoutHandler) window.removeEventListener("fish:routing-layout", window.__fishRoutingLayoutHandler); window.__fishRoutingLayoutHandler = () => { try { layout(); } catch {} }; window.addEventListener("fish:routing-layout", window.__fishRoutingLayoutHandler); queueMicrotask(() => window.dispatchEvent(new CustomEvent("fish:routing-render", { detail: { box, stage, hub, srcs, list } }))); } catch {}',
     );
   }
 
@@ -84,7 +84,7 @@ export function hookRoutingClientScript(source) {
   if (rowRe.test(out)) {
     out = out.replace(
       rowRe,
-      '$& try { const _pw = row.w || {}; const _pr = (typeof src === "function" ? src().get(row.rid) : null) || (typeof pinned !== "undefined" ? pinned : null) || (typeof cur !== "undefined" ? cur : null); const _pg = String(_pr?.group?.id || ""); const _pp = String(_pw.provider || ""); const _pm = String(_pw.model || ""); const _pa = String(_pw.id || ""); const _pn = String(_pw.name || _pw.provider || ""); const _pwWho = String(_pw.who || _pw.id || ""); row.li.dataset.purgeTargetKind = "provider"; row.li.dataset.purgeTargetId = `prov:${_pg}:${_pp}:${_pm}:${_pa}`; row.li.dataset.purgeGroupId = _pg; row.li.dataset.purgeProviderId = _pp; row.li.dataset.purgeProviderName = _pn; row.li.dataset.purgePreset = String(_pw.preset || ""); row.li.dataset.purgeSeatId = _pa; row.li.dataset.purgeModel = _pm; row.li.dataset.purgeAccount = _pwWho; } catch {}',
+      '$& try { const _pw = row.w || {}; const _pr = (typeof src === "function" ? src().get(row.rid) : null) || (typeof pinned !== "undefined" ? pinned : null) || (typeof cur !== "undefined" ? cur : null); const _pg = String(_pr?.group?.id || ""); const _pp = String(_pw.provider || ""); const _pm = String(_pw.model || ""); const _pn = String(_pw.name || _pw.provider || ""); const _pwWho = _pw.kind === "provider" ? "" : String(_pw.who || ""); const _pSeat = String((typeof seat === "function" ? seat(_pw) : "") || _pw.id || _pwWho); row.li.dataset.purgeTargetKind = "provider"; row.li.dataset.purgeTargetId = `prov:${_pg}:${_pp}:${_pm}:${_pSeat}`; row.li.dataset.purgeGroupId = _pg; row.li.dataset.purgeProviderId = _pp; row.li.dataset.purgeProviderName = _pn; row.li.dataset.purgePreset = String(_pw.preset || ""); row.li.dataset.purgeSeatId = _pSeat; row.li.dataset.purgeModel = _pm; row.li.dataset.purgeAccount = _pwWho; } catch {}',
     );
   }
 
@@ -118,6 +118,42 @@ export function hookRoutingClientScript(source) {
     out = out.replace(
       emptyDoneRe,
       '$1 try { window.dispatchEvent(new CustomEvent("fish:routing-render", { detail: { box, stage, hub, srcs, list } })); } catch {}',
+    );
+  }
+
+  // 5. 在 rebuild / force-reset / empty 时保留 .purge-standby-agent 节点，避免每秒刷新擦除导致闪烁与连线错位
+  const rebuildSrcsRe = /if\s*\(nodes\.some\(\(x,\s*i\)\s*=>\s*srcs\.children\[i\]\s*!==\s*x\)\s*\|\|\s*srcs\.children\.length\s*!==\s*nodes\.length\)\s*srcs\.replaceChildren\(\.\.\.nodes\);\s*srcs\.classList\.toggle\("many",\s*ags\.length\s*>\s*1\);/;
+  if (rebuildSrcsRe.test(out)) {
+    out = out.replace(
+      rebuildSrcsRe,
+      '{ const _sb = [...srcs.children].filter((el) => el.classList && el.classList.contains("purge-standby-agent")); const _all = [...nodes, ..._sb]; if (_all.some((x, i) => srcs.children[i] !== x) || srcs.children.length !== _all.length) srcs.replaceChildren(..._all); srcs.classList.toggle("many", _all.length > 1); }',
+    );
+  }
+
+  const forceClearSrcsRe = /srcs\.replaceChildren\(\);/;
+  if (forceClearSrcsRe.test(out)) {
+    out = out.replace(
+      forceClearSrcsRe,
+      'for (const _c of [...srcs.children]) if (!_c.classList?.contains("purge-standby-agent")) _c.remove();',
+    );
+  }
+
+  const emptySrcsRe = /srcs\.replaceChildren\(a\.node\);/;
+  if (emptySrcsRe.test(out)) {
+    out = out.replace(
+      emptySrcsRe,
+      '{ const _sb = [...srcs.children].filter((el) => el.classList && el.classList.contains("purge-standby-agent")); srcs.replaceChildren(a.node, ..._sb); srcs.classList.toggle("many", 1 + _sb.length > 1); }',
+    );
+  }
+
+  // 6. 在原生 layout() 中为 .purge-standby-agent 绘制原生 .rt-wires 白色连线（统一视觉与坐标）
+  const layoutAgentsRe = /for\s*\(const a of agents\.values\(\)\)\s*\{\s*const s = b\(a\.node\),\s*mx = \(s\.r \+ h\.l\) \/ 2;\s*sets\.push\(\[a\.wire,\s*h\.l > s\.r \? curve\(s\.r,\s*s\.cy,\s*mx,\s*h\.l,\s*h\.cy\) : `M\$\{s\.cx\} \$\{s\.b\} L\$\{h\.cx\} \$\{h\.t\}`\]\);\s*\}/;
+  if (layoutAgentsRe.test(out)) {
+    out = out.replace(
+      layoutAgentsRe,
+      (m) =>
+        m +
+        ' for (const _sn of srcs.querySelectorAll(".purge-standby-agent")) { let _sw = _sn._purgeWire; if (!_sw || _sw.parentNode !== wires) { _sw = path(); _sw.dataset.purgeStandbyWire = "1"; _sn._purgeWire = _sw; } const _sb = b(_sn), _mx = (_sb.r + h.l) / 2; sets.push([_sw, h.l > _sb.r ? curve(_sb.r, _sb.cy, _mx, h.l, h.cy) : `M${_sb.cx} ${_sb.b} L${h.cx} ${h.t}`]); } for (const _ow of [...wires.querySelectorAll("path[data-purge-standby-wire]")]) { if (![...srcs.children].some((el) => el._purgeWire === _ow)) _ow.remove(); }',
     );
   }
 

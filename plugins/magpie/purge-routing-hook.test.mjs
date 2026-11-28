@@ -39,9 +39,14 @@ function routingPage(part) {
     f.w = w;
   }
   function rebuild(rs, force) {
+    if (force) {
+      srcs.replaceChildren();
+    }
     for (const id of ags) {
       setText(a.name, callerName(r));
     }
+    if (nodes.some((x, i) => srcs.children[i] !== x) || srcs.children.length !== nodes.length) srcs.replaceChildren(...nodes);
+    srcs.classList.toggle("many", ags.length > 1);
     for (const id of ids) {
       row.rid = rOf.get(id);
     }
@@ -53,8 +58,15 @@ function routingPage(part) {
     hubText();
   }
   function empty() {
+    srcs.replaceChildren(a.node);
     renderHist(); // idle
     layout();
+  }
+  function layout() {
+    for (const a of agents.values()) {
+      const s = b(a.node), mx = (s.r + h.l) / 2;
+      sets.push([a.wire, h.l > s.r ? curve(s.r, s.cy, mx, h.l, h.cy) : \`M\${s.cx} \${s.b} L\${h.cx} \${h.t}\`]);
+    }
   }
 }
 `;
@@ -65,6 +77,10 @@ function routingPage(part) {
   assert.match(hooked, /dataset\.purgeTargetKind = "provider"/);
   assert.match(hooked, /dataset\.purgeProviderId = _pp/);
   assert.match(hooked, /dataset\.purgeFold = "1"/);
+  assert.match(hooked, /fish:routing-layout/);
+  assert.match(hooked, /dataset\.purgeStandbyWire = "1"/);
+  assert.match(hooked, /wires\.querySelectorAll\("path\[data-purge-standby-wire\]"\)/);
+  assert.equal((hooked.match(/purge-standby-agent/g) || []).length, 4, 'rebuild / force / empty / layout 四处均应处理待命块');
   assert.equal((hooked.match(/fish:routing-render/g) || []).length, 4);
   assert.equal(hookRoutingClientScript(hooked), hooked, '重复调用应幂等');
 
@@ -76,13 +92,116 @@ function routingPage(part) {
 
 test('purgeOverlayAssets 资源存在且前端脚本无语法错误', () => {
   const assets = purgeOverlayAssets();
+  assert.equal(PURGE_ASSET_VERSION, '8');
   assert.ok(assets.css.includes('#rt.purge-rt-host'));
   assert.ok(assets.css.includes('#purge-wires-svg'));
   assert.ok(assets.css.includes('[data-purge-skin="fish"]'));
+  assert.ok(assets.css.includes('.purge-ctx-guide'));
+  assert.equal(assets.css.includes('.purge-wire-standby'), false);
   assert.ok(assets.js.includes('__FISH_PURGE_ROUTING_OVERLAY__'));
   assert.ok(assets.js.includes('hydrateDomTargets'));
   assert.ok(assets.js.includes('syncStandbyAgents'));
+  assert.ok(assets.js.includes('data-act="goto-agents"'));
+  assert.ok(assets.js.includes("setAttribute('viewBox'"));
+  assert.ok(assets.js.includes("animate ? ' purge-is-emerging' : ''"));
+  assert.equal(assets.js.includes('purge-wire-standby'), false);
+  assert.ok(assets.js.includes('active: true'));
+  assert.equal(assets.js.includes('active: hasAnyWrap'), false);
   assert.doesNotThrow(() => new vm.Script(assets.js, { filename: 'purge-routing-overlay.js' }));
   assert.doesNotThrow(() => new Function(assets.js));
   assert.ok(fs.existsSync(new URL('./purge-routing-overlay.css', import.meta.url)));
+
+  const sandbox = {
+    window: null,
+    document: { readyState: 'loading', addEventListener: () => {}, getElementById: () => null },
+    addEventListener: () => {},
+  };
+  sandbox.window = sandbox;
+  vm.runInNewContext(assets.js, sandbox);
+  const utils = sandbox.window.__FISH_PURGE_OVERLAY_UTILS__;
+  assert.ok(utils);
+
+  // 打码恢复与无 raw 兜底
+  const maskedEl = {
+    nodeType: 1,
+    childNodes: [
+      { nodeType: 1, classList: { contains: (c) => c === 'pii' }, dataset: { raw: 'Chensy395' }, childNodes: [] },
+    ],
+  };
+  assert.deepEqual({ ...utils.readUnmaskedText(maskedEl) }, { text: 'Chensy395', maskedOpaque: false });
+
+  const opaqueMaskedEl = {
+    nodeType: 1,
+    childNodes: [
+      { nodeType: 1, classList: { contains: (c) => c === 'pii' }, dataset: {}, childNodes: [] },
+    ],
+  };
+  assert.deepEqual({ ...utils.readUnmaskedText(opaqueMaskedEl) }, { text: '', maskedOpaque: true });
+
+  // 失真打码残留目标识别
+  assert.equal(utils.isBrokenProviderTarget({ providerId: '', providerName: '', preset: '', account: 'sma', model: '' }), true);
+  assert.equal(utils.isBrokenProviderTarget({ providerId: 'trae-cn', providerName: 'Trae CN', model: 'deepseek-v4.1-flash-max' }), false);
+
+  // 同模型跨厂商绝不误匹配（codearts vs meoo 同用 deepseek-v4.1-flash-1017）
+  assert.equal(
+    utils.sameProviderTarget(
+      { groupId: 'deepseek', providerId: 'meoo', providerName: 'Meoo', model: 'deepseek-v4.1-flash-1017' },
+      { groupId: 'deepseek', providerId: 'codearts', providerName: 'CodeArts', model: 'deepseek-v4.1-flash-1017' },
+    ),
+    false,
+  );
+  assert.equal(
+    utils.sameProviderTarget(
+      { groupId: 'deepseek', providerId: '', providerName: 'Trae CN', model: 'deepseek-v4.1-flash-max' },
+      { groupId: 'deepseek', providerId: 'trae-cn', providerName: 'Trae CN', model: 'deepseek-v4.1-flash-max', account: 'Chensy395' },
+    ),
+    true,
+  );
+
+  // 连线曲线与原生 midpoint Bezier 对齐（横排与堆叠）
+  assert.equal(
+    utils.makeWireCurve(100, 50, 200, 150),
+    'M 100.0 50.0 C 150.0 50.0, 150.0 150.0, 200.0 150.0',
+  );
+  assert.equal(
+    utils.makeWireCurve(100, 50, 100, 150, true),
+    'M 100.0 50.0 C 100.0 100.0, 100.0 100.0, 100.0 150.0',
+  );
+
+  // 右键菜单 Agent 列表仅对齐 Magpie 已接入 (wired) Agent 并按 agentOrder 排序
+  const sampleMagpieAgents = [
+    { id: 'claude', name: 'Claude Code', icon: 'claudecode-color', wired: true, fields: [{ key: 'model', value: 'group/deepseek[1m]' }] },
+    { id: 'codex', name: 'Codex', icon: 'codex-color', wired: false, fields: [{ key: 'model', value: 'gpt-5.6-terra' }] },
+    { id: 'opencode', name: 'OpenCode', icon: 'opencode', wired: true, fields: [{ key: 'model', value: 'magpie/group/deepseek' }] },
+    { id: 'dsh', name: 'DeepSeek Harness', icon: 'deepseek-color', wired: true, fields: [{ key: 'model', value: 'magpie/group/deepseek' }] },
+    { id: 'zcode', name: 'ZCode', icon: 'zcode', wired: true, fields: [] },
+    { id: 'obsidian-memory', name: 'Obsidian 记忆 Agent', icon: 'obsidian', wired: true, fields: [{ key: 'model', value: 'group/deepseek' }] },
+  ];
+  const visibleMap = new Map([['dsh', { standby: false, name: 'DeepSeek Harness', route: 'group/deepseek', el: null }]]);
+  const catalog = utils.buildAgentCatalog(sampleMagpieAgents, ['obsidian-memory', 'claude', 'opencode', 'dsh', 'zcode'], visibleMap);
+  assert.deepEqual(
+    [...catalog.map((c) => c.id)],
+    ['obsidian-memory', 'claude', 'opencode', 'dsh', 'zcode'],
+    '应排除未接入的 codex 并按 agentOrder 排序',
+  );
+  assert.equal(catalog.find((c) => c.id === 'claude')?.route, 'group/deepseek');
+  assert.equal(catalog.find((c) => c.id === 'opencode')?.route, 'group/deepseek');
+  assert.equal(catalog.find((c) => c.id === 'dsh')?.onStage, true);
+});
+
+test('hookRoutingClientScript 多账号 seat 唯一标识且 provider 行不把 providerId 写入 account', () => {
+  const sampleClient = `
+function routingPage(part) {
+  const seat = (w) => w.kind === "account" && w.who ? w.provider + "@" + w.who : w.id;
+  function rebuild(rs, force) {
+    for (const id of ids) {
+      row.rid = rOf.get(id);
+    }
+  }
+}
+`;
+  const hooked = hookRoutingClientScript(sampleClient);
+  assert.match(hooked, /_pw\.kind === "provider" \? "" : String\(_pw\.who \|\| ""\)/);
+  assert.match(hooked, /typeof seat === "function" \? seat\(_pw\) : ""/);
+  assert.doesNotThrow(() => new vm.Script(hooked, { filename: 'routing-client-hooked-seat.js' }));
 });

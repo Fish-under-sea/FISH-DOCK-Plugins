@@ -15,14 +15,42 @@
   const PEEL_THRESHOLD = 20;
   const MAX_CAPSULES = 8;
 
+  const GENERIC_AGENT_SVG = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+    <rect x="4" y="5" width="16" height="14" rx="4" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-width="1.7"/>
+    <polyline points="8.5 9.5 11.5 12 8.5 14.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="13" y1="14.5" x2="16.5" y2="14.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  </svg>`;
+
+  const MAGPIE_PALETTE = ['#d97757', '#bd8638', '#a59234', '#849e4a', '#5aa66c', '#25a98f', '#00a6b0', '#2e9fc9', '#5e95d7', '#858ad7', '#a47fca', '#bb77b1'];
+  const MAGPIE_HUES = {
+    claude: 0, codex: 9, gemini: 7, copilot: 10, cursor: 5, opencode: 2, crush: 11, goose: 3, pi: 4, omp: 11, omo: 10, dsh: 6,
+    commandcode: 1, mimocode: 8, deveco: 7,
+  };
+
+  const AGENT_ALIASES = {
+    claude: ['claude', 'claude-code', 'claudecode', 'claude code'],
+    codex: ['codex', 'openai-codex', 'codex-cli'],
+    opencode: ['opencode', 'open-code', 'open code'],
+    dsh: ['dsh', 'deepseek-harness', 'deepseek harness'],
+    zcode: ['zcode', 'z-code', 'z code'],
+    'obsidian-memory': ['obsidian-memory', 'obsidian', 'obsidian 记忆 agent'],
+    gemini: ['gemini', 'gemini-cli', 'gemini cli'],
+    agy: ['agy', 'antigravity-cli', 'antigravity cli'],
+    antigravity: ['antigravity'],
+    cursor: ['cursor'],
+    cline: ['cline'],
+    workbuddy: ['workbuddy', 'workbuddy-ai'],
+    qoder: ['qoder', 'qoder-cn'],
+  };
+
   const BASELINE_AGENTS = [
     {
       id: 'claude',
       name: 'Claude Code',
-      aliases: ['claude', 'claude-code', 'claudecode', 'claude code'],
+      aliases: AGENT_ALIASES.claude,
       route: 'group/deepseek',
       color: '#ea8c55',
-      lastSeen: '历史会话',
+      icon: 'claudecode-color',
       iconSvg: `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
         <rect x="5" y="7" width="14" height="10" rx="2.5" fill="#e67e45"/>
         <rect x="3" y="10" width="2" height="5" rx="1" fill="#e67e45"/>
@@ -34,12 +62,51 @@
       </svg>`,
     },
     {
+      id: 'opencode',
+      name: 'OpenCode',
+      aliases: AGENT_ALIASES.opencode,
+      route: 'group/deepseek',
+      color: '#60a5fa',
+      icon: 'opencode',
+      iconSvg: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="8.5" stroke="#60a5fa" stroke-width="1.8" fill="#3b82f6" fill-opacity="0.18"/>
+        <path d="M9.5 9.5L7 12l2.5 2.5M14.5 9.5L17 12l-2.5 2.5" stroke="#bfdbfe" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>`,
+    },
+    {
+      id: 'dsh',
+      name: 'DeepSeek Harness',
+      aliases: AGENT_ALIASES.dsh,
+      route: 'group/deepseek',
+      color: '#00a6b0',
+      icon: 'deepseek-color',
+      iconSvg: GENERIC_AGENT_SVG,
+    },
+    {
+      id: 'zcode',
+      name: 'ZCode',
+      aliases: AGENT_ALIASES.zcode,
+      route: '',
+      color: '#5aa66c',
+      icon: 'zcode',
+      iconSvg: GENERIC_AGENT_SVG,
+    },
+    {
+      id: 'obsidian-memory',
+      name: 'Obsidian 记忆 Agent',
+      aliases: AGENT_ALIASES['obsidian-memory'],
+      route: 'group/deepseek',
+      color: '#a78bfa',
+      icon: 'obsidian',
+      iconSvg: GENERIC_AGENT_SVG,
+    },
+    {
       id: 'codex',
       name: 'Codex',
-      aliases: ['codex', 'openai-codex', 'codex-cli'],
+      aliases: AGENT_ALIASES.codex,
       route: 'group/deepseek',
       color: '#34d399',
-      lastSeen: '历史会话',
+      icon: 'codex-color',
       iconSvg: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none">
         <rect x="3" y="4" width="18" height="16" rx="4" fill="#10b981" fill-opacity="0.22" stroke="#34d399" stroke-width="1.8"/>
         <polyline points="8 9 11.5 12 8 15" stroke="#6ee7b7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -47,24 +114,12 @@
       </svg>`,
     },
     {
-      id: 'opencode',
-      name: 'OpenCode',
-      aliases: ['opencode', 'open-code', 'open code'],
-      route: 'group/deepseek',
-      color: '#60a5fa',
-      lastSeen: '历史会话',
-      iconSvg: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        <circle cx="12" cy="12" r="8.5" stroke="#60a5fa" stroke-width="1.8" fill="#3b82f6" fill-opacity="0.18"/>
-        <path d="M9.5 9.5L7 12l2.5 2.5M14.5 9.5L17 12l-2.5 2.5" stroke="#bfdbfe" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>`,
-    },
-    {
       id: 'cursor',
       name: 'Cursor',
-      aliases: ['cursor'],
+      aliases: AGENT_ALIASES.cursor,
       route: 'group/claude-code',
       color: '#a78bfa',
-      lastSeen: '历史会话',
+      icon: 'cursor',
       iconSvg: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none">
         <polygon points="12 3 20 8 20 16 12 21 4 16 4 8" fill="#8b5cf6" fill-opacity="0.22" stroke="#a78bfa" stroke-width="1.8"/>
         <polygon points="10.5 8 16.5 13 12.2 13.8 10.5 17.5" fill="#ede9fe"/>
@@ -73,10 +128,10 @@
     {
       id: 'cline',
       name: 'Cline',
-      aliases: ['cline'],
+      aliases: AGENT_ALIASES.cline,
       route: 'deepseek-v4.1-flash',
       color: '#fbbf24',
-      lastSeen: '历史会话',
+      icon: 'cline',
       iconSvg: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none">
         <rect x="4" y="6" width="16" height="12" rx="5" fill="#f59e0b" fill-opacity="0.20" stroke="#fbbf24" stroke-width="1.8"/>
         <circle cx="9.5" cy="12" r="1.4" fill="#fde68a"/>
@@ -169,6 +224,12 @@
     saving: false,
     pendingSync: false,
     lastTurnSig: '',
+    didAutoActivate: false,
+    animatingStandbyIds: new Set(),
+    magpieAgents: [],
+    magpieAgentOrder: [],
+    magpieStateLoaded: false,
+    magpieWiredSig: '',
   };
 
   const dom = {
@@ -204,15 +265,41 @@
     return /@fish-under-sea\/magpie-purge(?:@|$)|(^|[\\/])magpie-purge(?:[@#\\/]|$)/i.test(String(spec || ''));
   }
 
-  function agentKeys(raw) {
+  function magpieHueColor(id) {
+    const key = String(id || '').trim().toLowerCase();
+    let h = MAGPIE_HUES[key];
+    if (h == null) {
+      h = 0;
+      for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    }
+    return MAGPIE_PALETTE[h % MAGPIE_PALETTE.length];
+  }
+
+  function agentKeys(raw, extraAgents = state.magpieAgents) {
     const s = String(raw || '').trim().toLowerCase();
     if (!s) return [];
     const compact = s.replace(/[\s_]+/g, '-');
-    const set = new Set([s, compact, s.replace(/[\s_-]+/g, '')]);
-    for (const a of BASELINE_AGENTS) {
-      if (a.id === s || a.id === compact || a.aliases.includes(s) || a.aliases.includes(compact)) {
-        set.add(a.id);
-        for (const al of a.aliases) set.add(al);
+    const squashed = s.replace(/[\s_-]+/g, '');
+    const set = new Set([s, compact, squashed]);
+    for (const [id, aliases] of Object.entries(AGENT_ALIASES)) {
+      if (id === s || id === compact || aliases.includes(s) || aliases.includes(compact)) {
+        set.add(id);
+        for (const al of aliases) set.add(al);
+      }
+    }
+    if (Array.isArray(extraAgents)) {
+      for (const a of extraAgents) {
+        if (!a || typeof a !== 'object') continue;
+        const aid = String(a.id || '').trim().toLowerCase();
+        const aname = String(a.name || '').trim().toLowerCase();
+        const nameCompact = aname.replace(/[\s_]+/g, '-');
+        if (aid === s || aid === compact || (aname && (aname === s || nameCompact === compact))) {
+          if (aid) set.add(aid);
+          if (aname) {
+            set.add(aname);
+            set.add(nameCompact);
+          }
+        }
       }
     }
     return [...set];
@@ -225,18 +312,117 @@
     return ka.some((k) => kb.has(k));
   }
 
-  function canonicalAgentId(raw) {
+  function canonicalAgentId(raw, extraAgents = state.magpieAgents) {
     const s = String(raw || '').trim();
     if (!s) return '';
-    for (const a of BASELINE_AGENTS) {
-      if (sameAgent(a.id, s)) return a.id;
+    if (Array.isArray(extraAgents)) {
+      const keys = agentKeys(s, extraAgents);
+      const hit = extraAgents.find((a) => a && keys.some((k) => String(a.id || '').trim().toLowerCase() === k));
+      if (hit?.id) return String(hit.id).trim().toLowerCase();
+    }
+    for (const id of Object.keys(AGENT_ALIASES)) {
+      if (sameAgent(id, s)) return id;
     }
     return s.toLowerCase();
   }
 
-  function getBaselineMeta(idOrName) {
+  function extractAgentRoute(agentObj) {
+    if (!agentObj || typeof agentObj !== 'object') return '';
+    const fields = Array.isArray(agentObj.fields) ? agentObj.fields : [];
+    const modelField = fields.find((f) => f && (f.key === 'model' || f.key === 'default') && String(f.value || '').trim());
+    const rawVal = String(modelField?.value || '').trim();
+    if (rawVal) {
+      return stripEffortAndAlias(rawVal.replace(/^magpie\//i, ''));
+    }
+    const firstModel = Array.isArray(agentObj.models?.names) ? String(agentObj.models.names[0] || '').trim() : '';
+    return firstModel;
+  }
+
+  function getStandbyMeta(idOrName) {
     const cid = canonicalAgentId(idOrName);
-    return BASELINE_AGENTS.find((a) => a.id === cid || sameAgent(a.id, idOrName)) || null;
+    const liveAg = state.magpieAgents.find((a) => a && sameAgent(a.id, cid || idOrName));
+    const base = BASELINE_AGENTS.find((a) => a.id === cid || sameAgent(a.id, idOrName)) || null;
+    if (liveAg) {
+      const id = canonicalAgentId(liveAg.id) || cid;
+      return {
+        id,
+        name: String(liveAg.name || base?.name || id),
+        icon: String(liveAg.icon || base?.icon || ''),
+        iconSvg: base?.iconSvg || GENERIC_AGENT_SVG,
+        route: extractAgentRoute(liveAg) || base?.route || '已接入 magpie',
+        color: base?.color || magpieHueColor(id),
+      };
+    }
+    if (base) return base;
+    if (!cid) return null;
+    return {
+      id: cid,
+      name: String(idOrName || cid),
+      icon: '',
+      iconSvg: GENERIC_AGENT_SVG,
+      route: 'group/default',
+      color: magpieHueColor(cid),
+    };
+  }
+
+  function buildAgentCatalog(magpieAgents, agentOrder, visibleAgentsMap) {
+    const order = Array.isArray(agentOrder) ? agentOrder : [];
+    const rankOf = (a) => {
+      const idx = order.indexOf(a?.id);
+      return idx < 0 ? order.length : idx;
+    };
+    const wired = (Array.isArray(magpieAgents) ? magpieAgents : [])
+      .filter((a) => a && a.wired === true)
+      .map((a, idx) => ({ a, idx }))
+      .sort((x, y) => rankOf(x.a) - rankOf(y.a) || x.idx - y.idx)
+      .map((x) => x.a);
+
+    const visible =
+      visibleAgentsMap && typeof visibleAgentsMap.get === 'function' && typeof visibleAgentsMap.entries === 'function'
+        ? visibleAgentsMap
+        : new Map();
+    const catalog = [];
+    const seen = new Set();
+
+    for (const a of wired) {
+      const cid = canonicalAgentId(a.id, magpieAgents);
+      if (!cid || seen.has(cid)) continue;
+      seen.add(cid);
+      const live = visible.get(cid) || [...visible.entries()].find(([k]) => sameAgent(k, cid))?.[1] || null;
+      const base = BASELINE_AGENTS.find((b) => b.id === cid || sameAgent(b.id, cid));
+      const route = live?.route || extractAgentRoute(a) || '';
+      catalog.push({
+        id: cid,
+        name: String(live?.name || a.name || base?.name || cid),
+        icon: String(a.icon || base?.icon || ''),
+        iconSvg: base?.iconSvg || GENERIC_AGENT_SVG,
+        route,
+        color: base?.color || magpieHueColor(cid),
+        wired: true,
+        onStage: Boolean(live),
+        standby: Boolean(live?.standby),
+        el: live?.el || null,
+      });
+    }
+
+    for (const [cid, live] of visible.entries()) {
+      if (catalog.some((c) => sameAgent(c.id, cid))) continue;
+      const meta = getStandbyMeta(cid);
+      catalog.push({
+        id: cid,
+        name: live?.name || meta?.name || cid,
+        icon: meta?.icon || '',
+        iconSvg: meta?.iconSvg || GENERIC_AGENT_SVG,
+        route: live?.route || meta?.route || '',
+        color: meta?.color || magpieHueColor(cid),
+        wired: Boolean(state.magpieAgents.some((a) => a && a.wired === true && sameAgent(a.id, cid))),
+        onStage: true,
+        standby: Boolean(live?.standby),
+        el: live?.el || null,
+      });
+    }
+
+    return catalog;
   }
 
   function isPlaceholderAgentName(name) {
@@ -255,6 +441,31 @@
       s = next;
     }
     return s;
+  }
+
+  function readUnmaskedText(el) {
+    if (!el) return { text: '', maskedOpaque: false };
+    let maskedOpaque = false;
+    function walk(node) {
+      if (!node) return '';
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType !== 1) return '';
+      if (node.classList?.contains('pii')) {
+        const raw = node.dataset?.raw;
+        if (typeof raw === 'string' && raw.trim()) return raw;
+        maskedOpaque = true;
+        return '';
+      }
+      let out = '';
+      for (const child of node.childNodes || []) out += walk(child);
+      return out;
+    }
+    return { text: walk(el).trim(), maskedOpaque };
+  }
+
+  function isBrokenProviderTarget(t) {
+    if (!t || typeof t !== 'object') return true;
+    return !String(t.providerId || '').trim() && !String(t.providerName || '').trim() && !String(t.preset || '').trim();
   }
 
   function getProviderMetaFromEl(el) {
@@ -276,12 +487,23 @@
     if (mA && mB && mA !== mB) return false;
     const pidA = String(a.providerId || '').trim().toLowerCase();
     const pidB = String(b.providerId || '').trim().toLowerCase();
-    if (pidA && pidB && pidA !== pidB) return false;
-    if (a.account && b.account && a.account.toLowerCase() !== b.account.toLowerCase()) return false;
-    if (!pidA && !a.account && a.providerName && b.providerName && a.providerName.toLowerCase() !== b.providerName.toLowerCase()) {
-      return false;
+    const nameA = String(a.providerName || '').trim().toLowerCase();
+    const nameB = String(b.providerName || '').trim().toLowerCase();
+    const acctA = String(a.account || '').trim().toLowerCase();
+    const acctB = String(b.account || '').trim().toLowerCase();
+
+    if (pidA && pidB) {
+      if (pidA !== pidB) return false;
+    } else if (pidA || pidB) {
+      if (!nameA || !nameB || nameA !== nameB) return false;
+    } else if (nameA || nameB) {
+      if (!nameA || !nameB || nameA !== nameB) return false;
+    } else {
+      if (!acctA || !acctB || acctA !== acctB) return false;
     }
-    return Boolean((pidA && pidB) || (mA && mB));
+
+    if (acctA && acctB && acctA !== acctB) return false;
+    return Boolean(pidA || pidB || nameA || nameB || acctA);
   }
 
   async function magpieApi(path, body) {
@@ -306,10 +528,33 @@
     return text ? JSON.parse(text) : null;
   }
 
+  async function refreshMagpieAgentsState() {
+    try {
+      const st = await magpieApi('state');
+      if (!st || !Array.isArray(st.agents)) return false;
+      const nextOrder = Array.isArray(st.settings?.agentOrder) ? st.settings.agentOrder.filter((x) => typeof x === 'string') : [];
+      const sig = JSON.stringify({
+        order: nextOrder,
+        agents: st.agents
+          .filter((a) => a && a.wired === true)
+          .map((a) => [a.id, a.name, a.icon, extractAgentRoute(a)]),
+      });
+      const changed = sig !== state.magpieWiredSig || !state.magpieStateLoaded;
+      state.magpieAgents = st.agents;
+      state.magpieAgentOrder = nextOrder;
+      state.magpieStateLoaded = true;
+      state.magpieWiredSig = sig;
+      return changed;
+    } catch {
+      return false;
+    }
+  }
+
   async function refreshPluginState() {
     if (state.loadingPlugins || state.saving) return;
     state.loadingPlugins = true;
     try {
+      const agentsFetch = refreshMagpieAgentsState();
       let entry = null;
       try {
         const res = await magpieApi('plugins');
@@ -331,6 +576,8 @@
         } catch {}
       }
 
+      await agentsFetch;
+
       if (!entry || entry.off === true) {
         disableOverlay();
         return;
@@ -340,8 +587,10 @@
       state.pluginSpec = String(entry.spec || '');
       state.pluginOptions = entry.options && typeof entry.options === 'object' ? { ...entry.options } : {};
       const r = state.pluginOptions.routing && typeof state.pluginOptions.routing === 'object' ? state.pluginOptions.routing : {};
+      const manualOff = r.manualOff === true;
+      const needsActivate = !manualOff && r.active !== true;
       state.skin = SKIN_PALETTES[r.skin] ? r.skin : 'fish';
-      state.active = r.active === true;
+      state.active = !manualOff;
       state.hubInject = Boolean(r.hubInject);
       state.wrappedAgents = Array.isArray(r.agents) ? r.agents.filter((x) => typeof x === 'string' && x.trim()) : [];
       state.standbyAgents = Array.isArray(r.standbyAgents)
@@ -351,6 +600,10 @@
 
       ensureMounted();
       syncAll();
+      if (needsActivate && !state.didAutoActivate) {
+        state.didAutoActivate = true;
+        queueMicrotask(() => { void persistRoutingState(); });
+      }
     } finally {
       state.loadingPlugins = false;
     }
@@ -358,14 +611,14 @@
 
   async function persistRoutingState(calloutText = '') {
     if (!state.pluginSpec) return;
-    const hasAnyWrap = state.hubInject || state.wrappedAgents.length > 0 || state.wrappedTargets.length > 0;
-    state.active = hasAnyWrap;
+    state.active = true;
 
     const prevOpts = state.pluginOptions && typeof state.pluginOptions === 'object' ? state.pluginOptions : {};
     const prevRouting = prevOpts.routing && typeof prevOpts.routing === 'object' ? prevOpts.routing : {};
     const nextRouting = {
       ...prevRouting,
-      active: hasAnyWrap,
+      active: true,
+      manualOff: false,
       hubInject: state.hubInject,
       skin: state.skin,
       agents: [...state.wrappedAgents],
@@ -403,6 +656,9 @@
     if (dom.srcs) {
       dom.srcs.querySelectorAll('.purge-standby-agent').forEach((n) => n.remove());
     }
+    if (dom.stage) {
+      dom.stage.querySelectorAll('.rt-wires path[data-purge-standby-wire]').forEach((p) => p.remove());
+    }
     if (dom.rt) {
       dom.rt.querySelectorAll('.purge-is-wrapped, .purge-hungry-target').forEach((el) => {
         el.classList.remove('purge-is-wrapped', 'purge-hungry-target');
@@ -413,6 +669,7 @@
     if (dom.wiresSvg) dom.wiresSvg.innerHTML = '';
     if (dom.fxSvg) dom.fxSvg.innerHTML = '';
     if (dom.layer) dom.layer.innerHTML = '';
+    requestNativeLayout();
   }
 
   function ensureMounted() {
@@ -577,24 +834,54 @@
     // 右侧供应商/模型行兜底打标 + groupId 补全
     const fallbackGroup = inferGroupIdFromStage();
     if (dom.list) {
+      let lastFoldProvId = '';
+      let lastFoldProvName = '';
+      let lastFoldPreset = '';
       for (const li of dom.list.querySelectorAll(':scope > li')) {
         if (li.classList.contains('idle') || li.classList.contains('rt-sub')) continue;
+        if (li.classList.contains('rt-fold') && li.dataset.purgeProviderId) {
+          lastFoldProvId = String(li.dataset.purgeProviderId || '').trim();
+          lastFoldProvName = String(li.dataset.purgeProviderName || '').trim();
+          lastFoldPreset = String(li.dataset.purgePreset || '').trim();
+        }
         if (!li.dataset.purgeTargetKind) {
           const isFold = li.classList.contains('rt-fold');
           const model = stripEffortAndAlias(li.querySelector('code.mdl')?.textContent || '');
-          const provText = String(li.querySelector('.prov')?.textContent || '').trim();
-          const whoText = String(li.querySelector('.who')?.textContent || '').trim();
-          const seatId = String(li.title || '').trim();
+          const provText = readUnmaskedText(li.querySelector('.prov')).text;
+          const whoInfo = readUnmaskedText(li.querySelector('.who'));
+          const whoText = whoInfo.text;
+          const seatId = String(li.dataset.piiTitle || li.title || '').trim();
           const seatPrefix = seatId.includes('/') ? seatId.split('/')[0] : seatId.includes(':') ? seatId.split(':')[0] : '';
-          const provName = provText || (isFold ? whoText : '');
-          const provId = (/^[a-z0-9._-]+$/i.test(seatPrefix) ? seatPrefix : '') || provName;
-          const account = isFold ? '' : whoText;
-          if (!model && !provId && !account) continue;
+          let provName = provText || (isFold ? whoText : '');
+          let provId = /^[a-z0-9._-]+$/i.test(seatPrefix) ? seatPrefix : '';
+          let preset = '';
+          if (!provId && !isFold && lastFoldProvId) {
+            provId = lastFoldProvId;
+            if (!provName) provName = lastFoldProvName;
+            preset = lastFoldPreset;
+          }
+          if (!provId && provName && Array.isArray(window.providers?.providers)) {
+            const matched = window.providers.providers.find(
+              (p) =>
+                p &&
+                (String(p.name || '').trim().toLowerCase() === provName.toLowerCase() ||
+                  String(p.id || '').trim().toLowerCase() === provName.toLowerCase()),
+            );
+            if (matched) {
+              provId = String(matched.id || '').trim();
+              if (!provName) provName = String(matched.name || '').trim();
+              preset = String(matched.preset || '').trim();
+            }
+          }
+          if (!provId && /^[a-z0-9._-]+$/i.test(provName)) provId = provName;
+          const account = isFold || whoInfo.maskedOpaque ? '' : whoText;
+          if (!model && !provId && !provName && !account) continue;
 
           li.dataset.purgeTargetKind = 'provider';
           li.dataset.purgeGroupId = fallbackGroup;
           li.dataset.purgeProviderId = provId;
           li.dataset.purgeProviderName = provName || provId;
+          if (preset) li.dataset.purgePreset = preset;
           li.dataset.purgeSeatId = seatId;
           li.dataset.purgeModel = model;
           li.dataset.purgeAccount = account;
@@ -607,9 +894,28 @@
     }
   }
 
-  function buildStandbyAgentCard(meta) {
+  function requestNativeLayout() {
+    try {
+      window.dispatchEvent(new CustomEvent('fish:routing-layout'));
+    } catch {}
+  }
+
+  function createAgentIconNode(iconName, fallbackSvg = GENERIC_AGENT_SVG) {
+    if (iconName && typeof window.icon === 'function') {
+      try {
+        const el = window.icon(iconName);
+        if (el) return el;
+      } catch {}
+    }
+    const span = document.createElement('span');
+    span.className = 'ic';
+    span.innerHTML = fallbackSvg || GENERIC_AGENT_SVG;
+    return span;
+  }
+
+  function buildStandbyAgentCard(meta, animate = false) {
     const card = document.createElement('div');
-    card.className = 'rt-node rt-src standby purge-standby-agent purge-is-emerging';
+    card.className = 'rt-node rt-src standby purge-standby-agent' + (animate ? ' purge-is-emerging' : '');
     card.dataset.purgeStandbyId = meta.id;
     card.dataset.purgeTargetKind = 'agent';
     card.dataset.purgeTargetId = meta.id;
@@ -618,12 +924,25 @@
     card.dataset.purgeRoute = meta.route;
     card.style.setProperty('--agent', meta.color);
     card.innerHTML = `
-      <span class="rt-ic">${meta.iconSvg}</span>
+      <span class="rt-ic"></span>
       <b>${escapeHtml(meta.name)}</b>
-      <small>${escapeHtml(meta.route)}</small>
+      <small>${escapeHtml(meta.route || '已接入 magpie')}</small>
       <span class="purge-standby-pill">待命 · 预注入</span>
     `;
-    setTimeout(() => card.classList.remove('purge-is-emerging'), 400);
+    const icWrap = card.querySelector('.rt-ic');
+    if (icWrap) icWrap.appendChild(createAgentIconNode(meta.icon, meta.iconSvg));
+    if (animate) {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        card.classList.remove('purge-is-emerging');
+        requestNativeLayout();
+        scheduleSync();
+      };
+      card.addEventListener('animationend', finish, { once: true });
+      setTimeout(finish, 420);
+    }
     return card;
   }
 
@@ -637,32 +956,57 @@
     }
 
     const wantStandby = new Set(state.standbyAgents.map(canonicalAgentId).filter((id) => id && !nativeIds.has(id)));
+    let changed = false;
 
     for (const el of dom.srcs.querySelectorAll('.purge-standby-agent')) {
       const sid = el.dataset.purgeStandbyId || '';
-      if (!wantStandby.has(sid)) el.remove();
+      if (!wantStandby.has(sid)) {
+        el.remove();
+        changed = true;
+      }
     }
 
     for (const sid of wantStandby) {
       if (dom.srcs.querySelector(`.purge-standby-agent[data-purge-standby-id="${CSS.escape(sid)}"]`)) continue;
-      const meta = getBaselineMeta(sid);
+      const meta = getStandbyMeta(sid);
       if (!meta) continue;
-      dom.srcs.appendChild(buildStandbyAgentCard(meta));
+      const shouldAnimate = state.animatingStandbyIds.has(sid);
+      if (shouldAnimate) state.animatingStandbyIds.delete(sid);
+      dom.srcs.appendChild(buildStandbyAgentCard(meta, shouldAnimate));
+      changed = true;
     }
 
-    dom.srcs.classList.toggle('many', dom.srcs.children.length > 1);
+    const prevMany = dom.srcs.classList.contains('many');
+    const nextMany = dom.srcs.children.length > 1;
+    dom.srcs.classList.toggle('many', nextMany);
+    if (prevMany !== nextMany) changed = true;
+
+    if (changed) {
+      requestNativeLayout();
+      requestAnimationFrame(() => {
+        requestNativeLayout();
+        drawPurgeWires();
+      });
+    }
   }
 
-  function makeWireCurve(x1, y1, x2, y2) {
-    const dx = Math.abs(x2 - x1);
-    const c = Math.max(26, dx * 0.46);
-    return `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + c).toFixed(1)} ${y1.toFixed(1)}, ${(x2 - c).toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+  function makeWireCurve(x1, y1, x2, y2, stacked = false) {
+    if (stacked) {
+      const my = (y1 + y2) / 2;
+      return `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${x1.toFixed(1)} ${my.toFixed(1)}, ${x2.toFixed(1)} ${my.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+    }
+    const mx = (x1 + x2) / 2;
+    return `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${mx.toFixed(1)} ${y1.toFixed(1)}, ${mx.toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
   }
 
   function drawPurgeWires() {
     if (!dom.wiresSvg || !dom.stage) return;
     dom.wiresSvg.innerHTML = '';
     if (!state.enabled || !dom.hub || !dom.hub.isConnected) return;
+
+    const stageRect = dom.stage.getBoundingClientRect();
+    if (!stageRect.width || !stageRect.height) return;
+    dom.wiresSvg.setAttribute('viewBox', `0 0 ${stageRect.width} ${stageRect.height}`);
 
     const hubBox = rectRel(dom.hub, dom.stage);
     if (!hubBox) return;
@@ -673,13 +1017,14 @@
       for (const el of dom.srcs.querySelectorAll('.rt-src[data-purge-target-kind="agent"]')) {
         const box = rectRel(el, dom.stage);
         if (!box) continue;
-        const d = makeWireCurve(box.right, box.cy, hubBox.x, hubBox.cy);
+        const stacked = hubBox.x <= box.right + 4;
+        const d = stacked
+          ? makeWireCurve(box.cx, box.bottom, hubBox.cx, hubBox.y, true)
+          : makeWireCurve(box.right, box.cy, hubBox.x, hubBox.cy, false);
         const agentPurged = isElementWrapped(el) || hubPurged;
         if (agentPurged) {
           dom.wiresSvg.appendChild(svgEl('path', { d, class: 'purge-wire-path' }));
           dom.wiresSvg.appendChild(svgEl('path', { d, class: 'purge-flow-path' }));
-        } else if (el.classList.contains('purge-standby-agent')) {
-          dom.wiresSvg.appendChild(svgEl('path', { d, class: 'purge-wire-standby' }));
         }
       }
     }
@@ -690,7 +1035,10 @@
         if (!box) continue;
         const provPurged = isElementWrapped(li);
         if (!provPurged && !hubPurged) continue;
-        const d = makeWireCurve(hubBox.right, hubBox.cy, box.x, box.cy);
+        const stacked = box.x <= hubBox.right + 4;
+        const d = stacked
+          ? makeWireCurve(hubBox.cx, hubBox.bottom, box.cx, box.y, true)
+          : makeWireCurve(hubBox.right, hubBox.cy, box.x, box.cy, false);
         dom.wiresSvg.appendChild(svgEl('path', { d, class: 'purge-wire-path' }));
         const isPicked = li.classList.contains('win') || li.classList.contains('hit') || li.classList.contains('on') || li.classList.contains('picked');
         if (provPurged || isPicked) {
@@ -841,8 +1189,10 @@
   function refreshCapsuleSkinIcons() {
     const html = `${getSkinCapsuleIconSvg(state.skin)}<span>PURGE</span>`;
     for (const c of state.capsules) {
+      if (c.el.dataset.purgeSkinRendered === state.skin) continue;
       const hint = c.el.querySelector('.purge-cap-hint');
       c.el.innerHTML = html;
+      c.el.dataset.purgeSkinRendered = state.skin;
       if (hint) c.el.appendChild(hint);
     }
   }
@@ -865,6 +1215,7 @@
     const el = document.createElement('div');
     el.className = 'purge-capsule';
     el.dataset.capsuleId = id;
+    el.dataset.purgeSkinRendered = state.skin;
     el.title = '拖向 Agent / Magpie / 右侧模型以吞噬注入；双击液态分裂';
     el.innerHTML = `${getSkinCapsuleIconSvg(state.skin)}<span>PURGE</span>`;
     dom.layer.appendChild(el);
@@ -1762,6 +2113,7 @@
     if (!cid) return;
     if (!state.standbyAgents.some((x) => sameAgent(x, cid))) {
       state.standbyAgents.push(cid);
+      state.animatingStandbyIds.add(cid);
     }
     syncAll();
 
@@ -1798,7 +2150,29 @@
     syncAll();
   }
 
-  function openContextMenu(clientX, clientY, ctx = {}) {
+  function navigateToAgentsPage() {
+    if (document.body?.classList?.contains('gateway-mode')) {
+      if (dom.hub && dom.rt) {
+        const hb = rectRel(dom.hub, dom.rt);
+        if (hb) spawnFloatingCallout(hb.cx, Math.max(24, hb.y - 12), '当前为独立网关模式，请在宿主客户端打开 Agent 页');
+      }
+      return false;
+    }
+    if (typeof window.show === 'function') {
+      try {
+        void window.show('agents');
+        return true;
+      } catch {}
+    }
+    const navBtn = document.querySelector('#nav button[data-view="agents"], [data-view="agents"]');
+    if (navBtn && typeof navBtn.click === 'function') {
+      navBtn.click();
+      return true;
+    }
+    return false;
+  }
+
+  function openContextMenu(clientX, clientY, ctx = {}, skipRefresh = false) {
     if (!dom.ctxMenu || !dom.rt) return;
     hydrateDomTargets();
     const rtPt = clientToRt(clientX, clientY);
@@ -1816,67 +2190,53 @@
       }
     }
 
-    const catalog = [];
-    for (const a of BASELINE_AGENTS) {
-      const live = visibleAgents.get(a.id);
-      catalog.push({
-        id: a.id,
-        name: live?.name || a.name,
-        route: live?.route || a.route,
-        color: a.color,
-        onStage: Boolean(live),
-        standby: Boolean(live?.standby),
-        el: live?.el || null,
-        lastSeen: live ? (live.standby ? '已待命' : '当前活跃') : a.lastSeen,
-      });
-    }
-    for (const [cid, live] of visibleAgents) {
-      if (!catalog.some((c) => sameAgent(c.id, cid))) {
-        catalog.push({
-          id: cid,
-          name: live.name,
-          route: live.route || 'group/default',
-          color: '#60a5fa',
-          onStage: true,
-          standby: live.standby,
-          el: live.el,
-          lastSeen: live.standby ? '已待命' : '当前活跃',
-        });
-      }
-    }
+    const catalog = buildAgentCatalog(state.magpieAgents, state.magpieAgentOrder, visibleAgents);
+    const wiredCount = catalog.filter((a) => a.wired).length;
 
-    const recordsHtml = catalog
-      .map((a) => {
-        const wrapped = state.active && state.wrappedAgents.some((x) => sameAgent(x, a.id));
-        const statusTag = wrapped ? '已吞噬注入' : a.onStage ? (a.standby ? '已待命' : '活跃中') : '离线未显示';
-        let btns = '';
-        if (!a.onStage) {
-          btns = `
-            <button type="button" class="purge-ctx-btn primary" data-act="preinject" data-agent="${escapeHtml(a.id)}">预注入并显示</button>
-            <button type="button" class="purge-ctx-btn" data-act="show-only" data-agent="${escapeHtml(a.id)}">仅显示块</button>
-          `;
-        } else if (!wrapped) {
-          btns = `
-            <button type="button" class="purge-ctx-btn primary" data-act="preinject" data-agent="${escapeHtml(a.id)}">立刻注入</button>
-            ${a.standby ? `<button type="button" class="purge-ctx-btn" data-act="hide-agent" data-agent="${escapeHtml(a.id)}">隐藏</button>` : ''}
-          `;
-        } else {
-          btns = `<button type="button" class="purge-ctx-btn" data-act="release-agent" data-agent="${escapeHtml(a.id)}">释放注入</button>`;
-        }
-        return `
-          <div class="purge-ctx-rec">
-            <div class="purge-ctx-rec-info">
-              <span class="purge-ctx-rec-dot" style="background:${escapeHtml(a.color)};box-shadow:0 0 6px ${escapeHtml(a.color)}"></span>
-              <div class="purge-ctx-rec-meta">
-                <div class="purge-ctx-rec-name">${escapeHtml(a.name)}</div>
-                <div class="purge-ctx-rec-sub">${escapeHtml(a.route || '-')} · ${escapeHtml(a.lastSeen)} · ${statusTag}</div>
+    const recordsHtml = catalog.length
+      ? catalog
+          .map((a) => {
+            const wrapped = state.active && state.wrappedAgents.some((x) => sameAgent(x, a.id));
+            const statusText = wrapped
+              ? a.onStage
+                ? a.standby
+                  ? '待命块 · 已吞噬注入'
+                  : '活跃中 · 已吞噬注入'
+                : '已预注入'
+              : a.onStage
+                ? a.standby
+                  ? '已在画布待命 · 未注入'
+                  : '当前活跃 · 未注入'
+                : '已接入 · 未在画布显示';
+            let btns = '';
+            if (!a.onStage) {
+              btns = `
+                <button type="button" class="purge-ctx-btn primary" data-act="preinject" data-agent="${escapeHtml(a.id)}">预注入并显示</button>
+                <button type="button" class="purge-ctx-btn" data-act="show-only" data-agent="${escapeHtml(a.id)}">仅显示块</button>
+              `;
+            } else if (!wrapped) {
+              btns = `
+                <button type="button" class="purge-ctx-btn primary" data-act="preinject" data-agent="${escapeHtml(a.id)}">立刻注入</button>
+                ${a.standby ? `<button type="button" class="purge-ctx-btn" data-act="hide-agent" data-agent="${escapeHtml(a.id)}">隐藏</button>` : ''}
+              `;
+            } else {
+              btns = `<button type="button" class="purge-ctx-btn" data-act="release-agent" data-agent="${escapeHtml(a.id)}">释放注入</button>`;
+            }
+            return `
+              <div class="purge-ctx-rec">
+                <div class="purge-ctx-rec-info">
+                  <span class="purge-ctx-rec-ic" data-agent-id="${escapeHtml(a.id)}" data-agent-icon="${escapeHtml(a.icon || '')}"></span>
+                  <div class="purge-ctx-rec-meta">
+                    <div class="purge-ctx-rec-name">${escapeHtml(a.name)}</div>
+                    <div class="purge-ctx-rec-sub">${escapeHtml(a.route || '已接入 magpie')} · ${statusText}</div>
+                  </div>
+                </div>
+                <div class="purge-ctx-rec-btns">${btns}</div>
               </div>
-            </div>
-            <div class="purge-ctx-rec-btns">${btns}</div>
-          </div>
-        `;
-      })
-      .join('');
+            `;
+          })
+          .join('')
+      : `<div class="purge-ctx-empty">${state.magpieStateLoaded ? '暂未检测到已接入 Magpie 的 Agent，请前往 Agent 页面开启接入' : '正在同步已接入的 Agent 列表…'}</div>`;
 
     const hitTarget = ctx.targetEl && !isElementWrapped(ctx.targetEl) ? ctx.targetEl : null;
     const hitShellKey = ctx.shellKey || (ctx.targetEl && isElementWrapped(ctx.targetEl) ? shellKeyForEl(ctx.targetEl) : '');
@@ -1901,17 +2261,33 @@
       actions.push(`<button type="button" class="purge-ctx-action" data-act="hide-agent" data-agent="${escapeHtml(hitStandbyId)}"><span>移除预注入待命块</span><span>⌫</span></button>`);
     }
     actions.push(`<button type="button" class="purge-ctx-action" data-act="spawn-cap"><span>在当前位置生成新 Purge 胶囊</span><span>●</span></button>`);
-    if (state.active) {
+    const brokenCount = state.wrappedTargets.filter(isBrokenProviderTarget).length;
+    if (brokenCount > 0) {
+      actions.push(`<button type="button" class="purge-ctx-action" data-act="prune-broken"><span>清理 ${brokenCount} 条失效/打码残留目标</span><span>⌫</span></button>`);
+    }
+    const hasAnyWrap = state.hubInject || state.wrappedAgents.length > 0 || state.wrappedTargets.length > 0;
+    if (hasAnyWrap) {
       actions.push(`<button type="button" class="purge-ctx-action" data-act="clear-all"><span>清空全部路由包裹</span><span>⌫</span></button>`);
     }
+    actions.push(`<button type="button" class="purge-ctx-action purge-ctx-guide" data-act="goto-agents"><span>前往「Agent」页面添加 / 接入其他 Agent</span><span class="purge-ctx-guide-go">前往 →</span></button>`);
+
+    const subTitle = state.magpieStateLoaded
+      ? `${getSkinPalette().name}皮肤 · 同步自 Agent 页 (${wiredCount} 个已接入)`
+      : `${getSkinPalette().name}皮肤 · 可提前显示并预注入`;
 
     dom.ctxMenu.dataset.purgeSkin = state.skin;
     dom.ctxMenu.innerHTML = `
-      <div class="purge-ctx-title"><span>历史 Agent 会话记录</span><small>${escapeHtml(getSkinPalette().name)}皮肤 · 可提前显示并预注入</small></div>
+      <div class="purge-ctx-title"><span>已接入的 Agent · 预注入</span><small>${escapeHtml(subTitle)}</small></div>
       <div class="purge-ctx-records">${recordsHtml}</div>
       <div class="purge-ctx-divider"></div>
       <div class="purge-ctx-actions">${actions.join('')}</div>
     `;
+
+    const iconByAgentId = new Map(catalog.map((a) => [a.id, a]));
+    dom.ctxMenu.querySelectorAll('.purge-ctx-rec-ic').forEach((slot) => {
+      const a = iconByAgentId.get(slot.dataset.agentId || '');
+      slot.appendChild(createAgentIconNode(slot.dataset.agentIcon || '', a?.iconSvg || GENERIC_AGENT_SVG));
+    });
 
     dom.ctxMenu.classList.add('is-open');
     const rect = dom.ctxMenu.getBoundingClientRect();
@@ -1925,7 +2301,9 @@
         const agent = btn.dataset.agent || '';
         const shellKey = btn.dataset.shell || '';
         closeContextMenu();
-        if (act === 'preinject' && agent) {
+        if (act === 'goto-agents') {
+          navigateToAgentsPage();
+        } else if (act === 'preinject' && agent) {
           surfaceHistoricalAgent(agent, true, rtPt);
         } else if (act === 'show-only' && agent) {
           surfaceHistoricalAgent(agent, false, rtPt);
@@ -1960,6 +2338,12 @@
             createCapsule(rtPt.x, rtPt.y);
             spawnRipple(rtPt.x, rtPt.y, 40, getSkinPalette().ripple);
           }
+        } else if (act === 'prune-broken') {
+          const before = state.wrappedTargets.length;
+          state.wrappedTargets = state.wrappedTargets.filter((t) => !isBrokenProviderTarget(t));
+          const removed = before - state.wrappedTargets.length;
+          persistRoutingState(`已清理 ${removed} 条失效路由目标`);
+          syncAll();
         } else if (act === 'clear-all') {
           state.hubInject = false;
           state.wrappedAgents = [];
@@ -1969,6 +2353,14 @@
         }
       });
     });
+
+    if (!skipRefresh) {
+      void refreshMagpieAgentsState().then((changed) => {
+        if (changed && dom.ctxMenu?.classList.contains('is-open')) {
+          openContextMenu(clientX, clientY, ctx, true);
+        }
+      });
+    }
   }
 
   function closeContextMenu() {
@@ -2160,6 +2552,16 @@
     if (!document.hidden) refreshPluginState();
   });
   window.addEventListener('resize', () => scheduleSync());
+
+  window.__FISH_PURGE_OVERLAY_UTILS__ = {
+    readUnmaskedText,
+    isBrokenProviderTarget,
+    sameProviderTarget,
+    makeWireCurve,
+    extractAgentRoute,
+    buildAgentCatalog,
+    canonicalAgentId,
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => refreshPluginState(), { once: true });

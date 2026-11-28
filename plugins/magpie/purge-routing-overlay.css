@@ -130,14 +130,6 @@
   filter: drop-shadow(0 0 6px var(--purge-skin-glow));
 }
 
-.purge-wire-standby {
-  fill: none;
-  stroke: rgba(145, 200, 240, 0.45);
-  stroke-width: 1.5;
-  stroke-dasharray: 4 5;
-  stroke-linecap: round;
-}
-
 .purge-flow-path {
   fill: none;
   stroke: var(--purge-skin-flow);
@@ -575,6 +567,29 @@ html[data-theme="light"] .purge-ctx-rec:hover {
   border-radius: 50%;
   flex: none;
 }
+.purge-ctx-rec-ic {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.purge-ctx-rec-ic .ic {
+  width: 15px;
+  height: 15px;
+}
+html[data-theme="light"] .purge-ctx-rec-ic {
+  background: rgba(19, 34, 53, 0.06);
+}
+.purge-ctx-empty {
+  padding: 12px 10px;
+  font-size: 11.5px;
+  opacity: 0.72;
+  text-align: center;
+}
 .purge-ctx-rec-meta {
   flex: 1 1 0;
   min-width: 0;
@@ -666,6 +681,28 @@ html[data-theme="light"] .purge-ctx-btn {
 }
 html[data-theme="light"] .purge-ctx-action:hover {
   background: rgba(19, 34, 53, 0.06);
+}
+.purge-ctx-action.purge-ctx-guide {
+  margin-top: 2px;
+  border-top: 1px dashed rgba(145, 200, 240, 0.22);
+  padding-top: 8px;
+  border-radius: 0 0 8px 8px;
+  color: #93c5fd;
+  font-weight: 560;
+}
+.purge-ctx-action.purge-ctx-guide:hover {
+  background: rgba(96, 165, 250, 0.14);
+}
+.purge-ctx-guide-go {
+  font-size: 11px;
+  opacity: 0.9;
+}
+html[data-theme="light"] .purge-ctx-action.purge-ctx-guide {
+  border-top-color: rgba(58, 106, 154, 0.22);
+  color: #1d4ed8;
+}
+html[data-theme="light"] .purge-ctx-action.purge-ctx-guide:hover {
+  background: rgba(37, 99, 235, 0.09);
 }
 
 @media (prefers-reduced-motion: reduce) {
